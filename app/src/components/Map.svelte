@@ -140,8 +140,6 @@
       zoom: 10,
     });
 
-    map.setProjection({ type: 'mercator' });
-
     map.addControl(new maplibregl.NavigationControl(), 'top-right');
     map.addControl(new maplibregl.ScaleControl(), 'bottom-left');
 
@@ -150,6 +148,7 @@
     map.on('load', () => {
       const m = map;
       if (!m) return;
+      m.setProjection({ type: 'mercator' });
       const ap = settings.appearance;
       const iconData = makeVesselIconData(64, ap.vesselColor);
       m.addImage('vessel-icon', { width: 64, height: 64, data: iconData.data });
