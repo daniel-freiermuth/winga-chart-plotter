@@ -21,10 +21,13 @@
     return () => client?.close();
   });
 
-  // Reconnect whenever WASM is ready or the URL changes
+  // Reconnect whenever WASM is ready or the URL actually changes
+  let lastUrl = '';
   $effect(() => {
     if (!wasm) return;
     const url = settings.signalkUrl;
+    if (url === lastUrl) return;
+    lastUrl = url;
     client?.close();
     connected = false;
     error = null;
