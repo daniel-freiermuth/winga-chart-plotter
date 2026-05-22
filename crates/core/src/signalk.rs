@@ -44,9 +44,11 @@ pub struct AisTarget {
     pub mmsi: Option<String>,
     pub name: Option<String>,
     pub position: Option<Position>,
-    pub cog: Option<f64>,
-    pub sog: Option<f64>,
-    pub heading: Option<f64>,
+    pub cog: Option<f64>,      // rad
+    pub sog: Option<f64>,      // m/s
+    pub heading: Option<f64>,  // rad true
+    pub rot: Option<f64>,      // rad/s, + = turning right
+    pub stw: Option<f64>,      // speed through water, m/s
 }
 
 /// Extract our chart-relevant fields from a `signalk::Storage` snapshot.
@@ -101,6 +103,8 @@ pub fn extract_ais_targets(storage: &Storage) -> Vec<AisTarget> {
                 cog: nav.course_over_ground_true.as_ref().and_then(|v| v.value),
                 sog: nav.speed_over_ground.as_ref().and_then(|v| v.value),
                 heading: nav.heading_true.as_ref().and_then(|v| v.value),
+                rot: nav.rate_of_turn.as_ref().and_then(|v| v.value),
+                stw: nav.speed_through_water.as_ref().and_then(|v| v.value),
             })
         })
         .collect()

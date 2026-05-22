@@ -213,6 +213,52 @@
       });
 
       mapLoaded = true;
+
+      // Pointer cursor on AIS icons
+      m.on('mouseenter', 'ais-icon', () => { m.getCanvas().style.cursor = 'pointer'; });
+      m.on('mouseleave', 'ais-icon', () => { m.getCanvas().style.cursor = ''; });
+
+      // Click popup
+      m.on('click', 'ais-icon', (e) => {
+        const feature = e.features?.[0];
+        if (!feature || feature.geometry.type !== 'Point') return;
+        const p = feature.properties as Record<string, string | number | null>;
+        const [lon, lat] = (feature.geometry as GeoJSON.Point).coordinates;
+
+        const row = (label: string, value: string | number | null, unit = '') =>
+          value !== null ? `<tr><td>${label}</td><td><b>${String(value)}${unit}</b></td></tr>` : '';
+
+        const rotVal = p['rot_dpm'] !== null ? Number(p['rot_dpm']) : null;
+        const rotStr = rotVal !== null
+          ? `${rotVal > 0 ? '▶ ' : rotVal < 0 ? '◀ ' : ''}${Math.abs(rotVal)}°/min`
+          : null;
+
+        const html = `
+          <div class="ais-popup">
+            <div class="ais-popup-title">${String(p['name'] ?? p['mmsi'] ?? 'Unknown vessel')}</div>
+            <table>
+              ${row('MMSI',     p['mmsi'])}
+              ${row('Type',     p['ship_type'])}
+              ${row('Position', `${String(p['lat'])}°N, ${String(p['lon'])}°E`)}
+              <tr><td colspan="2" class="ais-section">Navigation</td></tr>
+              ${row('SOG',      p['sog_kn'],  ' kn')}
+              ${row('STW',      p['stw_kn'],  ' kn')}
+              ${row('COG',      p['cog_deg'], '°')}
+              ${row('Heading',  p['hdg_deg'], '°')}
+              ${row('ROT',      rotStr)}
+              <tr><td colspan="2" class="ais-section">Dimensions</td></tr>
+              ${row('Length',   p['length_m'], ' m')}
+              ${row('Beam',     p['beam_m'],   ' m')}
+              ${row('Draft',    p['draft_m'],  ' m')}
+            </table>
+          </div>`;
+
+        new maplibregl.Popup({ closeButton: true, maxWidth: '280px' })
+          .setLngLat([lon, lat])
+          .setHTML(html)
+          .addTo(m);
+      });
+
     });
   });
 
@@ -321,7 +367,24 @@
       pointFeatures.push({
         type: 'Feature',
         geometry: { type: 'Point', coordinates: [longitude, latitude] },
-        properties: { bearing_deg: iconBearingDeg, label },
+        properties: {
+          bearing_deg: iconBearingDeg,
+          label,
+          id:        t.id,
+          name:      t.name      ?? null,
+          mmsi:      t.mmsi      ?? null,
+          ship_type: t.shipType  ?? null,
+          cog_deg:   t.cog    !== undefined ? Number(((t.cog    * 180) / Math.PI).toFixed(1))         : null,
+          sog_kn:    t.sog    !== undefined ? Number((t.sog    * 1.94384).toFixed(1))                  : null,
+          hdg_deg:   t.heading !== undefined ? Number(((t.heading * 180) / Math.PI).toFixed(1))        : null,
+          rot_dpm:   t.rot    !== undefined ? Number(((t.rot    * 180 / Math.PI) * 60).toFixed(1))     : null,
+          stw_kn:    t.stw    !== undefined ? Number((t.stw    * 1.94384).toFixed(1))                  : null,
+          length_m:  t.lengthM  ?? null,
+          beam_m:    t.beamM    ?? null,
+          draft_m:   t.draftM   ?? null,
+          lat:       Number(latitude.toFixed(5)),
+          lon:       Number(longitude.toFixed(5)),
+        },
       });
       if (t.cog !== undefined && t.sog !== undefined && t.sog > 0.1) {
         // COG line: 3-minute vector at current SOG
@@ -446,4 +509,48 @@
   }
   .proj-btn:hover { background: rgba(40,40,80,0.9); color: white; }
   .proj-btn.active { background: rgba(37,99,235,0.85); color: white; border-color: #3b82f6; }
+
+  :global(.ais-popup) {
+    font-family: system-ui, sans-serif;
+    font-size: 12px;
+    color: #e0e0f0;
+    min-width: 180px;
+  }
+  :global(.ais-popup-title) {
+    font-size: 13px;
+    font-weight: 600;
+    margin-bottom: 8px;
+    color: #f59e0b;
+    border-bottom: 1px solid #444;
+    padding-bottom: 5px;
+  }
+  :global(.ais-popup table) {
+    border-collapse: collapse;
+    width: 100%;
+  }
+  :global(.ais-popup td) {
+    padding: 2px 6px 2px 0;
+    vertical-align: top;
+  }
+  :global(.ais-popup td:first-child) {
+    color: #888;
+    white-space: nowrap;
+    padding-right: 12px;
+  }
+  :global(.ais-section) {
+    font-size: 10px;
+    font-weight: 600;
+    color: #666;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    padding-top: 8px;
+  }
+  :global(.maplibregl-popup-content) {
+    background: #1e1e2e;
+    border-radius: 8px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.6);
+    padding: 12px 14px;
+  }
+  :global(.maplibregl-popup-tip) { border-top-color: #1e1e2e; }
+  :global(.maplibregl-popup-close-button) { color: #888; font-size: 16px; }
 </style>

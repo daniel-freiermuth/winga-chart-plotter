@@ -74,7 +74,9 @@ impl SignalKClient {
                     {"path": "navigation.position",             "period": 1000},
                     {"path": "navigation.courseOverGroundTrue", "period": 1000},
                     {"path": "navigation.speedOverGround",      "period": 1000},
-                    {"path": "navigation.headingTrue",          "period": 1000}
+                    {"path": "navigation.headingTrue",          "period": 1000},
+                    {"path": "navigation.rateOfTurn",           "period": 1000},
+                    {"path": "navigation.speedThroughWater",    "period": 1000}
                 ]
             }"#;
             let _ = ws_clone.send_with_str(ais_subscribe_msg);

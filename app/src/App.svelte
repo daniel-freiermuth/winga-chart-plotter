@@ -8,7 +8,7 @@
   import { charts } from './stores/charts.svelte';
   import { ais } from './stores/ais.svelte';
   import type { AisTarget } from './stores/ais.svelte';
-  import { fetchVesselNames } from './lib/signalk-api';
+  import { fetchVesselInfo } from './lib/signalk-api';
   import type { SignalKClient, VesselState } from './wasm/signalk_chart_core';
   import __wbg_init, { SignalKClient as SKClient } from './wasm/signalk_chart_core.js';
 
@@ -56,7 +56,7 @@
           connected = status === 1;
           if (status === 1) {
             void charts.load(settings.signalkHttpUrl);
-            void fetchVesselNames(settings.signalkHttpUrl).then(names => ais.setNameCache(names));
+            void fetchVesselInfo(settings.signalkHttpUrl).then(info => ais.setInfoCache(info));
           }
           if (status === 3) error = 'Connection error';
           if (status === 2) error = null;
