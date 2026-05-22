@@ -6,7 +6,9 @@
 
   let mapContainer: HTMLDivElement;
   let map: maplibregl.Map | undefined;
-  let marker: maplibregl.Marker | undefined;
+
+  const VESSEL_SOURCE = 'vessel';
+  const EMPTY_FC: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features: [] };
 
   onMount(() => {
     map = new maplibregl.Map({
@@ -33,40 +35,40 @@
       },
       center: [10.75, 59.91],
       zoom: 10,
-      projection: { type: 'mercator' }, // start mercator, globe next
+      projection: { type: 'mercator' },
     });
 
     map.addControl(new maplibregl.NavigationControl(), 'top-right');
     map.addControl(new maplibregl.ScaleControl(), 'bottom-left');
 
-    // Vessel marker
-    const el = document.createElement('div');
-    el.style.cssText = `
-      width: 20px; height: 20px;
-      background: #2563eb;
-      border: 3px solid white;
-      border-radius: 50%;
-      box-shadow: 0 2px 6px rgba(0,0,0,0.4);
-    `;
-
-    marker = new maplibregl.Marker({ element: el, anchor: 'center' });
+    map.on('load', () => {
+      map!.addSource(VESSEL_SOURCE, { type: 'geojson', data: EMPTY_FC });
+      map!.addLayer({
+        id: 'vessel-dot',
+        type: 'circle',
+        source: VESSEL_SOURCE,
+        paint: {
+          'circle-radius': 8,
+          'circle-color': '#2563eb',
+          'circle-stroke-width': 3,
+          'circle-stroke-color': '#ffffff',
+          'circle-pitch-alignment': 'map', // rotates with the map, repeats across world copies
+        },
+      });
+    });
   });
 
-  onDestroy(() => {
-    marker?.remove();
-    map?.remove();
-  });
+  onDestroy(() => { map?.remove(); });
 
-  // React to vessel position updates from the store
   $effect(() => {
     const state = $vesselState;
-    if (map && state.position) {
-      const { longitude, latitude } = state.position;
-      if (!marker) return;
-      marker.setLngLat([longitude, latitude]);
-      if (!marker.getLngLat) return; // not yet added
-      marker.addTo(map);
-    }
+    if (!map || !state.position) return;
+    const { longitude, latitude } = state.position;
+    const source = map.getSource(VESSEL_SOURCE) as maplibregl.GeoJSONSource | undefined;
+    source?.setData({
+      type: 'FeatureCollection',
+      features: [{ type: 'Feature', geometry: { type: 'Point', coordinates: [longitude, latitude] }, properties: {} }],
+    });
   });
 </script>
 
