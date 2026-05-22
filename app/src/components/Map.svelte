@@ -45,45 +45,40 @@
     const φ2 = φ1 + δ * Math.cos(bearingRad);
     const Δψ = Math.log(Math.tan(φ2 / 2 + Math.PI / 4) / Math.tan(φ1 / 2 + Math.PI / 4));
     const q = Math.abs(Δψ) > 1e-10 ? (φ2 - φ1) / Δψ : Math.cos(φ1);
-    const λ1 = (lon * Math.PI) / 180;
-    const λ2 = λ1 + δ * Math.sin(bearingRad) / q;
-    // Return unwrapped longitude — no % 360 normalization
+    const λ2 = (lon * Math.PI) / 180 + δ * Math.sin(bearingRad) / q;
     return [(λ2 * 180) / Math.PI, (φ2 * 180) / Math.PI];
   }
 
   /**
-   * Densified rhumb line, 32 segments, truncated at the pole if needed.
-   * Truncation is done by computing the exact max distance before overshooting,
-   * so no point ever lands at or past ±90° — works correctly on Globe too.
+   * Generate densified rhumb line coords with progressive unwrapping.
+   * Unwrapped longitude keeps antimeridian crossings continuous for both Mercator and Globe.
    */
-  function rhumbLine(lon: number, lat: number, bearingRad: number, distM: number): [number, number][] {
+  function rhumbCoords(lon: number, lat: number, bearingRad: number, distM: number): [number, number][] {
     const R = 6371000;
     const φ1 = (lat * Math.PI) / 180;
     const cosB = Math.cos(bearingRad);
-
-    // Distance to reach the pole (±π/2) along this bearing
     if (Math.abs(cosB) > 1e-10) {
-      const poleφ = cosB > 0 ? Math.PI / 2 : -Math.PI / 2;
-      const distToPole = ((poleφ - φ1) / cosB) * R;
-      if (distToPole < distM) distM = distToPole;
+      const capφ = cosB > 0 ? (85.0 * Math.PI) / 180 : -(85.0 * Math.PI) / 180;
+      const distToCap = ((capφ - φ1) / cosB) * R;
+      if (distToCap > 0 && distToCap < distM) distM = distToCap;
     }
-    // Pure E/W bearing never reaches a pole — no truncation needed
-
-    const SEGMENTS = 32;
+    const SEGMENTS = 256;
     const coords: [number, number][] = [];
+    let prevλ = (lon * Math.PI) / 180;
     for (let i = 0; i <= SEGMENTS; i++) {
-      coords.push(destPoint(lon, lat, bearingRad, (i / SEGMENTS) * distM));
+      const [rawLon, rawLat] = destPoint(lon, lat, bearingRad, (i / SEGMENTS) * distM);
+      const rawλ = (rawLon * Math.PI) / 180;
+      const diff = rawλ - prevλ;
+      const λ = prevλ + diff - Math.round(diff / (2 * Math.PI)) * 2 * Math.PI;
+      prevλ = λ;
+      coords.push([(λ * 180) / Math.PI, rawLat]);
     }
     return coords;
   }
 
-  /**
-   * Great circle line: 32 segments along the geodesic, unwrapped longitude
-   * so antimeridian crossings render correctly on all projections.
-   */
-  function greatCircleLine(lon: number, lat: number, bearingRad: number, distM: number): [number, number][] {
+  function gcCoords(lon: number, lat: number, bearingRad: number, distM: number): [number, number][] {
     const R = 6371000;
-    const SEGMENTS = 32;
+    const SEGMENTS = 256;
     const φ1 = (lat * Math.PI) / 180;
     const λ1 = (lon * Math.PI) / 180;
     const coords: [number, number][] = [];
@@ -102,6 +97,7 @@
     return coords;
   }
 
+  /** Return correct GeoJSON geometry for a line, projection-aware. */
   function makeVesselIconData(size: number, color: string): ImageData {
     const canvas = document.createElement('canvas');
     canvas.width = size; canvas.height = size;
@@ -230,7 +226,7 @@
     (map.getSource(COG_SOURCE) as maplibregl.GeoJSONSource).setData(
       state.cog !== null ? { type: 'FeatureCollection', features: [{
         type: 'Feature',
-        geometry: { type: 'LineString', coordinates: rhumbLine(longitude, latitude, state.cog, lineDistM(ap.cog)) },
+        geometry: { type: 'LineString', coordinates: rhumbCoords(longitude, latitude, state.cog, lineDistM(ap.cog)) },
         properties: {},
       }]} : EMPTY_FC
     );
@@ -238,7 +234,7 @@
     (map.getSource(GC_SOURCE) as maplibregl.GeoJSONSource).setData(
       state.cog !== null ? { type: 'FeatureCollection', features: [{
         type: 'Feature',
-        geometry: { type: 'LineString', coordinates: greatCircleLine(longitude, latitude, state.cog, lineDistM(ap.gc)) },
+        geometry: { type: 'LineString', coordinates: gcCoords(longitude, latitude, state.cog, lineDistM(ap.gc)) },
         properties: {},
       }]} : EMPTY_FC
     );
@@ -246,7 +242,7 @@
     (map.getSource(HDG_SOURCE) as maplibregl.GeoJSONSource).setData(
       state.heading !== null ? { type: 'FeatureCollection', features: [{
         type: 'Feature',
-        geometry: { type: 'LineString', coordinates: rhumbLine(longitude, latitude, state.heading, lineDistM(ap.heading)) },
+        geometry: { type: 'LineString', coordinates: rhumbCoords(longitude, latitude, state.heading, lineDistM(ap.heading)) },
         properties: {},
       }]} : EMPTY_FC
     );
