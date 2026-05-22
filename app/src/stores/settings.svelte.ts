@@ -10,12 +10,23 @@ export interface LineAppearance {
   lengthValue: number;
 }
 
+export interface AisAppearance {
+  vesselColor: string;
+  vesselSize: number;   // screen pixels
+  cog: {
+    color: string;
+    width: number;
+    style: LineStyle;
+  };
+}
+
 export interface AppearanceSettings {
   vesselColor: string;
   vesselSize: number;  // screen pixels
   heading:     LineAppearance;
   cog:         LineAppearance;
   gc:          LineAppearance;
+  ais:         AisAppearance;
 }
 
 export interface SettingsData {
@@ -35,6 +46,11 @@ const DEFAULTS: SettingsData = {
     heading: { color: '#ffffff', width: 2, style: 'solid',  lengthUnit: 'nm',  lengthValue: 0.2 },
     cog:     { color: '#f59e0b', width: 2, style: 'dashed', lengthUnit: 'min', lengthValue: 3   },
     gc:      { color: '#22c55e', width: 2, style: 'dashed', lengthUnit: 'min', lengthValue: 3   },
+    ais: {
+      vesselColor: '#f59e0b',
+      vesselSize: 16,
+      cog: { color: '#f59e0b', width: 1.5, style: 'dashed' },
+    },
   },
 };
 
@@ -54,6 +70,11 @@ function load(): SettingsData {
             heading: { ...DEFAULTS.appearance.heading, ...(p.appearance?.heading ?? {}) },
             cog:     { ...DEFAULTS.appearance.cog,     ...(p.appearance?.cog     ?? {}) },
             gc:      { ...DEFAULTS.appearance.gc,      ...(p.appearance?.gc      ?? {}) },
+            ais: {
+              ...DEFAULTS.appearance.ais,
+              ...(p.appearance?.ais ?? {}),
+              cog: { ...DEFAULTS.appearance.ais.cog, ...(p.appearance?.ais?.cog ?? {}) },
+            },
           },
         };
       }

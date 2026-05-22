@@ -22,7 +22,18 @@ export async function fetchCharts(serverBase: string): Promise<ChartRecord> {
   return res.json() as Promise<ChartRecord>;
 }
 
-/** Resolve a potentially-relative chart tile URL to an absolute URL. */
+/** Fetch a map of vessel URN → vessel name from the REST API. */
+export async function fetchVesselNames(serverBase: string): Promise<Map<string, string>> {
+  const res = await fetch(`${serverBase}/signalk/v1/api/vessels`);
+  if (!res.ok) return new Map();
+  const data = await res.json() as Record<string, { name?: string }>;
+  const map = new Map<string, string>();
+  for (const [urn, vessel] of Object.entries(data)) {
+    if (vessel.name) map.set(urn, vessel.name);
+  }
+  return map;
+}
+
 export function resolveTileUrl(url: string, serverBase: string): string {
   if (url.startsWith('/')) return `${serverBase}${url}`;
   return url;

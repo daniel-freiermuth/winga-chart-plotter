@@ -26,7 +26,7 @@ pub struct VesselState {
     pub position: Option<Position>,
     pub cog: Option<f64>,     // Course over ground, radians
     pub sog: Option<f64>,     // Speed over ground, m/s
-    pub heading: Option<f64>, // Magnetic heading, radians
+    pub heading: Option<f64>, // True heading, radians
 }
 
 #[wasm_bindgen]
@@ -35,6 +35,18 @@ impl VesselState {
     pub fn new() -> Self {
         Self::default()
     }
+}
+
+/// An AIS target — another vessel tracked via Signal K.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AisTarget {
+    pub id: String,
+    pub mmsi: Option<String>,
+    pub name: Option<String>,
+    pub position: Option<Position>,
+    pub cog: Option<f64>,
+    pub sog: Option<f64>,
+    pub heading: Option<f64>,
 }
 
 /// Extract our chart-relevant fields from a `signalk::Storage` snapshot.
@@ -58,6 +70,40 @@ pub fn extract_vessel_state(storage: &Storage) -> VesselState {
         sog: nav.speed_over_ground.as_ref().and_then(|v| v.value),
         heading: nav.heading_true.as_ref().and_then(|v| v.value),
     }
+}
+
+/// Extract all non-self AIS targets that have a known position.
+pub fn extract_ais_targets(storage: &Storage) -> Vec<AisTarget> {
+    let data = storage.data();
+    // self_ is "vessels.urn:mrn:..." — the vessel map key is after "vessels."
+    let self_key = data.self_.strip_prefix("vessels.").unwrap_or(&data.self_);
+
+    let Some(vessels) = data.vessels.as_ref() else {
+        return vec![];
+    };
+
+    vessels
+        .iter()
+        .filter(|(id, _)| id.as_str() != self_key)
+        .filter_map(|(id, vessel)| {
+            let nav = vessel.navigation.as_ref()?;
+            let pos_value = nav.position.as_ref()?.value.as_ref()?;
+            let position = Position {
+                longitude: pos_value.longitude,
+                latitude: pos_value.latitude,
+                altitude: pos_value.altitude,
+            };
+            Some(AisTarget {
+                id: id.clone(),
+                mmsi: vessel.mmsi.clone(),
+                name: vessel.name.clone(),
+                position: Some(position),
+                cog: nav.course_over_ground_true.as_ref().and_then(|v| v.value),
+                sog: nav.speed_over_ground.as_ref().and_then(|v| v.value),
+                heading: nav.heading_true.as_ref().and_then(|v| v.value),
+            })
+        })
+        .collect()
 }
 
 /// Apply a Signal K stream message (hello / full / delta) to a `Storage`.
@@ -136,5 +182,29 @@ mod tests {
         let mut storage = Storage::new(V1FullFormat::default());
         let result = apply_message(&mut storage, "not json");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn ais_targets_exclude_self() {
+        let mut storage = Storage::new(V1FullFormat::default());
+        storage.set_self("vessels.urn:mrn:signalk:uuid:self");
+
+        // Self vessel delta
+        apply_message(&mut storage, r#"{
+            "context": "vessels.urn:mrn:signalk:uuid:self",
+            "updates": [{"values": [{"path": "navigation.position", "value": {"longitude": 10.0, "latitude": 58.0}}]}]
+        }"#).unwrap();
+
+        // AIS target delta
+        apply_message(&mut storage, r#"{
+            "context": "vessels.urn:mrn:imo:mmsi:123456789",
+            "updates": [{"values": [{"path": "navigation.position", "value": {"longitude": 11.0, "latitude": 59.0}}]}]
+        }"#).unwrap();
+
+        let targets = extract_ais_targets(&storage);
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0].id, "urn:mrn:imo:mmsi:123456789");
+        let pos = targets[0].position.unwrap();
+        assert!((pos.longitude - 11.0).abs() < 1e-9);
     }
 }

@@ -145,8 +145,45 @@
           <p class="section-title">Rhumb Line predictor</p>
         {:else if key === 'cog'}
           <p class="section-title">Great Circle predictor</p>
+        {:else if key === 'gc'}
+          <p class="section-title">AIS targets</p>
         {/if}
       {/each}
+
+      <div class="row">
+        <label>Color</label>
+        <div class="field"><input type="color" bind:value={settings.appearance.ais.vesselColor} oninput={applyAppearance} /></div>
+      </div>
+      <div class="row">
+        <label>Size</label>
+        <div class="field">
+          <input type="number" bind:value={settings.appearance.ais.vesselSize} min="8" max="48" step="2" oninput={applyAppearance} />
+          <span class="unit">px</span>
+        </div>
+      </div>
+      <p class="section-title">AIS COG line</p>
+      <div class="row">
+        <label>Color</label>
+        <div class="field"><input type="color" bind:value={settings.appearance.ais.cog.color} oninput={applyAppearance} /></div>
+      </div>
+      <div class="row">
+        <label>Width</label>
+        <div class="field">
+          <input type="number" bind:value={settings.appearance.ais.cog.width} min="1" max="8" step="0.5" oninput={applyAppearance} />
+          <span class="unit">px</span>
+        </div>
+      </div>
+      <div class="row">
+        <label>Style</label>
+        <div class="field">
+          <select bind:value={settings.appearance.ais.cog.style} onchange={applyAppearance}>
+            <option value="solid">Solid</option>
+            <option value="dashed">Dashed</option>
+            <option value="dotted">Dotted</option>
+            <option value="dash-dot">Dash-dot</option>
+          </select>
+        </div>
+      </div>
     {/if}
 
     <div class="actions">

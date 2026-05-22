@@ -2,7 +2,7 @@
 //! Owns the connection lifecycle and vessel state accumulation.
 //! Calls back into JS when state or connection status changes.
 
-use crate::signalk::{apply_message, extract_vessel_state};
+use crate::signalk::{apply_message, extract_ais_targets, extract_vessel_state};
 use js_sys::Function;
 use signalk::{Storage, V1FullFormat};
 use std::{cell::RefCell, rc::Rc};
@@ -46,17 +46,17 @@ impl SignalKClient {
         url: &str,
         on_state_change: Function,
         on_status_change: Function,
+        on_ais_update: Function,
     ) -> Result<SignalKClient, JsValue> {
         let ws = WebSocket::new(url)?;
 
         let storage: Rc<RefCell<Storage>> =
             Rc::new(RefCell::new(Storage::new(V1FullFormat::default())));
 
-        // onopen — subscribe to navigation and send status
+        // onopen — subscribe to self navigation at 500ms and all vessels (AIS) at 1000ms
         let status_cb = on_status_change.clone();
         let ws_clone = ws.clone();
         let on_open = Closure::wrap(Box::new(move |_: JsValue| {
-            // Subscribe to navigation paths so the server streams them
             let subscribe_msg = r#"{
                 "context": "vessels.self",
                 "subscribe": [
@@ -67,6 +67,17 @@ impl SignalKClient {
                 ]
             }"#;
             let _ = ws_clone.send_with_str(subscribe_msg);
+            let ais_subscribe_msg = r#"{
+                "context": "vessels.*",
+                "subscribe": [
+                    {"path": "name",                            "period": 60000},
+                    {"path": "navigation.position",             "period": 1000},
+                    {"path": "navigation.courseOverGroundTrue", "period": 1000},
+                    {"path": "navigation.speedOverGround",      "period": 1000},
+                    {"path": "navigation.headingTrue",          "period": 1000}
+                ]
+            }"#;
+            let _ = ws_clone.send_with_str(ais_subscribe_msg);
             let _ = status_cb.call1(&JsValue::NULL, &JsValue::from(ConnectionStatus::Connected));
         }) as Box<dyn FnMut(JsValue)>);
         ws.set_onopen(Some(on_open.as_ref().unchecked_ref()));
@@ -74,17 +85,20 @@ impl SignalKClient {
         // onmessage — parse in Rust via signalk crate, call back with updated state
         let storage_clone = storage.clone();
         let state_cb = on_state_change.clone();
+        let ais_cb = on_ais_update.clone();
         let on_message = Closure::wrap(Box::new(move |e: MessageEvent| {
-            let Some(text) = e.data().as_string() else {
-                return;
-            };
-            if apply_message(&mut storage_clone.borrow_mut(), &text).is_err() {
-                return;
-            }
-            let state = extract_vessel_state(&storage_clone.borrow());
+            let Some(text) = e.data().as_string() else { return; };
+            if apply_message(&mut storage_clone.borrow_mut(), &text).is_err() { return; }
+            let storage = storage_clone.borrow();
+            let state = extract_vessel_state(&storage);
             if state.position.is_some() {
                 let js_val = serde_wasm_bindgen::to_value(&state).unwrap_or(JsValue::NULL);
                 let _ = state_cb.call1(&JsValue::NULL, &js_val);
+            }
+            let targets = extract_ais_targets(&storage);
+            if !targets.is_empty() {
+                let js_val = serde_wasm_bindgen::to_value(&targets).unwrap_or(JsValue::NULL);
+                let _ = ais_cb.call1(&JsValue::NULL, &js_val);
             }
         }) as Box<dyn FnMut(MessageEvent)>);
         ws.set_onmessage(Some(on_message.as_ref().unchecked_ref()));

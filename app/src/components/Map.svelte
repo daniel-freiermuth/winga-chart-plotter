@@ -7,6 +7,7 @@
   import { settings, type LineAppearance, type LineStyle } from '../stores/settings.svelte';
   import { charts } from '../stores/charts.svelte';
   import { baseLayers, BASE_LAYERS } from '../stores/baseLayers.svelte';
+  import { ais } from '../stores/ais.svelte';
 
   type ProjectionId = 'mercator' | 'globe';
 
@@ -30,6 +31,8 @@
   const COG_SOURCE    = 'vessel-cog';
   const HDG_SOURCE    = 'vessel-hdg';
   const GC_SOURCE     = 'vessel-gc';
+  const AIS_SOURCE    = 'ais-targets';
+  const AIS_COG_SOURCE = 'ais-cog';
   const EMPTY_FC: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features: [] };
 
   function dashArray(style: LineStyle, width: number): number[] {
@@ -154,14 +157,43 @@
       const ap = settings.appearance;
       const iconData = makeVesselIconData(64, ap.vesselColor);
       m.addImage('vessel-icon', { width: 64, height: 64, data: iconData.data });
+      const aisIconData = makeVesselIconData(64, settings.appearance.ais.vesselColor);
+      m.addImage('ais-icon', { width: 64, height: 64, data: aisIconData.data });
 
       m.addSource(VESSEL_SOURCE, { type: 'geojson', data: EMPTY_FC });
       m.addSource(COG_SOURCE,    { type: 'geojson', data: EMPTY_FC });
       m.addSource(HDG_SOURCE,    { type: 'geojson', data: EMPTY_FC });
       m.addSource(GC_SOURCE,     { type: 'geojson', data: EMPTY_FC });
+      m.addSource(AIS_SOURCE,    { type: 'geojson', data: EMPTY_FC });
+      m.addSource(AIS_COG_SOURCE, { type: 'geojson', data: EMPTY_FC });
 
       m.addLayer({ id: 'vessel-gc-line', type: 'line', source: GC_SOURCE,
         paint: { 'line-color': ap.gc.color, 'line-width': ap.gc.width, 'line-dasharray': dashArray(ap.gc.style, ap.gc.width) } });
+
+      m.addLayer({ id: 'ais-cog-line', type: 'line', source: AIS_COG_SOURCE,
+        paint: { 'line-color': settings.appearance.ais.cog.color, 'line-width': settings.appearance.ais.cog.width, 'line-dasharray': dashArray(settings.appearance.ais.cog.style, settings.appearance.ais.cog.width) } });
+
+      m.addLayer({ id: 'ais-icon', type: 'symbol', source: AIS_SOURCE,
+        layout: {
+          'icon-image': 'ais-icon',
+          'icon-size': settings.appearance.ais.vesselSize / 64,
+          'icon-rotate': ['get', 'bearing_deg'],
+          'icon-rotation-alignment': 'map',
+          'icon-allow-overlap': true,
+          'icon-ignore-placement': true,
+        },
+      });
+
+      m.addLayer({ id: 'ais-label', type: 'symbol', source: AIS_SOURCE,
+        layout: {
+          'text-field': ['get', 'label'],
+          'text-size': 10,
+          'text-anchor': 'top',
+          'text-offset': [0, 0.8],
+          'text-optional': true,
+        },
+        paint: { 'text-color': settings.appearance.ais.vesselColor, 'text-halo-color': '#000', 'text-halo-width': 1 },
+      });
 
       m.addLayer({ id: 'vessel-cog-line', type: 'line', source: COG_SOURCE,
         paint: { 'line-color': ap.cog.color, 'line-width': ap.cog.width, 'line-dasharray': dashArray(ap.cog.style, ap.cog.width) } });
@@ -255,7 +287,57 @@
     map.updateImage('vessel-icon', { width: 64, height: 64, data: iconData.data });
   });
 
-  // Update all layers when vessel state or appearance settings change
+  $effect(() => {
+    if (!map || !mapLoaded) return;
+    const ap = settings.appearance.ais;
+    const aisIconData = makeVesselIconData(64, ap.vesselColor);
+    map.updateImage('ais-icon', { width: 64, height: 64, data: aisIconData.data });
+    map.setLayoutProperty('ais-icon', 'icon-size', ap.vesselSize / 64);
+    map.setPaintProperty('ais-cog-line', 'line-color', ap.cog.color);
+    map.setPaintProperty('ais-cog-line', 'line-width', ap.cog.width);
+    map.setPaintProperty('ais-cog-line', 'line-dasharray', dashArray(ap.cog.style, ap.cog.width));
+    map.setPaintProperty('ais-label', 'text-color', ap.vesselColor);
+  });
+
+  // Update AIS targets on map
+  $effect(() => {
+    if (!map || !mapLoaded) return;
+    const targets = ais.targets;
+    const aisSrc    = map.getSource(AIS_SOURCE);
+    const aisCogSrc = map.getSource(AIS_COG_SOURCE);
+    if (!(aisSrc instanceof maplibregl.GeoJSONSource)) return;
+    if (!(aisCogSrc instanceof maplibregl.GeoJSONSource)) return;
+
+    const pointFeatures: GeoJSON.Feature[] = [];
+    const cogLines: GeoJSON.Feature[] = [];
+
+    for (const t of targets) {
+      if (!t.position) continue;
+      const { longitude, latitude } = t.position;
+      const iconBearingDeg = t.heading !== undefined ? (t.heading * 180) / Math.PI
+                           : t.cog    !== undefined ? (t.cog     * 180) / Math.PI
+                           : 0;
+      const label = t.name ?? '';
+      pointFeatures.push({
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: [longitude, latitude] },
+        properties: { bearing_deg: iconBearingDeg, label },
+      });
+      if (t.cog !== undefined && t.sog !== undefined && t.sog > 0.1) {
+        // COG line: 3-minute vector at current SOG
+        const distM = t.sog * 3 * 60;
+        cogLines.push({
+          type: 'Feature',
+          geometry: { type: 'LineString', coordinates: rhumbCoords(longitude, latitude, t.cog, distM) },
+          properties: {},
+        });
+      }
+    }
+
+    aisSrc.setData({ type: 'FeatureCollection', features: pointFeatures });
+    aisCogSrc.setData({ type: 'FeatureCollection', features: cogLines });
+  });
+
   $effect(() => {
     const ap    = settings.appearance;
     const state = $vesselState;
