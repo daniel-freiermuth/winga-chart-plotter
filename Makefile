@@ -14,7 +14,7 @@ install: ## Install frontend dependencies
 	cd $(APP) && npm install
 
 build-wasm: ## Compile Rust core to WebAssembly
-	$(WASM_PACK) build $(CORE) --target web --out-dir ../$(WASM_OUT)
+	$(WASM_PACK) build $(CORE) --target web --out-dir ../../$(WASM_OUT)
 
 build: build-wasm ## Build WASM + frontend for production
 	cd $(APP) && npm run build

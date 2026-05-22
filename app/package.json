@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "build:wasm": "$HOME/.cargo/bin/wasm-pack build ../crates/core --target web --out-dir ../app/src/wasm"
+    "build:wasm": "$HOME/.cargo/bin/wasm-pack build ../crates/core --target web --out-dir ../../app/src/wasm"
   },
   "dependencies": {
     "maplibre-gl": "^5.0.0",
