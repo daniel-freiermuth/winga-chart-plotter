@@ -61,14 +61,29 @@ pub fn extract_vessel_state(storage: &Storage) -> VesselState {
 }
 
 /// Apply a Signal K stream message (hello / full / delta) to a `Storage`.
-/// Returns an error string on JSON parse failure; unknown/hello messages are silently ignored.
+/// Returns an error string on JSON parse failure; unknown/bad messages are silently ignored.
 pub fn apply_message(storage: &mut Storage, json: &str) -> Result<(), String> {
     let msg: SignalKStreamMessage =
         serde_json::from_str(json).map_err(|e| format!("JSON parse error: {e}"))?;
     match msg {
         SignalKStreamMessage::Full(full) => *storage = Storage::new(full),
-        SignalKStreamMessage::Delta(delta) => storage.update(&delta),
-        SignalKStreamMessage::Hello(_) | SignalKStreamMessage::BadData => {}
+        SignalKStreamMessage::Delta(delta) => {
+            // If self_ is not yet set, infer it from the first delta's context.
+            // A proper hello message will already have set it, but some servers
+            // send deltas without a prior hello.
+            if storage.data().self_.is_empty() {
+                if let Some(ctx) = &delta.context {
+                    storage.set_self(ctx);
+                }
+            }
+            storage.update(&delta);
+        }
+        SignalKStreamMessage::Hello(hello) => {
+            if let Some(self_urn) = hello.self_ {
+                storage.set_self(&self_urn);
+            }
+        }
+        SignalKStreamMessage::BadData => {}
     }
     Ok(())
 }
