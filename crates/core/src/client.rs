@@ -52,9 +52,21 @@ impl SignalKClient {
         let storage: Rc<RefCell<Storage>> =
             Rc::new(RefCell::new(Storage::new(V1FullFormat::default())));
 
-        // onopen
+        // onopen — subscribe to navigation and send status
         let status_cb = on_status_change.clone();
+        let ws_clone = ws.clone();
         let on_open = Closure::wrap(Box::new(move |_: JsValue| {
+            // Subscribe to navigation paths so the server streams them
+            let subscribe_msg = r#"{
+                "context": "vessels.self",
+                "subscribe": [
+                    {"path": "navigation.position",             "period": 500},
+                    {"path": "navigation.courseOverGroundTrue", "period": 500},
+                    {"path": "navigation.speedOverGround",      "period": 500},
+                    {"path": "navigation.headingTrue",          "period": 500}
+                ]
+            }"#;
+            let _ = ws_clone.send_with_str(subscribe_msg);
             let _ = status_cb.call1(&JsValue::NULL, &JsValue::from(ConnectionStatus::Connected));
         }) as Box<dyn FnMut(JsValue)>);
         ws.set_onopen(Some(on_open.as_ref().unchecked_ref()));

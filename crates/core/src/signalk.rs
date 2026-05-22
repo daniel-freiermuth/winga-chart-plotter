@@ -56,7 +56,7 @@ pub fn extract_vessel_state(storage: &Storage) -> VesselState {
         position,
         cog: nav.course_over_ground_true.as_ref().and_then(|v| v.value),
         sog: nav.speed_over_ground.as_ref().and_then(|v| v.value),
-        heading: nav.heading_magnetic.as_ref().and_then(|v| v.value),
+        heading: nav.heading_true.as_ref().and_then(|v| v.value),
     }
 }
 
