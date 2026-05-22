@@ -20,29 +20,38 @@
       return;
     }
 
-    const client = new wasm.SignalKClient(
-      SIGNALK_WS,
-      // on_state_change: Rust calls this when navigation state updates
-      (state: any) => {
-        if (state?.position) {
-          vesselState.set({
-            position: { longitude: state.position.longitude, latitude: state.position.latitude },
-            cog: state.cog ?? null,
-            sog: state.sog ?? null,
-            heading: state.heading ?? null,
-          });
-        }
-      },
-      // on_status_change: Rust calls this on connection events
-      (status: number) => {
+    let client: any;
+    try {
+      client = new wasm.SignalKClient(
+        SIGNALK_WS,
+        // on_state_change: Rust calls this when navigation state updates
+        (state: any) => {
+          console.debug('[signalk] state update', state);
+          if (state?.position) {
+            vesselState.set({
+              position: { longitude: state.position.longitude, latitude: state.position.latitude },
+              cog: state.cog ?? null,
+              sog: state.sog ?? null,
+              heading: state.heading ?? null,
+            });
+          }
+        },
+        // on_status_change: Rust calls this on connection events
         // ConnectionStatus enum: 0=Connecting, 1=Connected, 2=Disconnected, 3=Error
-        connected = status === 1;
-        if (status === 3) error = 'Connection error';
-        if (status === 2) error = null;
-      },
-    );
+        (status: number) => {
+          console.debug('[signalk] status', status);
+          connected = status === 1;
+          if (status === 3) error = 'Connection error';
+          if (status === 2) error = null;
+        },
+      );
+    } catch (e) {
+      error = `Signal K client failed: ${e}`;
+      console.error('[signalk] client creation failed', e);
+      return;
+    }
 
-    return () => client.close();
+    return () => client?.close();
   });
 </script>
 
