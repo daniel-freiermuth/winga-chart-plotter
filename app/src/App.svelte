@@ -4,27 +4,29 @@
   import Settings from './components/Settings.svelte';
   import { vesselState } from './stores/vessel';
   import { settings } from './stores/settings.svelte';
+  import type { SignalKClient, VesselState } from './wasm/signalk_chart_core';
+  import __wbg_init, { SignalKClient as SKClient } from './wasm/signalk_chart_core.js';
 
-  let wasm = $state<any>(null);
+  let wasmReady = $state(false);
   let connected = $state(false);
   let error = $state<string | null>(null);
-  let client: any;
+  let client: SignalKClient | null = null;
 
-  onMount(async () => {
-    try {
-      const mod = await import('./wasm/signalk_chart_core.js');
-      await mod.default();
-      wasm = mod;
-    } catch (e) {
-      error = `WASM load failed: ${e}`;
-    }
+  onMount(() => {
+    void (async () => {
+      try {
+        await __wbg_init();
+        wasmReady = true;
+      } catch (e) {
+        error = `WASM load failed: ${String(e)}`;
+      }
+    })();
     return () => client?.close();
   });
 
-  // Reconnect whenever WASM is ready or the URL actually changes
   let lastUrl = '';
   $effect(() => {
-    if (!wasm) return;
+    if (!wasmReady) return;
     const url = settings.signalkUrl;
     if (url === lastUrl) return;
     lastUrl = url;
@@ -32,12 +34,13 @@
     connected = false;
     error = null;
     try {
-      client = new wasm.SignalKClient(
+      client = new SKClient(
         url,
-        (state: any) => {
-          if (state?.position) {
+        (state: VesselState) => {
+          const pos = state.position;
+          if (pos) {
             vesselState.set({
-              position: { longitude: state.position.longitude, latitude: state.position.latitude },
+              position: { longitude: pos.longitude, latitude: pos.latitude },
               cog: state.cog ?? null,
               sog: state.sog ?? null,
               heading: state.heading ?? null,
@@ -51,7 +54,7 @@
         },
       );
     } catch (e) {
-      error = `Signal K client failed: ${e}`;
+      error = `Signal K client failed: ${String(e)}`;
       console.error('[signalk] client creation failed', e);
     }
   });
@@ -67,7 +70,7 @@
     padding: 6px 12px; border-radius: 6px; font: 12px monospace;
     display: flex; gap: 8px; align-items: center;
   ">
-    <span style="color: {wasm ? '#4ade80' : '#f87171'}">⬟ WASM</span>
+    <span style="color: {wasmReady ? '#4ade80' : '#f87171'}">⬟ WASM</span>
     <span style="color: {connected ? '#4ade80' : '#f87171'}">● Signal K</span>
     {#if error}<span style="color: #f87171">⚠ {error}</span>{/if}
   </div>

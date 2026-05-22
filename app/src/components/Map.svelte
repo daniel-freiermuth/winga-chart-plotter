@@ -2,23 +2,26 @@
   import { onMount, onDestroy } from 'svelte';
   import maplibregl from 'maplibre-gl';
   import 'maplibre-gl/dist/maplibre-gl.css';
+  import type * as GeoJSON from 'geojson';
   import { vesselState } from '../stores/vessel';
   import { settings, type LineAppearance, type LineStyle } from '../stores/settings.svelte';
+
+  type ProjectionId = 'mercator' | 'globe';
 
   let mapContainer: HTMLDivElement;
   let map: maplibregl.Map | undefined;
   let mapLoaded = $state(false);
   let mapZoom   = $state(10);
-  let projection = $state<string>('mercator');
+  let projection = $state<ProjectionId>('mercator');
 
-  const PROJECTIONS: { id: string; label: string }[] = [
+  const PROJECTIONS: { id: ProjectionId; label: string }[] = [
     { id: 'mercator', label: 'Mercator' },
     { id: 'globe',    label: 'Globe'    },
   ];
 
-  function setProjection(id: string) {
+  function setProjection(id: ProjectionId) {
     projection = id;
-    map?.setProjection({ type: id } as any);
+    map?.setProjection({ type: id });
   }
 
   const VESSEL_SOURCE = 'vessel';
@@ -101,7 +104,8 @@
   function makeVesselIconData(size: number, color: string): ImageData {
     const canvas = document.createElement('canvas');
     canvas.width = size; canvas.height = size;
-    const ctx = canvas.getContext('2d')!;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('Could not get 2D canvas context');
     const cx = size / 2, cy = size / 2, s = size / 32;
     ctx.beginPath();
     ctx.moveTo(cx,          cy - 12 * s); // bow
@@ -134,34 +138,37 @@
       },
       center: [10.75, 59.91],
       zoom: 10,
-      projection: { type: 'mercator' },
     });
+
+    map.setProjection({ type: 'mercator' });
 
     map.addControl(new maplibregl.NavigationControl(), 'top-right');
     map.addControl(new maplibregl.ScaleControl(), 'bottom-left');
 
-    map.on('zoom', () => { mapZoom = map!.getZoom(); });
+    map.on('zoom', () => { mapZoom = map?.getZoom() ?? mapZoom; });
 
     map.on('load', () => {
+      const m = map;
+      if (!m) return;
       const ap = settings.appearance;
       const iconData = makeVesselIconData(64, ap.vesselColor);
-      map!.addImage('vessel-icon', { width: 64, height: 64, data: iconData.data });
+      m.addImage('vessel-icon', { width: 64, height: 64, data: iconData.data });
 
-      map!.addSource(VESSEL_SOURCE, { type: 'geojson', data: EMPTY_FC });
-      map!.addSource(COG_SOURCE,    { type: 'geojson', data: EMPTY_FC });
-      map!.addSource(HDG_SOURCE,    { type: 'geojson', data: EMPTY_FC });
-      map!.addSource(GC_SOURCE,     { type: 'geojson', data: EMPTY_FC });
+      m.addSource(VESSEL_SOURCE, { type: 'geojson', data: EMPTY_FC });
+      m.addSource(COG_SOURCE,    { type: 'geojson', data: EMPTY_FC });
+      m.addSource(HDG_SOURCE,    { type: 'geojson', data: EMPTY_FC });
+      m.addSource(GC_SOURCE,     { type: 'geojson', data: EMPTY_FC });
 
-      map!.addLayer({ id: 'vessel-gc-line', type: 'line', source: GC_SOURCE,
+      m.addLayer({ id: 'vessel-gc-line', type: 'line', source: GC_SOURCE,
         paint: { 'line-color': ap.gc.color, 'line-width': ap.gc.width, 'line-dasharray': dashArray(ap.gc.style, ap.gc.width) } });
 
-      map!.addLayer({ id: 'vessel-cog-line', type: 'line', source: COG_SOURCE,
+      m.addLayer({ id: 'vessel-cog-line', type: 'line', source: COG_SOURCE,
         paint: { 'line-color': ap.cog.color, 'line-width': ap.cog.width, 'line-dasharray': dashArray(ap.cog.style, ap.cog.width) } });
 
-      map!.addLayer({ id: 'vessel-hdg-line', type: 'line', source: HDG_SOURCE,
+      m.addLayer({ id: 'vessel-hdg-line', type: 'line', source: HDG_SOURCE,
         paint: { 'line-color': ap.heading.color, 'line-width': ap.heading.width } });
 
-      map!.addLayer({ id: 'vessel-icon', type: 'symbol', source: VESSEL_SOURCE,
+      m.addLayer({ id: 'vessel-icon', type: 'symbol', source: VESSEL_SOURCE,
         layout: {
           'icon-image': 'vessel-icon',
           'icon-size': ap.vesselSize / 64,
@@ -218,12 +225,21 @@
     const orientRad = state.heading ?? state.cog ?? null;
     const bearingDeg = orientRad !== null ? (orientRad * 180) / Math.PI : 0;
 
-    (map.getSource(VESSEL_SOURCE) as maplibregl.GeoJSONSource).setData({
+    const vesselSrc = map.getSource(VESSEL_SOURCE);
+    const cogSrc    = map.getSource(COG_SOURCE);
+    const gcSrc     = map.getSource(GC_SOURCE);
+    const hdgSrc    = map.getSource(HDG_SOURCE);
+    if (!(vesselSrc instanceof maplibregl.GeoJSONSource)) return;
+    if (!(cogSrc    instanceof maplibregl.GeoJSONSource)) return;
+    if (!(gcSrc     instanceof maplibregl.GeoJSONSource)) return;
+    if (!(hdgSrc    instanceof maplibregl.GeoJSONSource)) return;
+
+    vesselSrc.setData({
       type: 'FeatureCollection',
       features: [{ type: 'Feature', geometry: { type: 'Point', coordinates: [longitude, latitude] }, properties: { bearing_deg: bearingDeg } }],
     });
 
-    (map.getSource(COG_SOURCE) as maplibregl.GeoJSONSource).setData(
+    cogSrc.setData(
       state.cog !== null ? { type: 'FeatureCollection', features: [{
         type: 'Feature',
         geometry: { type: 'LineString', coordinates: rhumbCoords(longitude, latitude, state.cog, lineDistM(ap.cog)) },
@@ -231,7 +247,7 @@
       }]} : EMPTY_FC
     );
 
-    (map.getSource(GC_SOURCE) as maplibregl.GeoJSONSource).setData(
+    gcSrc.setData(
       state.cog !== null ? { type: 'FeatureCollection', features: [{
         type: 'Feature',
         geometry: { type: 'LineString', coordinates: gcCoords(longitude, latitude, state.cog, lineDistM(ap.gc)) },
@@ -239,7 +255,7 @@
       }]} : EMPTY_FC
     );
 
-    (map.getSource(HDG_SOURCE) as maplibregl.GeoJSONSource).setData(
+    hdgSrc.setData(
       state.heading !== null ? { type: 'FeatureCollection', features: [{
         type: 'Feature',
         geometry: { type: 'LineString', coordinates: rhumbCoords(longitude, latitude, state.heading, lineDistM(ap.heading)) },
@@ -252,11 +268,11 @@
 <div bind:this={mapContainer} style="width: 100%; height: 100%;"></div>
 
 <div class="projection-picker">
-  {#each PROJECTIONS as p}
+  {#each PROJECTIONS as p (p.id)}
     <button
       class="proj-btn"
       class:active={projection === p.id}
-      onclick={() => setProjection(p.id)}
+      onclick={() => { setProjection(p.id); }}
     >{p.label}</button>
   {/each}
 </div>

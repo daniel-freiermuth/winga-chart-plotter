@@ -44,23 +44,26 @@ function load(): SettingsData {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
-      const p = JSON.parse(raw);
-      return {
-        ...DEFAULTS, ...p,
-        appearance: {
-          ...DEFAULTS.appearance, ...(p.appearance ?? {}),
-          heading: { ...DEFAULTS.appearance.heading, ...(p.appearance?.heading ?? {}) },
-          cog:     { ...DEFAULTS.appearance.cog,     ...(p.appearance?.cog     ?? {}) },
-          gc:      { ...DEFAULTS.appearance.gc,      ...(p.appearance?.gc      ?? {}) },
-        },
-      };
+      const parsed: unknown = JSON.parse(raw);
+      if (typeof parsed === 'object' && parsed !== null) {
+        const p = parsed as Partial<SettingsData>;
+        return {
+          ...DEFAULTS, ...p,
+          appearance: {
+            ...DEFAULTS.appearance, ...(p.appearance ?? {}),
+            heading: { ...DEFAULTS.appearance.heading, ...(p.appearance?.heading ?? {}) },
+            cog:     { ...DEFAULTS.appearance.cog,     ...(p.appearance?.cog     ?? {}) },
+            gc:      { ...DEFAULTS.appearance.gc,      ...(p.appearance?.gc      ?? {}) },
+          },
+        };
+      }
     }
-  } catch {}
+  } catch { /* ignore corrupt storage */ }
   return structuredClone(DEFAULTS);
 }
 
 function createSettings() {
-  let data = $state<SettingsData>(load());
+  const data = $state<SettingsData>(load());
 
   return {
     get protocol(): 'ws' | 'wss' { return data.signalkProtocol; },
@@ -68,7 +71,7 @@ function createSettings() {
     get port(): number            { return data.signalkPort; },
     get appearance(): AppearanceSettings { return data.appearance; },
     get signalkUrl(): string {
-      return `${data.signalkProtocol}://${data.signalkHost}:${data.signalkPort}${SIGNALK_PATH}`;
+      return `${data.signalkProtocol}://${data.signalkHost}:${String(data.signalkPort)}${SIGNALK_PATH}`;
     },
     apply(next: SettingsData) {
       data.signalkProtocol = next.signalkProtocol;

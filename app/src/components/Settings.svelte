@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { settings, type SettingsData } from '../stores/settings.svelte';
+  import { settings, type AppearanceSettings } from '../stores/settings.svelte';
 
   let open = $state(false);
   let tab  = $state<'connection' | 'appearance'>('connection');
@@ -33,7 +33,7 @@
       signalkProtocol: settings.protocol,
       signalkHost:     settings.host,
       signalkPort:     settings.port,
-      appearance:      JSON.parse(appearanceSnapshot),
+      appearance:      JSON.parse(appearanceSnapshot) as AppearanceSettings,
     });
     open = false;
   }
@@ -106,7 +106,7 @@
       </div>
 
       <p class="section-title">Heading line</p>
-      {#each [{ key: 'heading', label: 'Heading' }, { key: 'cog', label: 'Rhumb Line predictor' }, { key: 'gc', label: 'Great Circle predictor' }] as { key, label }}
+      {#each [{ key: 'heading' }, { key: 'cog' }, { key: 'gc' }] as { key } (key)}
         {@const line = key === 'heading' ? settings.appearance.heading : key === 'cog' ? settings.appearance.cog : settings.appearance.gc}
         <div class="row">
           <label>Color</label>
