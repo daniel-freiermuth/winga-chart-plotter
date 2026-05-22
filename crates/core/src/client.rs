@@ -2,8 +2,9 @@
 //! Owns the connection lifecycle and vessel state accumulation.
 //! Calls back into JS when state or connection status changes.
 
-use crate::signalk::{apply_signalk_delta, VesselState};
+use crate::signalk::{apply_message, extract_vessel_state};
 use js_sys::Function;
+use signalk::{Storage, V1FullFormat};
 use std::{cell::RefCell, rc::Rc};
 use wasm_bindgen::{prelude::*, JsCast};
 use web_sys::{CloseEvent, ErrorEvent, MessageEvent, WebSocket};
@@ -19,8 +20,8 @@ pub enum ConnectionStatus {
 
 /// Signal K WebSocket client.
 ///
-/// Opens a WebSocket, parses incoming deltas in Rust, and calls
-/// `on_state_change` whenever navigation state changes, and
+/// Opens a WebSocket, parses incoming messages in Rust via the `signalk` crate,
+/// and calls `on_state_change` whenever navigation state changes, and
 /// `on_status_change` whenever the connection status changes.
 #[wasm_bindgen]
 pub struct SignalKClient {
@@ -48,7 +49,8 @@ impl SignalKClient {
     ) -> Result<SignalKClient, JsValue> {
         let ws = WebSocket::new(url)?;
 
-        let state: Rc<RefCell<VesselState>> = Rc::new(RefCell::new(VesselState::new()));
+        let storage: Rc<RefCell<Storage>> =
+            Rc::new(RefCell::new(Storage::new(V1FullFormat::default())));
 
         // onopen
         let status_cb = on_status_change.clone();
@@ -57,20 +59,19 @@ impl SignalKClient {
         }) as Box<dyn FnMut(JsValue)>);
         ws.set_onopen(Some(on_open.as_ref().unchecked_ref()));
 
-        // onmessage — parse delta in Rust, call back with updated state
-        let state_clone = state.clone();
+        // onmessage — parse in Rust via signalk crate, call back with updated state
+        let storage_clone = storage.clone();
         let state_cb = on_state_change.clone();
         let on_message = Closure::wrap(Box::new(move |e: MessageEvent| {
             let Some(text) = e.data().as_string() else {
                 return;
             };
-            let current = state_clone.borrow().clone();
-            let Ok(new_state) = apply_signalk_delta(&current, &text) else {
+            if apply_message(&mut storage_clone.borrow_mut(), &text).is_err() {
                 return;
-            };
-            *state_clone.borrow_mut() = new_state.clone();
-            if new_state.position.is_some() {
-                let js_val = serde_wasm_bindgen::to_value(&new_state).unwrap_or(JsValue::NULL);
+            }
+            let state = extract_vessel_state(&storage_clone.borrow());
+            if state.position.is_some() {
+                let js_val = serde_wasm_bindgen::to_value(&state).unwrap_or(JsValue::NULL);
                 let _ = state_cb.call1(&JsValue::NULL, &js_val);
             }
         }) as Box<dyn FnMut(MessageEvent)>);

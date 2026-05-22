@@ -5,7 +5,7 @@ pub mod signalk;
 pub mod client;
 
 pub use projection::{Projection, WebMercator};
-pub use signalk::{apply_signalk_delta, parse_signalk_delta, Position, VesselState};
+pub use signalk::{Position, VesselState};
 
 #[cfg(target_arch = "wasm32")]
 pub use client::{ConnectionStatus, SignalKClient};

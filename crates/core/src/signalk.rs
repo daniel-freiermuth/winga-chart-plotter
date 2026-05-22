@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use signalk::{SignalKStreamMessage, Storage};
 use wasm_bindgen::prelude::*;
 
 /// A geographic position with optional accuracy metadata.
@@ -36,62 +37,57 @@ impl VesselState {
     }
 }
 
-/// Core Signal K delta parsing logic, usable on all targets including native tests.
-pub fn apply_signalk_delta(state: &VesselState, delta_json: &str) -> Result<VesselState, String> {
-    let delta: serde_json::Value = serde_json::from_str(delta_json)
-        .map_err(|e| format!("JSON parse error: {e}"))?;
+/// Extract our chart-relevant fields from a `signalk::Storage` snapshot.
+pub fn extract_vessel_state(storage: &Storage) -> VesselState {
+    let Some(vessel) = storage.data().get_self() else {
+        return VesselState::default();
+    };
+    let Some(nav) = &vessel.navigation else {
+        return VesselState::default();
+    };
 
-    let mut new_state = state.clone();
+    let position = nav.position.as_ref().and_then(|p| p.value.as_ref()).map(|v| Position {
+        longitude: v.longitude,
+        latitude: v.latitude,
+        altitude: v.altitude,
+    });
 
-    if let Some(updates) = delta.get("updates").and_then(|u| u.as_array()) {
-        for update in updates {
-            if let Some(values) = update.get("values").and_then(|v| v.as_array()) {
-                for value in values {
-                    let path = value.get("path").and_then(|p| p.as_str()).unwrap_or("");
-                    let v = &value["value"];
-                    match path {
-                        "navigation.position" => {
-                            if let (Some(lon), Some(lat)) = (
-                                v.get("longitude").and_then(|x| x.as_f64()),
-                                v.get("latitude").and_then(|x| x.as_f64()),
-                            ) {
-                                new_state.position = Some(Position::new(lon, lat));
-                            }
-                        }
-                        "navigation.courseOverGroundTrue" => {
-                            new_state.cog = v.as_f64();
-                        }
-                        "navigation.speedOverGround" => {
-                            new_state.sog = v.as_f64();
-                        }
-                        "navigation.headingMagnetic" => {
-                            new_state.heading = v.as_f64();
-                        }
-                        _ => {}
-                    }
-                }
-            }
-        }
+    VesselState {
+        position,
+        cog: nav.course_over_ground_true.as_ref().and_then(|v| v.value),
+        sog: nav.speed_over_ground.as_ref().and_then(|v| v.value),
+        heading: nav.heading_magnetic.as_ref().and_then(|v| v.value),
     }
-
-    Ok(new_state)
 }
 
-/// Parse a Signal K delta JSON string and update a VesselState.
-/// WASM entry point — wraps `apply_signalk_delta` with a JS-compatible error type.
-#[wasm_bindgen]
-pub fn parse_signalk_delta(state: &VesselState, delta_json: &str) -> Result<VesselState, JsValue> {
-    apply_signalk_delta(state, delta_json).map_err(|e| JsValue::from_str(&e))
+/// Apply a Signal K stream message (hello / full / delta) to a `Storage`.
+/// Returns an error string on JSON parse failure; unknown/hello messages are silently ignored.
+pub fn apply_message(storage: &mut Storage, json: &str) -> Result<(), String> {
+    let msg: SignalKStreamMessage =
+        serde_json::from_str(json).map_err(|e| format!("JSON parse error: {e}"))?;
+    match msg {
+        SignalKStreamMessage::Full(full) => *storage = Storage::new(full),
+        SignalKStreamMessage::Delta(delta) => storage.update(&delta),
+        SignalKStreamMessage::Hello(_) | SignalKStreamMessage::BadData => {}
+    }
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use signalk::V1FullFormat;
+
+    fn make_storage_with_delta(delta_json: &str) -> Storage {
+        let mut storage = Storage::new(V1FullFormat::default());
+        apply_message(&mut storage, delta_json).unwrap();
+        storage
+    }
 
     #[test]
     fn parse_position_delta() {
-        let state = VesselState::new();
         let delta = r#"{
+            "context": "vessels.urn:mrn:signalk:uuid:test",
             "updates": [{
                 "values": [{
                     "path": "navigation.position",
@@ -99,24 +95,31 @@ mod tests {
                 }]
             }]
         }"#;
-        let updated = apply_signalk_delta(&state, delta).unwrap();
-        let pos = updated.position.unwrap();
+        // Storage with a known self_ id matching the context
+        let mut storage = Storage::new(V1FullFormat::default());
+        storage.set_self("vessels.urn:mrn:signalk:uuid:test");
+        apply_message(&mut storage, delta).unwrap();
+        let state = extract_vessel_state(&storage);
+        let pos = state.position.unwrap();
         assert!((pos.longitude - 10.75).abs() < 1e-9);
         assert!((pos.latitude - 59.91).abs() < 1e-9);
     }
 
     #[test]
     fn ignore_unknown_paths() {
-        let state = VesselState::new();
-        let delta = r#"{"updates": [{"values": [{"path": "unknown.path", "value": 42}]}]}"#;
-        let updated = apply_signalk_delta(&state, delta).unwrap();
-        assert!(updated.position.is_none());
+        let delta = r#"{
+            "context": "vessels.urn:mrn:signalk:uuid:test",
+            "updates": [{"values": [{"path": "unknown.path", "value": 42}]}]
+        }"#;
+        let storage = make_storage_with_delta(delta);
+        let state = extract_vessel_state(&storage);
+        assert!(state.position.is_none());
     }
 
     #[test]
     fn malformed_json_returns_error() {
-        let state = VesselState::new();
-        let result = apply_signalk_delta(&state, "not json");
+        let mut storage = Storage::new(V1FullFormat::default());
+        let result = apply_message(&mut storage, "not json");
         assert!(result.is_err());
     }
 }
