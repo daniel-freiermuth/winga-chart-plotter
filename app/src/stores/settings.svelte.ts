@@ -38,7 +38,7 @@ const DEFAULTS: SettingsData = {
   },
 };
 
-const SIGNALK_PATH = '/signalk/v1/stream?subscribe=self';
+const SIGNALK_PATH     = '/signalk/v1/stream?subscribe=self';
 
 function load(): SettingsData {
   try {
@@ -72,6 +72,10 @@ function createSettings() {
     get appearance(): AppearanceSettings { return data.appearance; },
     get signalkUrl(): string {
       return `${data.signalkProtocol}://${data.signalkHost}:${String(data.signalkPort)}${SIGNALK_PATH}`;
+    },
+    get signalkHttpUrl(): string {
+      const proto = data.signalkProtocol === 'wss' ? 'https' : 'http';
+      return `${proto}://${data.signalkHost}:${String(data.signalkPort)}`;
     },
     apply(next: SettingsData) {
       data.signalkProtocol = next.signalkProtocol;

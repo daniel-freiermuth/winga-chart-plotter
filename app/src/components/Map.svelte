@@ -5,6 +5,8 @@
   import type * as GeoJSON from 'geojson';
   import { vesselState } from '../stores/vessel';
   import { settings, type LineAppearance, type LineStyle } from '../stores/settings.svelte';
+  import { charts } from '../stores/charts.svelte';
+  import { baseLayers, BASE_LAYERS } from '../stores/baseLayers.svelte';
 
   type ProjectionId = 'mercator' | 'globe';
 
@@ -184,7 +186,69 @@
 
   onDestroy(() => { map?.remove(); });
 
-  // Update vessel icon when color changes
+  // Add / remove chart tile layers when selection changes
+  $effect(() => {
+    if (!map || !mapLoaded) return;
+    const m   = map;
+    const sel = charts.selected;
+    const avail = charts.available;
+
+    // Remove deselected chart layers
+    for (const id of Object.keys(avail)) {
+      if (!sel.has(id)) {
+        const layerId  = `chart-layer-${id}`;
+        const sourceId = `chart-${id}`;
+        if (m.getLayer(layerId))   m.removeLayer(layerId);
+        if (m.getSource(sourceId)) m.removeSource(sourceId);
+      }
+    }
+
+    // Add newly selected chart layers below vessel overlays
+    for (const [id, chart] of Object.entries(avail)) {
+      if (!sel.has(id) || !chart.url) continue;
+      const tileUrl  = charts.tileUrl(chart.url);
+      const sourceId = `chart-${id}`;
+      const layerId  = `chart-layer-${id}`;
+      if (!m.getSource(sourceId)) {
+        if (chart.format === 'pbf') {
+          m.addSource(sourceId, { type: 'vector', tiles: [tileUrl] });
+        } else if (chart.type === 'WMS') {
+          m.addSource(sourceId, {
+            type: 'raster',
+            tiles: [tileUrl],
+            tileSize: 256,
+          });
+        } else {
+          m.addSource(sourceId, {
+            type: 'raster',
+            tiles: [tileUrl],
+            tileSize: 256,
+            minzoom: chart.minzoom ?? 0,
+            maxzoom: chart.maxzoom ?? 22,
+          });
+        }
+      }
+      if (!m.getLayer(layerId)) {
+        if (chart.format === 'pbf') {
+          const sourceLayer = chart.layers?.[0] ?? id;
+          m.addLayer({ id: layerId, type: 'fill', source: sourceId, 'source-layer': sourceLayer }, 'vessel-gc-line');
+        } else {
+          m.addLayer({ id: layerId, type: 'raster', source: sourceId }, 'vessel-gc-line');
+        }
+      }
+    }
+  });
+
+  // Toggle base layer visibility when store changes
+  $effect(() => {
+    if (!map || !mapLoaded) return;
+    const enabled = baseLayers.enabled;
+    for (const layer of BASE_LAYERS) {
+      map.setLayoutProperty(layer.id, 'visibility', enabled.has(layer.id) ? 'visible' : 'none');
+    }
+  });
+
+
   $effect(() => {
     if (!map || !mapLoaded) return;
     const iconData = makeVesselIconData(64, settings.appearance.vesselColor);

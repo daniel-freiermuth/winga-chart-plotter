@@ -2,8 +2,10 @@
   import { onMount } from 'svelte';
   import Map from './components/Map.svelte';
   import Settings from './components/Settings.svelte';
+  import ChartPicker from './components/ChartPicker.svelte';
   import { vesselState } from './stores/vessel';
   import { settings } from './stores/settings.svelte';
+  import { charts } from './stores/charts.svelte';
   import type { SignalKClient, VesselState } from './wasm/signalk_chart_core';
   import __wbg_init, { SignalKClient as SKClient } from './wasm/signalk_chart_core.js';
 
@@ -49,6 +51,7 @@
         },
         (status: number) => {
           connected = status === 1;
+          if (status === 1) void charts.load(settings.signalkHttpUrl);
           if (status === 3) error = 'Connection error';
           if (status === 2) error = null;
         },
@@ -63,6 +66,7 @@
 <div style="position: relative; width: 100%; height: 100%;">
   <Map />
   <Settings />
+  <ChartPicker />
 
   <div style="
     position: absolute; top: 10px; left: 10px; z-index: 10;
