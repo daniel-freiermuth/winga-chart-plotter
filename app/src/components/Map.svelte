@@ -22,11 +22,6 @@
   let mapZoom   = $state(10);
   let projection = $state<ProjectionId>('mercator');
 
-  const PROJECTIONS: { id: ProjectionId; label: string }[] = [
-    { id: 'mercator', label: 'Mercator' },
-    { id: 'globe',    label: 'Globe'    },
-  ];
-
   function setProjection(id: ProjectionId) {
     projection = id;
     map?.setProjection({ type: id });
@@ -598,39 +593,35 @@
 <div bind:this={mapContainer} style="width: 100%; height: 100%;"></div>
 
 <div class="projection-picker">
-  {#each PROJECTIONS as p (p.id)}
-    <button
-      class="proj-btn"
-      class:active={projection === p.id}
-      onclick={() => { setProjection(p.id); }}
-    >{p.label}</button>
-  {/each}
+  <button
+    class="proj-btn"
+    title="Switch to {projection === 'mercator' ? 'Globe' : 'Mercator'}"
+    onclick={() => { setProjection(projection === 'mercator' ? 'globe' : 'mercator'); }}
+  >{projection === 'mercator' ? '🌐' : '🗺'}</button>
 </div>
 
 <style>
   .projection-picker {
     position: absolute;
-    bottom: 36px;
-    right: 10px;
+    top: 160px;
+    left: 10px;
     z-index: 10;
     display: flex;
     flex-direction: column;
     gap: 3px;
-    align-items: flex-end;
+    align-items: flex-start;
   }
   .proj-btn {
-    background: rgba(0,0,0,0.72);
-    border: 1px solid rgba(255,255,255,0.15);
-    color: #ccc;
-    padding: 3px 9px;
-    border-radius: 5px;
+    background: rgba(0,0,0,0.7);
+    border: none;
+    color: white;
+    padding: 6px 10px;
+    border-radius: 6px;
     cursor: pointer;
-    font-size: 12px;
-    white-space: nowrap;
-    transition: background 0.15s, color 0.15s;
+    font-size: 16px;
+    transition: background 0.15s;
   }
-  .proj-btn:hover { background: rgba(40,40,80,0.9); color: white; }
-  .proj-btn.active { background: rgba(37,99,235,0.85); color: white; border-color: #3b82f6; }
+  .proj-btn:hover { background: rgba(40,40,80,0.9); }
 
   :global(.ais-popup) {
     font-family: system-ui, sans-serif;
