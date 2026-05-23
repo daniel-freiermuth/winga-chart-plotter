@@ -264,8 +264,10 @@
     }); // end style.load
 
     // Event handlers on the Map object persist across style reloads — register once.
-    const showAisPopup = (e: maplibregl.MapMouseEvent & { features?: maplibregl.MapGeoJSONFeature[] }) => {
-      const feature = e.features?.[0];
+    // Query both AIS layers at once to avoid double-popup when icon and fill overlap.
+    const showAisPopup = (e: maplibregl.MapMouseEvent) => {
+      const features = map!.queryRenderedFeatures(e.point, { layers: ['ais-icon', 'ais-vessel-fill'] });
+      const feature = features[0];
       if (!feature) return;
       const p = feature.properties as Record<string, string | number | null>;
       const coords = feature.geometry.type === 'Point'
@@ -311,8 +313,7 @@
     map.on('mouseleave', 'ais-icon',         () => { map!.getCanvas().style.cursor = ''; });
     map.on('mouseenter', 'ais-vessel-fill',  () => { map!.getCanvas().style.cursor = 'pointer'; });
     map.on('mouseleave', 'ais-vessel-fill',  () => { map!.getCanvas().style.cursor = ''; });
-    map.on('click', 'ais-icon',        showAisPopup);
-    map.on('click', 'ais-vessel-fill', showAisPopup);
+    map.on('click', showAisPopup);
 
     // On WebGL context loss, mark map as not ready. MapLibre internally calls setStyle()
     // on context restore, which re-fires style.load — that re-adds our sources/layers
