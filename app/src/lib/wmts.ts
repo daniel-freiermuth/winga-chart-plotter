@@ -1,10 +1,3 @@
-/**
- * WMTS GetCapabilities parser.
- *
- * Fetches and parses a WMTS capabilities document, returning a MapLibre-compatible
- * XYZ tile URL template and the resolved layer / format info.
- */
-
 export interface WmtsLayerInfo {
   id: string;
   title: string;
@@ -15,75 +8,14 @@ export interface WmtsInfo {
   tileUrlTemplate: string;
   layerName: string;
   tileMatrixSet: string;
-  format: string;   // mime type, e.g. "image/png"
-  /** All layers available from the service */
+  format: string;
   availableLayers: WmtsLayerInfo[];
 }
 
-/**
- * Fetch WMTS GetCapabilities and return a resolved MapLibre tile URL.
- *
- * @param baseUrl     The WMTS service base URL (no query string needed)
- * @param preferLayer Optional layer identifier to prefer; otherwise the first
- *                    layer compatible with EPSG:3857 / WebMercatorQuad is used.
- */
-export async function resolveWmtsTileUrl(
+async function fetchAndParse(
   baseUrl: string,
   preferLayer?: string,
 ): Promise<WmtsInfo> {
-  const doc = await fetchCapabilities(baseUrl);
-
-  const compatibleTms = findCompatibleTileMatrixSets(doc);
-  if (compatibleTms.size === 0) {
-    throw new Error('WMTS service has no EPSG:3857 / WebMercatorQuad tile matrix sets');
-  }
-
-  const layers = Array.from(doc.querySelectorAll('Contents > Layer'));
-  if (layers.length === 0) throw new Error('WMTS service returned no layers');
-
-  const availableLayers: WmtsLayerInfo[] = layers.map(l => ({
-    id:    qs(l, 'Identifier') ?? '',
-    title: qs(l, 'Title')      ?? qs(l, 'Identifier') ?? '',
-  }));
-
-  // Pick the preferred or first layer that links to a compatible TileMatrixSet
-  const targetLayer = pickLayer(layers, compatibleTms, preferLayer);
-  const sep = baseUrl.includes('?') ? '&' : '?';
-  return buildInfo(baseUrl, sep, targetLayer, compatibleTms, availableLayers);
-}
-
-/**
- * Build a WmtsInfo for a specific layer identifier, re-fetching capabilities.
- */
-export async function resolveWmtsLayer(
-  baseUrl: string,
-  layerId: string,
-): Promise<WmtsInfo> {
-  const doc = await fetchCapabilities(baseUrl);
-
-  const compatibleTms = findCompatibleTileMatrixSets(doc);
-  const layers        = Array.from(doc.querySelectorAll('Contents > Layer'));
-
-  const availableLayers: WmtsLayerInfo[] = layers.map(l => ({
-    id:    qs(l, 'Identifier') ?? '',
-    title: qs(l, 'Title')      ?? qs(l, 'Identifier') ?? '',
-  }));
-
-  const targetLayer = pickLayer(layers, compatibleTms, layerId);
-  const sep = baseUrl.includes('?') ? '&' : '?';
-  return buildInfo(baseUrl, sep, targetLayer, compatibleTms, availableLayers);
-}
-
-// ---------------------------------------------------------------------------
-// Capabilities fetcher — tries KVP then REST endpoint
-// ---------------------------------------------------------------------------
-
-/**
- * Fetch and parse a WMTS GetCapabilities document.
- * Tries KVP style first (?SERVICE=WMTS&REQUEST=GetCapabilities),
- * then REST style (/WMTSCapabilities.xml and /1.0.0/WMTSCapabilities.xml).
- */
-async function fetchCapabilities(baseUrl: string): Promise<Document> {
   const base = baseUrl.replace(/\/+$/, '');
   const candidates = [
     // KVP
@@ -96,13 +28,14 @@ async function fetchCapabilities(baseUrl: string): Promise<Document> {
   const errors: string[] = [];
   for (const url of candidates) {
     try {
-      const res = await fetch(url);
+      const res = await fetch(url, { signal: AbortSignal.timeout(30_000) });
       if (!res.ok) { errors.push(`${url} → ${res.status}`); continue; }
       const xml = await res.text();
       const doc = new DOMParser().parseFromString(xml, 'text/xml');
-      // Confirm it's actually a capabilities doc
-      if (doc.querySelector('Capabilities, WMT_MS_Capabilities')) return doc;
-      errors.push(`${url} → not a WMTS capabilities document`);
+      if (!doc.querySelector('Capabilities, WMT_MS_Capabilities')) {
+        errors.push(`${url} → not a WMTS capabilities document`); continue;
+      }
+      return parseDoc(doc, baseUrl, preferLayer);
     } catch (e) {
       errors.push(`${url} → ${String(e)}`);
     }
@@ -110,16 +43,30 @@ async function fetchCapabilities(baseUrl: string): Promise<Document> {
   throw new Error(`WMTS GetCapabilities failed:\n${errors.join('\n')}`);
 }
 
-// ---------------------------------------------------------------------------
-// Shared builder
-// ---------------------------------------------------------------------------
+function parseDoc(doc: Document, baseUrl: string, preferLayer?: string): WmtsInfo {
+  const compatibleTms = findCompatibleTileMatrixSets(doc);
+  if (compatibleTms.size === 0) throw new Error('No EPSG:3857 / WebMercatorQuad tile matrix sets');
+
+  const layers = Array.from(doc.querySelectorAll('Contents > Layer'));
+  if (layers.length === 0) throw new Error('No layers in capabilities document');
+
+  const availableLayers = layers.map(l => ({
+    id:    qs(l, 'Identifier') ?? '',
+    title: qs(l, 'Title') ?? qs(l, 'Identifier') ?? '',
+  }));
+
+  const targetLayer = pickLayer(layers, compatibleTms, preferLayer);
+  const sep = baseUrl.includes('?') ? '&' : '?';
+  return buildInfo(baseUrl, sep, targetLayer, compatibleTms, availableLayers);
+}
+
 
 function buildInfo(
   baseUrl: string,
   sep: string,
   targetLayer: Element,
   compatibleTms: Set<string>,
-  availableLayers: WmtsLayerInfo[],
+  availableLayers: Array<{ id: string; title: string }>,
 ): WmtsInfo {
   const layerName = qs(targetLayer, 'Identifier') ?? '';
   const fmt       = qs(targetLayer, 'Format') ?? 'image/png';
@@ -201,4 +148,16 @@ function pickTileMatrixSet(layer: Element, compatibleTms: Set<string>): string {
 /** Query selector shorthand that returns the element's text content */
 function qs(el: Element | Document, selector: string): string | null {
   return el.querySelector(selector)?.textContent ?? null;
+}
+
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
+
+export function resolveWmtsTileUrl(baseUrl: string, preferLayer?: string): Promise<WmtsInfo> {
+  return fetchAndParse(baseUrl, preferLayer);
+}
+
+export function resolveWmtsLayer(baseUrl: string, layerId: string): Promise<WmtsInfo> {
+  return fetchAndParse(baseUrl, layerId);
 }
