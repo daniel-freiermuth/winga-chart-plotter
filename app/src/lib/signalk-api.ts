@@ -3,18 +3,82 @@ export interface Chart {
   identifier: string;
   name: string;
   description?: string;
-  /** XYZ tile URL — may be relative (starting with /signalk/) */
-  url: string;
+  /** Base URL for WMS/WMTS, or XYZ tile template for tilelayer */
+  url?: string;
   format: string;           // "png" | "jpg" | "pbf" etc.
-  type: string;             // "tilelayer" | "WMS"
+  type: string;             // "tilelayer" | "WMS" | "WMTS"
   minzoom?: number;
   maxzoom?: number;
   scale?: number;
   bounds?: [number, number, number, number];
   layers?: string[];
+  /** WMS version override, e.g. "1.1.1" or "1.3.0" (default: "1.3.0") */
+  wmsVersion?: string;
 }
 
 export type ChartRecord = Record<string, Chart>;
+
+/**
+ * Build a MapLibre-compatible raster tile URL for a chart.
+ *
+ * - tilelayer / pbf → resolve relative URL, return as-is (already an XYZ template)
+ * - WMS            → build a GetMap URL with {bbox-epsg-3857}
+ * - WMTS KVP       → build a GetTile URL with {z}/{x}/{y} tokens
+ * - WMTS REST      → treat as XYZ (the URL already contains tile path tokens)
+ */
+export function buildTileUrl(chart: Chart, serverBase: string): string | null {
+  if (!chart.url) return null;
+  const base = chart.url.startsWith('/') ? `${serverBase}${chart.url}` : chart.url;
+
+  if (chart.type === 'WMS') {
+    const layers = chart.layers?.join(',') ?? '';
+    const fmt = mimeType(chart.format);
+    const ver = chart.wmsVersion ?? '1.3.0';
+    // CRS parameter name differs between WMS 1.1.x (SRS) and 1.3.0 (CRS)
+    const crsParam = ver.startsWith('1.1') ? 'SRS' : 'CRS';
+    const sep = base.includes('?') ? '&' : '?';
+    return (
+      `${base}${sep}SERVICE=WMS&VERSION=${ver}&REQUEST=GetMap` +
+      `&${crsParam}=EPSG:3857&BBOX={bbox-epsg-3857}` +
+      `&WIDTH=256&HEIGHT=256` +
+      `&LAYERS=${encodeURIComponent(layers)}` +
+      `&STYLES=` +
+      `&FORMAT=${encodeURIComponent(fmt)}` +
+      `&TRANSPARENT=TRUE`
+    );
+  }
+
+  if (chart.type === 'WMTS') {
+    // Detect KVP-style by presence of "?" or absence of "{z}" in URL
+    if (!base.includes('{z}')) {
+      const layers = chart.layers?.[0] ?? '';
+      const fmt = mimeType(chart.format);
+      const sep = base.includes('?') ? '&' : '?';
+      return (
+        `${base}${sep}SERVICE=WMTS&VERSION=1.0.0&REQUEST=GetTile` +
+        `&LAYER=${encodeURIComponent(layers)}` +
+        `&TILEMATRIXSET=EPSG:3857&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}` +
+        `&FORMAT=${encodeURIComponent(fmt)}`
+      );
+    }
+    // REST-style WMTS already has {z}/{x}/{y} tokens — use as-is
+    return base;
+  }
+
+  // tilelayer / pbf: already an XYZ template
+  return base;
+}
+
+function mimeType(format: string): string {
+  switch (format.toLowerCase()) {
+    case 'png':  return 'image/png';
+    case 'jpg':
+    case 'jpeg': return 'image/jpeg';
+    case 'pbf':  return 'application/vnd.mapbox-vector-tile';
+    case 'webp': return 'image/webp';
+    default:     return `image/${format}`;
+  }
+}
 
 export async function fetchCharts(serverBase: string): Promise<ChartRecord> {
   const res = await fetch(`${serverBase}/signalk/v2/api/resources/charts`);
@@ -58,7 +122,4 @@ export async function fetchVesselInfo(serverBase: string): Promise<Map<string, V
   return map;
 }
 
-export function resolveTileUrl(url: string, serverBase: string): string {
-  if (url.startsWith('/')) return `${serverBase}${url}`;
-  return url;
-}
+

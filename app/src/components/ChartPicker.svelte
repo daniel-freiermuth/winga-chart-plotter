@@ -3,9 +3,15 @@
   import { baseLayers, BASE_LAYERS } from '../stores/baseLayers.svelte';
 
   let open = $state(false);
+  // Track pending manual URL inputs per chart id
+  let manualInputs = $state<Record<string, string>>({});
 
   function toggle() { open = !open; }
   function close()  { open = false; }
+
+  function applyManualUrl(id: string) {
+    charts.setOverride(id, manualInputs[id] ?? '');
+  }
 </script>
 
 <!-- Layers button -->
@@ -55,12 +61,61 @@
               type="checkbox"
               id="cp-chart-{id}"
               checked={charts.selected.has(id)}
+              disabled={charts.needsManualUrl(id)}
               onchange={() => { charts.toggle(id); }}
             />
             <div class="chart-info">
-              <label for="cp-chart-{id}" class="chart-name">{chart.name}</label>
+              <label for="cp-chart-{id}" class="chart-name">
+                {chart.name}
+                {#if chart.type === 'WMS'}<span class="badge">WMS</span>{/if}
+                {#if chart.type === 'WMTS'}<span class="badge">WMTS</span>{/if}
+              </label>
               {#if chart.description}<span class="chart-desc">{chart.description}</span>{/if}
               <span class="chart-meta">{chart.format.toUpperCase()}{chart.scale ? ` · 1:${chart.scale.toLocaleString()}` : ''}</span>
+              {#if charts.needsManualUrl(id)}
+                <span class="wmts-warning">⚠ Cannot auto-discover tile URL (CORS). Enter template manually:</span>
+                <div class="wmts-manual">
+                  <input
+                    type="text"
+                    class="wmts-input"
+                    placeholder={"https://…/{z}/{x}/{y}.png"}
+                    value={manualInputs[id] ?? charts.getOverride(id)}
+                    oninput={(e) => { manualInputs[id] = (e.target as HTMLInputElement).value; }}
+                    onkeydown={(e) => { if (e.key === 'Enter') applyManualUrl(id); }}
+                  />
+                  <button class="wmts-apply" onclick={() => applyManualUrl(id)}>Apply</button>
+                </div>
+              {:else if chart.type === 'WMTS' && charts.getOverride(id)}
+                <span class="wmts-ok">✓ Custom URL active</span>
+                <button class="wmts-clear" onclick={() => { charts.setOverride(id, ''); manualInputs[id] = ''; }}>Clear</button>
+              {:else if chart.type === 'WMTS'}
+                {#if (charts.visibleLayers(id).length) > 1}
+                  <div class="wmts-layer-row">
+                    <label class="wmts-layer-label" for="wmts-layer-{id}">Layer</label>
+                    <select
+                      id="wmts-layer-{id}"
+                      class="wmts-layer-select"
+                      value={charts.getLayerSel(id)}
+                      onchange={(e) => { void charts.selectLayer(id, (e.target as HTMLSelectElement).value); }}
+                    >
+                      {#each charts.visibleLayers(id) as layer (layer.id)}
+                        <option value={layer.id}>{layer.title}</option>
+                      {/each}
+                    </select>
+                    {#if charts.hasFilter(id)}
+                      <label class="wmts-showall-label" title="Show all layers from capabilities">
+                        <input
+                          type="checkbox"
+                          checked={charts.isShowingAll(id)}
+                          onchange={() => charts.toggleShowAll(id)}
+                        /> All
+                      </label>
+                    {/if}
+                  </div>
+                {:else if charts.visibleLayers(id).length === 1}
+                  <span class="wmts-ok">Layer: {charts.visibleLayers(id)[0]?.title}</span>
+                {/if}
+              {/if}
             </div>
           </li>
         {/each}
@@ -174,8 +229,101 @@
   .chart-row:last-child { border-bottom: none; }
   .chart-row input[type=checkbox] { margin-top: 3px; flex-shrink: 0; cursor: pointer; }
 
-  .chart-info  { display: flex; flex-direction: column; gap: 2px; }
-  .chart-name  { font-size: 13px; color: white; cursor: pointer; }
+  .chart-info  { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .chart-name  { font-size: 13px; color: white; cursor: pointer; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
   .chart-desc  { font-size: 11px; color: #a0a0c0; }
   .chart-meta  { font-size: 11px; color: #666688; }
+
+  .badge {
+    font-size: 9px;
+    font-weight: 700;
+    padding: 1px 5px;
+    border-radius: 4px;
+    background: #2a2a4e;
+    color: #7b8cde;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .wmts-warning {
+    font-size: 11px;
+    color: #f59e0b;
+    margin-top: 4px;
+  }
+  .wmts-manual {
+    display: flex;
+    gap: 6px;
+    margin-top: 4px;
+  }
+  .wmts-input {
+    flex: 1;
+    font-size: 11px;
+    padding: 3px 6px;
+    background: #2a2a3e;
+    border: 1px solid #444466;
+    border-radius: 4px;
+    color: white;
+    min-width: 0;
+  }
+  .wmts-apply {
+    font-size: 11px;
+    padding: 3px 8px;
+    background: #2563eb;
+    border: none;
+    border-radius: 4px;
+    color: white;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .wmts-apply:hover { background: #1d4ed8; }
+  .wmts-ok {
+    font-size: 11px;
+    color: #34d399;
+    margin-top: 2px;
+  }
+  .wmts-clear {
+    font-size: 10px;
+    background: none;
+    border: 1px solid #444466;
+    border-radius: 4px;
+    color: #666688;
+    cursor: pointer;
+    padding: 1px 6px;
+    margin-top: 2px;
+    align-self: flex-start;
+  }
+  .wmts-clear:hover { color: #f87171; border-color: #f87171; }
+
+  .wmts-layer-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 4px;
+  }
+  .wmts-layer-label {
+    font-size: 11px;
+    color: #666688;
+    flex-shrink: 0;
+  }
+  .wmts-layer-select {
+    flex: 1;
+    font-size: 11px;
+    padding: 2px 4px;
+    background: #2a2a3e;
+    border: 1px solid #444466;
+    border-radius: 4px;
+    color: white;
+    cursor: pointer;
+  }
+  .wmts-showall-label {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    font-size: 11px;
+    color: #666688;
+    cursor: pointer;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .wmts-showall-label:hover { color: #a0a0c0; }
 </style>

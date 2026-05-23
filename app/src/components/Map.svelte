@@ -264,6 +264,10 @@
 
   onDestroy(() => { map?.remove(); });
 
+  // Track the tile URL each chart source was last created with, so we can
+  // detect URL changes (e.g. WMTS layer switch) and recreate the source.
+  const chartSourceUrls = new Map<string, string>();
+
   // Add / remove chart tile layers when selection changes
   $effect(() => {
     if (!map || !mapLoaded) return;
@@ -278,24 +282,28 @@
         const sourceId = `chart-${id}`;
         if (m.getLayer(layerId))   m.removeLayer(layerId);
         if (m.getSource(sourceId)) m.removeSource(sourceId);
+        chartSourceUrls.delete(id);
       }
     }
 
     // Add newly selected chart layers below vessel overlays
     for (const [id, chart] of Object.entries(avail)) {
-      if (!sel.has(id) || !chart.url) continue;
-      const tileUrl  = charts.tileUrl(chart.url);
+      if (!sel.has(id)) continue;
+      const tileUrl  = charts.tileUrl(chart);
+      if (!tileUrl) continue;
       const sourceId = `chart-${id}`;
       const layerId  = `chart-layer-${id}`;
+
+      // If the tile URL changed (e.g. WMTS layer switch), tear down and rebuild
+      if (chartSourceUrls.get(id) !== tileUrl) {
+        if (m.getLayer(layerId))   m.removeLayer(layerId);
+        if (m.getSource(sourceId)) m.removeSource(sourceId);
+        chartSourceUrls.set(id, tileUrl);
+      }
+
       if (!m.getSource(sourceId)) {
         if (chart.format === 'pbf') {
           m.addSource(sourceId, { type: 'vector', tiles: [tileUrl] });
-        } else if (chart.type === 'WMS') {
-          m.addSource(sourceId, {
-            type: 'raster',
-            tiles: [tileUrl],
-            tileSize: 256,
-          });
         } else {
           m.addSource(sourceId, {
             type: 'raster',
