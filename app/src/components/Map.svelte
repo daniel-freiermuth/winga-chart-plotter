@@ -36,6 +36,10 @@
   const AIS_SHAPE_SOURCE = 'ais-shapes';
   const EMPTY_FC: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features: [] };
 
+  // Track the tile URL each chart source was last created with, so we can
+  // detect URL changes (e.g. WMTS layer switch) and recreate the source.
+  const chartSourceUrls = new Map<string, string>();
+
   function dashArray(style: LineStyle, width: number): number[] {
     const w = Math.max(1, width);
     switch (style) {
@@ -165,6 +169,7 @@
       container: mapContainer,
       style: {
         version: 8,
+        projection: { type: 'mercator' },
         sources: {
           'osm-tiles':  { type: 'raster', tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'], tileSize: 256, attribution: '© OpenStreetMap contributors' },
           'openseamap': { type: 'raster', tiles: ['https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png'], tileSize: 256 },
@@ -183,15 +188,14 @@
 
     map.on('zoom', () => { mapZoom = map?.getZoom() ?? mapZoom; });
 
-    map.on('load', () => {
+    // style.load fires on initial style ready AND after MapLibre's internal setStyle
+    // (which it calls automatically on WebGL context restore), so this covers both cases.
+    map.on('style.load', () => {
       const m = map;
       if (!m) return;
-      m.setProjection({ type: 'mercator' });
       const ap = settings.appearance;
-      const iconData = makeVesselIconData(64, ap.vesselColor);
-      m.addImage('vessel-icon', { width: 64, height: 64, data: iconData.data });
-      const aisIconData = makeVesselIconData(64, settings.appearance.ais.vesselColor);
-      m.addImage('ais-icon', { width: 64, height: 64, data: aisIconData.data });
+      m.addImage('vessel-icon', { width: 64, height: 64, data: makeVesselIconData(64, ap.vesselColor).data });
+      m.addImage('ais-icon',    { width: 64, height: 64, data: makeVesselIconData(64, ap.ais.vesselColor).data });
 
       m.addSource(VESSEL_SOURCE,    { type: 'geojson', data: EMPTY_FC });
       m.addSource(COG_SOURCE,       { type: 'geojson', data: EMPTY_FC });
@@ -255,67 +259,78 @@
       });
 
       mapLoaded = true;
+    }); // end style.load
 
-      // Pointer cursor on AIS icons and shapes
-      m.on('mouseenter', 'ais-icon',         () => { m.getCanvas().style.cursor = 'pointer'; });
-      m.on('mouseleave', 'ais-icon',         () => { m.getCanvas().style.cursor = ''; });
-      m.on('mouseenter', 'ais-vessel-fill',  () => { m.getCanvas().style.cursor = 'pointer'; });
-      m.on('mouseleave', 'ais-vessel-fill',  () => { m.getCanvas().style.cursor = ''; });
+    // Event handlers on the Map object persist across style reloads — register once.
+    const showAisPopup = (e: maplibregl.MapMouseEvent & { features?: maplibregl.MapGeoJSONFeature[] }) => {
+      const feature = e.features?.[0];
+      if (!feature) return;
+      const p = feature.properties as Record<string, string | number | null>;
+      const coords = feature.geometry.type === 'Point'
+        ? (feature.geometry as GeoJSON.Point).coordinates
+        : e.lngLat.toArray();
+      const [lon, lat] = coords;
 
-      function showAisPopup(e: maplibregl.MapMouseEvent & { features?: maplibregl.MapGeoJSONFeature[] }) {
-        const feature = e.features?.[0];
-        if (!feature) return;
-        const p = feature.properties as Record<string, string | number | null>;
-        const coords = feature.geometry.type === 'Point'
-          ? (feature.geometry as GeoJSON.Point).coordinates
-          : e.lngLat.toArray();
-        const [lon, lat] = coords;
+      const row = (label: string, value: string | number | null, unit = '') =>
+        value !== null ? `<tr><td>${label}</td><td><b>${String(value)}${unit}</b></td></tr>` : '';
 
-        const row = (label: string, value: string | number | null, unit = '') =>
-          value !== null ? `<tr><td>${label}</td><td><b>${String(value)}${unit}</b></td></tr>` : '';
+      const rotVal = p['rot_dpm'] !== null ? Number(p['rot_dpm']) : null;
+      const rotStr = rotVal !== null
+        ? `${rotVal > 0 ? '▶ ' : rotVal < 0 ? '◀ ' : ''}${Math.abs(rotVal)}°/min`
+        : null;
 
-        const rotVal = p['rot_dpm'] !== null ? Number(p['rot_dpm']) : null;
-        const rotStr = rotVal !== null
-          ? `${rotVal > 0 ? '▶ ' : rotVal < 0 ? '◀ ' : ''}${Math.abs(rotVal)}°/min`
-          : null;
+      const html = `
+        <div class="ais-popup">
+          <div class="ais-popup-title">${String(p['name'] ?? p['mmsi'] ?? 'Unknown vessel')}</div>
+          <table>
+            ${row('MMSI',     p['mmsi'])}
+            ${row('Type',     p['ship_type'])}
+            ${row('Position', `${String(p['lat'])}°N, ${String(p['lon'])}°E`)}
+            <tr><td colspan="2" class="ais-section">Navigation</td></tr>
+            ${row('SOG',      p['sog_kn'],  ' kn')}
+            ${row('STW',      p['stw_kn'],  ' kn')}
+            ${row('COG',      p['cog_deg'], '°')}
+            ${row('Heading',  p['hdg_deg'], '°')}
+            ${row('ROT',      rotStr)}
+            <tr><td colspan="2" class="ais-section">Dimensions</td></tr>
+            ${row('Length',   p['length_m'], ' m')}
+            ${row('Beam',     p['beam_m'],   ' m')}
+            ${row('Draft',    p['draft_m'],  ' m')}
+          </table>
+        </div>`;
 
-        const html = `
-          <div class="ais-popup">
-            <div class="ais-popup-title">${String(p['name'] ?? p['mmsi'] ?? 'Unknown vessel')}</div>
-            <table>
-              ${row('MMSI',     p['mmsi'])}
-              ${row('Type',     p['ship_type'])}
-              ${row('Position', `${String(p['lat'])}°N, ${String(p['lon'])}°E`)}
-              <tr><td colspan="2" class="ais-section">Navigation</td></tr>
-              ${row('SOG',      p['sog_kn'],  ' kn')}
-              ${row('STW',      p['stw_kn'],  ' kn')}
-              ${row('COG',      p['cog_deg'], '°')}
-              ${row('Heading',  p['hdg_deg'], '°')}
-              ${row('ROT',      rotStr)}
-              <tr><td colspan="2" class="ais-section">Dimensions</td></tr>
-              ${row('Length',   p['length_m'], ' m')}
-              ${row('Beam',     p['beam_m'],   ' m')}
-              ${row('Draft',    p['draft_m'],  ' m')}
-            </table>
-          </div>`;
+      new maplibregl.Popup({ closeButton: true, maxWidth: '280px' })
+        .setLngLat([lon, lat])
+        .setHTML(html)
+        .addTo(map!);
+    };
 
-        new maplibregl.Popup({ closeButton: true, maxWidth: '280px' })
-          .setLngLat([lon, lat])
-          .setHTML(html)
-          .addTo(m);
-      }
+    map.on('mouseenter', 'ais-icon',         () => { map!.getCanvas().style.cursor = 'pointer'; });
+    map.on('mouseleave', 'ais-icon',         () => { map!.getCanvas().style.cursor = ''; });
+    map.on('mouseenter', 'ais-vessel-fill',  () => { map!.getCanvas().style.cursor = 'pointer'; });
+    map.on('mouseleave', 'ais-vessel-fill',  () => { map!.getCanvas().style.cursor = ''; });
+    map.on('click', 'ais-icon',        showAisPopup);
+    map.on('click', 'ais-vessel-fill', showAisPopup);
 
-      m.on('click', 'ais-icon',        showAisPopup);
-      m.on('click', 'ais-vessel-fill', showAisPopup);
+    // On WebGL context loss, mark map as not ready. MapLibre internally calls setStyle()
+    // on context restore, which re-fires style.load — that re-adds our sources/layers
+    // and sets mapLoaded = true again, triggering all effects to re-run.
+    map.on('webglcontextlost', () => {
+      console.warn('[map] WebGL context lost');
+      mapLoaded = false;
+      chartSourceUrls.clear();
+    });
 
+    map.on('webglcontextrestored', () => {
+      console.info('[map] WebGL context restored');
+    });
+
+    map.on('error', (e) => {
+      console.error('[map] error', e.error ?? e);
     });
   });
 
   onDestroy(() => { map?.remove(); });
-
-  // Track the tile URL each chart source was last created with, so we can
-  // detect URL changes (e.g. WMTS layer switch) and recreate the source.
-  const chartSourceUrls = new Map<string, string>();
 
   // Add / remove chart tile layers when selection changes
   $effect(() => {
