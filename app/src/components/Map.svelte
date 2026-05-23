@@ -1,5 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
+  import FaIcon from '../lib/FaIcon.svelte';
+  import { faGlobe, faMap } from '@fortawesome/free-solid-svg-icons';
   import maplibregl from 'maplibre-gl';
   import 'maplibre-gl/dist/maplibre-gl.css';
   import type * as GeoJSON from 'geojson';
@@ -597,7 +599,7 @@
     class="proj-btn"
     title="Switch to {projection === 'mercator' ? 'Globe' : 'Mercator'}"
     onclick={() => { setProjection(projection === 'mercator' ? 'globe' : 'mercator'); }}
-  >{projection === 'mercator' ? '🌐' : '🗺'}</button>
+  ><FaIcon icon={projection === 'mercator' ? faGlobe : faMap} /></button>
 </div>
 
 <style>

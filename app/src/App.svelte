@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import Map from './components/Map.svelte';
+  import FaIcon from './lib/FaIcon.svelte';
+  import { faLocationCrosshairs } from '@fortawesome/free-solid-svg-icons';
   import Settings from './components/Settings.svelte';
   import ChartPicker from './components/ChartPicker.svelte';
   import { vesselState } from './stores/vessel';
@@ -107,6 +109,6 @@
       font-size: 16px; transition: background 0.15s;
       opacity: {$vesselState.position ? 1 : 0.35};
     "
-  >⌖</button>
+  ><FaIcon icon={faLocationCrosshairs} /></button>
 </div>
 

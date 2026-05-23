@@ -1,6 +1,8 @@
 <script lang="ts">
   import { charts } from '../stores/charts.svelte';
   import { baseLayers, BASE_LAYERS } from '../stores/baseLayers.svelte';
+  import FaIcon from '../lib/FaIcon.svelte';
+  import { faLayerGroup } from '@fortawesome/free-solid-svg-icons';
 
   let open = $state(false);
   // Track pending manual URL inputs per chart id
@@ -16,7 +18,7 @@
 
 <!-- Layers button -->
 <button class="charts-btn" class:active={open} onclick={toggle} title="Charts">
-  ⊞
+  <FaIcon icon={faLayerGroup} />
 </button>
 
 {#if open}

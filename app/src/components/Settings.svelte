@@ -1,5 +1,7 @@
 <script lang="ts">
   import { settings, type AppearanceSettings } from '../stores/settings.svelte';
+  import FaIcon from '../lib/FaIcon.svelte';
+  import { faGear } from '@fortawesome/free-solid-svg-icons';
 
   let open = $state(false);
   let tab  = $state<'connection' | 'appearance'>('connection');
@@ -51,7 +53,7 @@
   }
 </script>
 
-<button onclick={openModal} title="Settings" class="gear-btn">⚙</button>
+<button onclick={openModal} title="Settings" class="gear-btn"><FaIcon icon={faGear} /></button>
 
 {#if open}
   <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
