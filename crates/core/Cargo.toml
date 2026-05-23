@@ -16,7 +16,8 @@ js-sys = "0.3"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 web-sys = { version = "0.3", features = [
-  "WebSocket", "MessageEvent", "ErrorEvent", "CloseEvent", "Event"
+  "WebSocket", "MessageEvent", "ErrorEvent", "CloseEvent", "Event",
+  "WorkerGlobalScope"
 ] }
 
 [dev-dependencies]

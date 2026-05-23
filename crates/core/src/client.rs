@@ -7,7 +7,7 @@ use js_sys::Function;
 use signalk::{Storage, V1FullFormat};
 use std::{cell::RefCell, rc::Rc};
 use wasm_bindgen::{prelude::*, JsCast};
-use web_sys::{CloseEvent, ErrorEvent, MessageEvent, WebSocket};
+use web_sys::{CloseEvent, ErrorEvent, MessageEvent, WebSocket, WorkerGlobalScope};
 
 /// Connection status reported to JS via `on_status_change`.
 #[wasm_bindgen]
@@ -84,23 +84,85 @@ impl SignalKClient {
         }) as Box<dyn FnMut(JsValue)>);
         ws.set_onopen(Some(on_open.as_ref().unchecked_ref()));
 
-        // onmessage — parse in Rust via signalk crate, call back with updated state
+        // onmessage — parse incoming delta in Rust, then debounce AIS updates.
+        //
+        // During the initial SignalK burst (~1400 messages) we accumulate all state
+        // in storage but only emit AIS at most once every AIS_MAX_INTERVAL_MS.
+        // After the burst dies down the debounce timer fires within AIS_DEBOUNCE_MS
+        // of the last message, producing one final consistent snapshot.
+        // This reduces a potentially O(n²) serialisation cascade to O(1) emits.
+        const AIS_DEBOUNCE_MS: i32 = 50;
+        const AIS_MAX_INTERVAL_MS: f64 = 500.0;
+
+        let last_ais_emit: Rc<RefCell<f64>> = Rc::new(RefCell::new(0.0));
+        let debounce_handle: Rc<RefCell<Option<i32>>> = Rc::new(RefCell::new(None));
+
         let storage_clone = storage.clone();
         let state_cb = on_state_change.clone();
         let ais_cb = on_ais_update.clone();
+
+        // Helper closure that does the actual AIS emit — shared between the immediate
+        // path and the debounce timer. Wrapped in Rc<RefCell> so both paths can hold it.
+        let emit_ais = {
+            let storage = storage_clone.clone();
+            let ais_cb = ais_cb.clone();
+            let last_emit = last_ais_emit.clone();
+            Rc::new(move || {
+                let targets = extract_ais_targets(&storage.borrow());
+                if !targets.is_empty() {
+                    let js_val = serde_wasm_bindgen::to_value(&targets).unwrap_or(JsValue::NULL);
+                    let _ = ais_cb.call1(&JsValue::NULL, &js_val);
+                }
+                *last_emit.borrow_mut() = js_sys::Date::now();
+            })
+        };
+
         let on_message = Closure::wrap(Box::new(move |e: MessageEvent| {
             let Some(text) = e.data().as_string() else { return; };
             if apply_message(&mut storage_clone.borrow_mut(), &text).is_err() { return; }
-            let storage = storage_clone.borrow();
-            let state = extract_vessel_state(&storage);
+
+            // Always forward own-vessel state immediately — it's a single cheap struct.
+            let state = extract_vessel_state(&storage_clone.borrow());
             if state.position.is_some() {
                 let js_val = serde_wasm_bindgen::to_value(&state).unwrap_or(JsValue::NULL);
                 let _ = state_cb.call1(&JsValue::NULL, &js_val);
             }
-            let targets = extract_ais_targets(&storage);
-            if !targets.is_empty() {
-                let js_val = serde_wasm_bindgen::to_value(&targets).unwrap_or(JsValue::NULL);
-                let _ = ais_cb.call1(&JsValue::NULL, &js_val);
+
+            let now = js_sys::Date::now();
+            if now - *last_ais_emit.borrow() >= AIS_MAX_INTERVAL_MS {
+                // Max interval exceeded — emit now and cancel any pending debounce.
+                if let Some(handle) = debounce_handle.borrow_mut().take() {
+                    let scope = js_sys::global()
+                        .dyn_into::<WorkerGlobalScope>()
+                        .expect("running in a Worker");
+                    scope.clear_timeout_with_handle(handle);
+                }
+                emit_ais();
+            } else {
+                // Reset the debounce timer.
+                if let Some(handle) = debounce_handle.borrow_mut().take() {
+                    let scope = js_sys::global()
+                        .dyn_into::<WorkerGlobalScope>()
+                        .expect("running in a Worker");
+                    scope.clear_timeout_with_handle(handle);
+                }
+                let emit = emit_ais.clone();
+                let handle_cell = debounce_handle.clone();
+                let cb = Closure::once(Box::new(move || {
+                    emit();
+                    *handle_cell.borrow_mut() = None;
+                }) as Box<dyn FnOnce()>);
+                let scope = js_sys::global()
+                    .dyn_into::<WorkerGlobalScope>()
+                    .expect("running in a Worker");
+                let handle = scope
+                    .set_timeout_with_callback_and_timeout_and_arguments_0(
+                        cb.as_ref().unchecked_ref(),
+                        AIS_DEBOUNCE_MS,
+                    )
+                    .unwrap_or(0);
+                cb.forget(); // browser owns the callback now
+                *debounce_handle.borrow_mut() = Some(handle);
             }
         }) as Box<dyn FnMut(MessageEvent)>);
         ws.set_onmessage(Some(on_message.as_ref().unchecked_ref()));
