@@ -13,6 +13,11 @@
 
   let mapContainer: HTMLDivElement;
   let map: maplibregl.Map | undefined;
+
+  export function flyToVessel() {
+    const pos = $vesselState.position;
+    if (pos && map) map.flyTo({ center: [pos.longitude, pos.latitude], speed: 1.5 });
+  }
   let mapLoaded = $state(false);
   let mapZoom   = $state(10);
   let projection = $state<ProjectionId>('mercator');

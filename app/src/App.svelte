@@ -21,6 +21,7 @@
     | { type: 'ais';    targets: AisTarget[] }
     | { type: 'error';  message: string };
 
+  let mapComp = $state<ReturnType<typeof Map> | null>(null);
   let connected = $state(false);
   let error = $state<string | null>(null);
   let worker: Worker | null = null;
@@ -81,7 +82,7 @@
 </script>
 
 <div style="position: relative; width: 100%; height: 100%;">
-  <Map />
+  <Map bind:this={mapComp} />
   <Settings />
   <ChartPicker />
 
@@ -94,5 +95,18 @@
     <span style="color: {connected ? '#4ade80' : '#f87171'}">● Signal K</span>
     {#if error}<span style="color: #f87171">⚠ {error}</span>{/if}
   </div>
+
+  <button
+    title="Go to vessel"
+    disabled={!$vesselState.position}
+    onclick={() => mapComp?.flyToVessel()}
+    style="
+      position: absolute; top: 120px; left: 10px; z-index: 10;
+      background: rgba(0,0,0,0.7); border: none; color: white;
+      padding: 6px 10px; border-radius: 6px; cursor: pointer;
+      font-size: 16px; transition: background 0.15s;
+      opacity: {$vesselState.position ? 1 : 0.35};
+    "
+  >⌖</button>
 </div>
 
