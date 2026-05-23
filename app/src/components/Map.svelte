@@ -27,12 +27,13 @@
     map?.setProjection({ type: id });
   }
 
-  const VESSEL_SOURCE = 'vessel';
-  const COG_SOURCE    = 'vessel-cog';
-  const HDG_SOURCE    = 'vessel-hdg';
-  const GC_SOURCE     = 'vessel-gc';
-  const AIS_SOURCE    = 'ais-targets';
-  const AIS_COG_SOURCE = 'ais-cog';
+  const VESSEL_SOURCE   = 'vessel';
+  const COG_SOURCE      = 'vessel-cog';
+  const HDG_SOURCE      = 'vessel-hdg';
+  const GC_SOURCE       = 'vessel-gc';
+  const AIS_SOURCE      = 'ais-targets';
+  const AIS_COG_SOURCE  = 'ais-cog';
+  const AIS_SHAPE_SOURCE = 'ais-shapes';
   const EMPTY_FC: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features: [] };
 
   function dashArray(style: LineStyle, width: number): number[] {
@@ -113,18 +114,50 @@
     if (!ctx) throw new Error('Could not get 2D canvas context');
     const cx = size / 2, cy = size / 2, s = size / 32;
     ctx.beginPath();
-    ctx.moveTo(cx,          cy - 12 * s); // bow
-    ctx.lineTo(cx + 7 * s,  cy +  9 * s); // starboard stern
-    ctx.lineTo(cx,           cy +  4 * s); // stern notch
-    ctx.lineTo(cx - 7 * s,  cy +  9 * s); // port stern
+    ctx.moveTo(cx,          cy - 12 * s); // bow tip
+    ctx.lineTo(cx + 8 * s,  cy -  4 * s); // starboard shoulder
+    ctx.lineTo(cx + 8 * s,  cy +  9 * s); // starboard aft
+    ctx.lineTo(cx,           cy +  6 * s); // stern notch
+    ctx.lineTo(cx - 8 * s,  cy +  9 * s); // port aft
+    ctx.lineTo(cx - 8 * s,  cy -  4 * s); // port shoulder
     ctx.closePath();
     ctx.fillStyle = color;
     ctx.fill();
     ctx.strokeStyle = '#ffffff';
-    ctx.lineWidth = 2 * s;
+    ctx.lineWidth = 1.5 * s;
     ctx.lineJoin = 'round';
     ctx.stroke();
     return ctx.getImageData(0, 0, size, size);
+  }
+
+  /**
+   * Build the geographic polygon ring for a vessel given its centre position,
+   * heading (radians, clockwise from north), length and beam (metres).
+   * Uses a flat-earth approximation — fine for vessels up to a few km long.
+   */
+  function vesselShapeRing(
+    lon: number, lat: number,
+    headingRad: number,
+    lengthM: number, beamM: number,
+  ): [number, number][] {
+    const mPerDegLat = 111320;
+    const mPerDegLon = 111320 * Math.cos(lat * Math.PI / 180);
+    const sinH = Math.sin(headingRad), cosH = Math.cos(headingRad);
+    // Forward unit: (sinH, cosH) in (east, north). Right unit: (cosH, -sinH).
+    const pt = (fwd: number, rgt: number): [number, number] => [
+      lon + (fwd * sinH + rgt * cosH) / mPerDegLon,
+      lat + (fwd * cosH - rgt * sinH) / mPerDegLat,
+    ];
+    const L2 = lengthM / 2, B2 = beamM / 2;
+    const shoulder = L2 * 0.6; // bow taper start
+    return [
+      pt( L2,        0),  // bow tip
+      pt( shoulder,  B2), // starboard shoulder
+      pt(-L2,        B2), // starboard aft
+      pt(-L2,       -B2), // port aft
+      pt( shoulder, -B2), // port shoulder
+      pt( L2,        0),  // close
+    ];
   }
 
   onMount(() => {
@@ -160,12 +193,13 @@
       const aisIconData = makeVesselIconData(64, settings.appearance.ais.vesselColor);
       m.addImage('ais-icon', { width: 64, height: 64, data: aisIconData.data });
 
-      m.addSource(VESSEL_SOURCE, { type: 'geojson', data: EMPTY_FC });
-      m.addSource(COG_SOURCE,    { type: 'geojson', data: EMPTY_FC });
-      m.addSource(HDG_SOURCE,    { type: 'geojson', data: EMPTY_FC });
-      m.addSource(GC_SOURCE,     { type: 'geojson', data: EMPTY_FC });
-      m.addSource(AIS_SOURCE,    { type: 'geojson', data: EMPTY_FC });
-      m.addSource(AIS_COG_SOURCE, { type: 'geojson', data: EMPTY_FC });
+      m.addSource(VESSEL_SOURCE,    { type: 'geojson', data: EMPTY_FC });
+      m.addSource(COG_SOURCE,       { type: 'geojson', data: EMPTY_FC });
+      m.addSource(HDG_SOURCE,       { type: 'geojson', data: EMPTY_FC });
+      m.addSource(GC_SOURCE,        { type: 'geojson', data: EMPTY_FC });
+      m.addSource(AIS_SOURCE,       { type: 'geojson', data: EMPTY_FC });
+      m.addSource(AIS_COG_SOURCE,   { type: 'geojson', data: EMPTY_FC });
+      m.addSource(AIS_SHAPE_SOURCE, { type: 'geojson', data: EMPTY_FC });
 
       m.addLayer({ id: 'vessel-gc-line', type: 'line', source: GC_SOURCE,
         paint: { 'line-color': ap.gc.color, 'line-width': ap.gc.width, 'line-dasharray': dashArray(ap.gc.style, ap.gc.width) } });
@@ -173,15 +207,23 @@
       m.addLayer({ id: 'ais-cog-line', type: 'line', source: AIS_COG_SOURCE,
         paint: { 'line-color': settings.appearance.ais.cog.color, 'line-width': settings.appearance.ais.cog.width, 'line-dasharray': dashArray(settings.appearance.ais.cog.style, settings.appearance.ais.cog.width) } });
 
+      // Exact-scale polygon footprints for vessels with known dimensions
+      m.addLayer({ id: 'ais-vessel-fill', type: 'fill', source: AIS_SHAPE_SOURCE,
+        paint: { 'fill-color': settings.appearance.ais.vesselColor, 'fill-opacity': ['get', 'shape_opacity'] } });
+      m.addLayer({ id: 'ais-vessel-outline', type: 'line', source: AIS_SHAPE_SOURCE,
+        paint: { 'line-color': '#ffffff', 'line-width': 1, 'line-opacity': ['get', 'shape_opacity'] } });
+
+      // Icon for all vessels; fades out as exact shape fades in
       m.addLayer({ id: 'ais-icon', type: 'symbol', source: AIS_SOURCE,
         layout: {
           'icon-image': 'ais-icon',
-          'icon-size': settings.appearance.ais.vesselSize / 64,
+          'icon-size': ['coalesce', ['get', 'icon_size'], settings.appearance.ais.vesselSize / 64],
           'icon-rotate': ['get', 'bearing_deg'],
           'icon-rotation-alignment': 'map',
           'icon-allow-overlap': true,
           'icon-ignore-placement': true,
         },
+        paint: { 'icon-opacity': ['get', 'icon_opacity'] },
       });
 
       m.addLayer({ id: 'ais-label', type: 'symbol', source: AIS_SOURCE,
@@ -214,16 +256,20 @@
 
       mapLoaded = true;
 
-      // Pointer cursor on AIS icons
-      m.on('mouseenter', 'ais-icon', () => { m.getCanvas().style.cursor = 'pointer'; });
-      m.on('mouseleave', 'ais-icon', () => { m.getCanvas().style.cursor = ''; });
+      // Pointer cursor on AIS icons and shapes
+      m.on('mouseenter', 'ais-icon',         () => { m.getCanvas().style.cursor = 'pointer'; });
+      m.on('mouseleave', 'ais-icon',         () => { m.getCanvas().style.cursor = ''; });
+      m.on('mouseenter', 'ais-vessel-fill',  () => { m.getCanvas().style.cursor = 'pointer'; });
+      m.on('mouseleave', 'ais-vessel-fill',  () => { m.getCanvas().style.cursor = ''; });
 
-      // Click popup
-      m.on('click', 'ais-icon', (e) => {
+      function showAisPopup(e: maplibregl.MapMouseEvent & { features?: maplibregl.MapGeoJSONFeature[] }) {
         const feature = e.features?.[0];
-        if (!feature || feature.geometry.type !== 'Point') return;
+        if (!feature) return;
         const p = feature.properties as Record<string, string | number | null>;
-        const [lon, lat] = (feature.geometry as GeoJSON.Point).coordinates;
+        const coords = feature.geometry.type === 'Point'
+          ? (feature.geometry as GeoJSON.Point).coordinates
+          : e.lngLat.toArray();
+        const [lon, lat] = coords;
 
         const row = (label: string, value: string | number | null, unit = '') =>
           value !== null ? `<tr><td>${label}</td><td><b>${String(value)}${unit}</b></td></tr>` : '';
@@ -257,7 +303,10 @@
           .setLngLat([lon, lat])
           .setHTML(html)
           .addTo(m);
-      });
+      }
+
+      m.on('click', 'ais-icon',        showAisPopup);
+      m.on('click', 'ais-vessel-fill', showAisPopup);
 
     });
   });
@@ -346,7 +395,8 @@
     const ap = settings.appearance.ais;
     const aisIconData = makeVesselIconData(64, ap.vesselColor);
     map.updateImage('ais-icon', { width: 64, height: 64, data: aisIconData.data });
-    map.setLayoutProperty('ais-icon', 'icon-size', ap.vesselSize / 64);
+    // icon-size is data-driven (per-feature, based on vessel length); only update paint/style here
+    map.setPaintProperty('ais-vessel-fill', 'fill-color', ap.vesselColor);
     map.setPaintProperty('ais-cog-line', 'line-color', ap.cog.color);
     map.setPaintProperty('ais-cog-line', 'line-width', ap.cog.width);
     map.setPaintProperty('ais-cog-line', 'line-dasharray', dashArray(ap.cog.style, ap.cog.width));
@@ -357,45 +407,88 @@
   $effect(() => {
     if (!map || !mapLoaded) return;
     const targets = ais.targets;
-    const aisSrc    = map.getSource(AIS_SOURCE);
-    const aisCogSrc = map.getSource(AIS_COG_SOURCE);
-    if (!(aisSrc instanceof maplibregl.GeoJSONSource)) return;
-    if (!(aisCogSrc instanceof maplibregl.GeoJSONSource)) return;
+    const zoom = mapZoom;
+    const settingsIconSize = settings.appearance.ais.vesselSize / 64;
+    const aisSrc     = map.getSource(AIS_SOURCE);
+    const aisCogSrc  = map.getSource(AIS_COG_SOURCE);
+    const aisShapeSrc = map.getSource(AIS_SHAPE_SOURCE);
+    if (!(aisSrc     instanceof maplibregl.GeoJSONSource)) return;
+    if (!(aisCogSrc  instanceof maplibregl.GeoJSONSource)) return;
+    if (!(aisShapeSrc instanceof maplibregl.GeoJSONSource)) return;
 
-    const pointFeatures: GeoJSON.Feature[] = [];
-    const cogLines: GeoJSON.Feature[] = [];
+    const pointFeatures:  GeoJSON.Feature[] = [];
+    const shapeFeatures:  GeoJSON.Feature[] = [];
+    const cogLines:       GeoJSON.Feature[] = [];
 
     for (const t of targets) {
       if (!t.position) continue;
       const { longitude, latitude } = t.position;
-      const iconBearingDeg = t.heading !== undefined ? (t.heading * 180) / Math.PI
-                           : t.cog    !== undefined ? (t.cog     * 180) / Math.PI
-                           : 0;
-      const label = t.name ?? '';
+      const headingRad = t.heading ?? t.cog ?? 0;
+      const iconBearingDeg = (headingRad * 180) / Math.PI;
+
+      const metersPerPixel = (40075016.686 * Math.cos(latitude * Math.PI / 180))
+                             / (256 * Math.pow(2, zoom));
+
+      // icon-size: real-world scale, minimum = settingsIconSize
+      const iconSize = t.lengthM
+        ? Math.max(settingsIconSize, t.lengthM / (metersPerPixel * 64))
+        : settingsIconSize;
+
+      // Cross-fade: compute transition zoom where real vessel length = minimum icon pixels.
+      // Below that zoom → full icon. Above → full shape.
+      const hasShape = !!(t.heading !== undefined && t.lengthM && t.beamM);
+      let iconOpacity = 1;
+      let shapeOpacity = 0;
+      if (hasShape) {
+        const transitionZoom = Math.log2(
+          settingsIconSize * 64 * 40075016.686 * Math.cos(latitude * Math.PI / 180)
+          / (t.lengthM! * 256)
+        );
+        // t01: 0 at (transitionZoom - 1), 1 at (transitionZoom + 1)
+        const t01 = Math.max(0, Math.min(1, (zoom - transitionZoom + 1) / 2));
+        shapeOpacity = t01 * 0.85;
+        iconOpacity  = 1 - t01;
+      }
+
+      const sharedProps = {
+        id:        t.id,
+        name:      t.name      ?? null,
+        mmsi:      t.mmsi      ?? null,
+        ship_type: t.shipType  ?? null,
+        cog_deg:   t.cog    !== undefined ? Number(((t.cog    * 180) / Math.PI).toFixed(1))         : null,
+        sog_kn:    t.sog    !== undefined ? Number((t.sog    * 1.94384).toFixed(1))                  : null,
+        hdg_deg:   t.heading !== undefined ? Number(((t.heading * 180) / Math.PI).toFixed(1))        : null,
+        rot_dpm:   t.rot    !== undefined ? Number(((t.rot    * 180 / Math.PI) * 60).toFixed(1))     : null,
+        stw_kn:    t.stw    !== undefined ? Number((t.stw    * 1.94384).toFixed(1))                  : null,
+        length_m:  t.lengthM  ?? null,
+        beam_m:    t.beamM    ?? null,
+        draft_m:   t.draftM   ?? null,
+        lat:       Number(latitude.toFixed(5)),
+        lon:       Number(longitude.toFixed(5)),
+      };
+
+      if (hasShape) {
+        const ring = vesselShapeRing(longitude, latitude, headingRad, t.lengthM!, t.beamM!);
+        shapeFeatures.push({
+          type: 'Feature',
+          geometry: { type: 'Polygon', coordinates: [ring] },
+          properties: { ...sharedProps, shape_opacity: shapeOpacity },
+        });
+      }
+
       pointFeatures.push({
         type: 'Feature',
         geometry: { type: 'Point', coordinates: [longitude, latitude] },
         properties: {
-          bearing_deg: iconBearingDeg,
-          label,
-          id:        t.id,
-          name:      t.name      ?? null,
-          mmsi:      t.mmsi      ?? null,
-          ship_type: t.shipType  ?? null,
-          cog_deg:   t.cog    !== undefined ? Number(((t.cog    * 180) / Math.PI).toFixed(1))         : null,
-          sog_kn:    t.sog    !== undefined ? Number((t.sog    * 1.94384).toFixed(1))                  : null,
-          hdg_deg:   t.heading !== undefined ? Number(((t.heading * 180) / Math.PI).toFixed(1))        : null,
-          rot_dpm:   t.rot    !== undefined ? Number(((t.rot    * 180 / Math.PI) * 60).toFixed(1))     : null,
-          stw_kn:    t.stw    !== undefined ? Number((t.stw    * 1.94384).toFixed(1))                  : null,
-          length_m:  t.lengthM  ?? null,
-          beam_m:    t.beamM    ?? null,
-          draft_m:   t.draftM   ?? null,
-          lat:       Number(latitude.toFixed(5)),
-          lon:       Number(longitude.toFixed(5)),
+          ...sharedProps,
+          bearing_deg:  iconBearingDeg,
+          icon_size:    iconSize,
+          icon_opacity: iconOpacity,
+          label:        t.name ?? '',
         },
       });
+
       if (t.cog !== undefined && t.sog !== undefined && t.sog > 0.1) {
-        // COG line: 3-minute vector at current SOG
         const distM = t.sog * 3 * 60;
         cogLines.push({
           type: 'Feature',
@@ -406,6 +499,7 @@
     }
 
     aisSrc.setData({ type: 'FeatureCollection', features: pointFeatures });
+    aisShapeSrc.setData({ type: 'FeatureCollection', features: shapeFeatures });
     aisCogSrc.setData({ type: 'FeatureCollection', features: cogLines });
   });
 
