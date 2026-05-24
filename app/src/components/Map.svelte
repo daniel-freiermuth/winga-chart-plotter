@@ -13,23 +13,16 @@
   import { baseLayers, BASE_LAYERS } from '../stores/baseLayers.svelte';
   import { ais, type AisTarget } from '../stores/ais.svelte';
   import { MapboxOverlay } from '@deck.gl/mapbox';
-  import { IconLayer, PathLayer, ScatterplotLayer, TextLayer } from '@deck.gl/layers';
+  import { PathLayer, ScatterplotLayer, TextLayer } from '@deck.gl/layers';
   import { PathStyleExtension } from '@deck.gl/extensions';
   import type { PickingInfo } from '@deck.gl/core';
   import { rulers, rulerBearingText, rulerDistanceText, type Ruler, type RulerEndpoint } from '../stores/rulers.svelte';
   import { gcLine } from '../lib/geoMath';
   import { AisHullLayer } from '../layers/AisHullLayer';
-  import { makeVesselIconData, makeVesselIconDataUrl, vesselIconOpacity, extrapolatePos, extrapolateHeading, positionUpdateMs } from '../lib/deadReckoning';
+  import { AisIconLayer } from '../layers/AisIconLayer';
+  import { makeVesselIconData, extrapolatePos, positionUpdateMs } from '../lib/deadReckoning';
 
   type ProjectionId = 'mercator' | 'globe';
-
-  // Ghost icon item used in rAF loop
-  type GhostItem = { target: AisTarget; lon: number; lat: number; heading: number };
-
-  // Shared icon atlas mapping
-  const VESSEL_ICON_MAPPING = {
-    vessel: { x: 0, y: 0, width: 64, height: 64, anchorX: 32, anchorY: 32, mask: false },
-  };
 
   let mapContainer: HTMLDivElement;
   let map: maplibregl.Map | undefined;
@@ -289,12 +282,15 @@
   let hullTargets: AisTarget[] = [];
   // All AIS targets with a known position — used for ruler snap hit-test:
   let allVisTargets: AisTarget[] = [];
-  // All moving targets (position + cog) — used for ghost icons even without hull dimensions:
+  // All moving targets (position + cog) — used for ghost icon layer:
   let ghostTargets: AisTarget[] = [];
-  let ghostIconAtlasUrl = '';
-  let ghostSettingsIconSize = 1;
-  // Stable layers rebuilt on AIS tick (COG arc + confirmed icon):
-  let stableLayers: (IconLayer<AisTarget> | PathLayer<AisTarget>)[] = [];
+  let aisIconSize = 1;
+  // GPU icon layer props set on AIS tick, reused each frame (only time uniforms change):
+  type IconProps = ConstructorParameters<typeof AisIconLayer>[0];
+  let ghostIconProps: IconProps | null = null;
+  let confirmedIconProps: IconProps | null = null;
+  // Stable layers rebuilt on AIS tick (COG arc):
+  let stableLayers: PathLayer<AisTarget>[] = [];
   let rafId = 0;
 
   onMount(() => {
@@ -346,13 +342,13 @@
     map.addControl(overlay as unknown as maplibregl.IControl);
 
     // rAF loop: updates timeSinceUpload on hull (GPU) and rebuilds ghost icon positions (JS) each frame.
-    // stableLayers (confirmed icon + COG lines) are same JS objects — deck.gl skips re-processing them.
+    // stableLayers (COG lines) are same JS objects — deck.gl skips re-processing them.
     function rafTick() {
       if (overlay !== null) {
         const nowMs = Date.now();
 
         // --- AIS animated layers ---
-        const aisAnimLayers: (AisHullLayer | IconLayer<GhostItem> | PathLayer<AisTarget> | IconLayer<AisTarget>)[] = [];
+        const aisAnimLayers: (AisHullLayer | AisIconLayer | PathLayer<AisTarget>)[] = [];
 
         // Build live snap targets every frame.
         // For moving vessels: two snap points — last-known (id) and dead-reckoned (id+':ghost').
@@ -382,80 +378,25 @@
           rulers.syncSnapped(liveSnapTargets);
         }
 
+        const rafZoom = map?.getZoom() ?? 99;
+
         if (hullProps !== null) {
           const elapsed = (nowMs - uploadTime) / 1000;
-
-          // Compute dead-reckoned position + heading for animated rendering
-          const ghostData: GhostItem[] = ghostTargets.map(t => {
-            const [lon, lat] = extrapolatePos(
-              t.position!.longitude, t.position!.latitude,
-              t.cog ?? 0, t.sog ?? 0, t.rot ?? 0,
-              positionUpdateMs(t), nowMs,
-            );
-            const heading = extrapolateHeading(t.heading ?? t.cog ?? 0, t.rot ?? 0, positionUpdateMs(t), nowMs);
-            return { target: t, lon, lat, heading };
-          });
-
-          const ghostIconLayer = ghostData.length > 0 ? new IconLayer<GhostItem>({
-            id: 'ais-ghost-icon',
-            data: ghostData,
-            iconAtlas: ghostIconAtlasUrl,
-            iconMapping: VESSEL_ICON_MAPPING,
-            getIcon: () => 'vessel',
-            getPosition: (d: GhostItem) => [d.lon, d.lat, 0],
-            getAngle: (d: GhostItem) => {
-              const headingDeg = d.heading * 180 / Math.PI;
-              const isGlobeNow = projection === 'globe' && (map?.getZoom() ?? 13) <= 12;
-              return isGlobeNow ? 180 - headingDeg : -headingDeg;
-            },
-            getSize: () => 64 * ghostSettingsIconSize,
-            getColor: () => [255, 255, 255, 130] as [number,number,number,number],
-            billboard: false,
-            sizeUnits: 'pixels' as const,
-            sizeMinPixels: 6,
-            pickable: true,
-          }) : null;
 
           aisAnimLayers.push(
             // bottom: confirmed hull at last-known position (full opacity, static)
             ...(confirmedHullProps ? [new AisHullLayer({ ...confirmedHullProps, timeSinceUpload: 0 })] : []),
             // ghost hull polygon (GPU animated, 75% opacity)
             new AisHullLayer({ ...hullProps, timeSinceUpload: elapsed }),
-            // ghost icon at dead-reckoned position (50% opacity, animated in JS)
-            ...(ghostIconLayer ? [ghostIconLayer] : []),
+            // ghost icon — outline+fill in one layer; each instance draws its own border
+            ...(ghostIconProps ? [new AisIconLayer({ ...ghostIconProps, timeSinceUpload: elapsed, zoom: rafZoom })] : []),
           );
         }
 
-        // Build the static confirmed-icon layer per-frame so getAngle always reads
-        // the CURRENT zoom (from map directly) without a one-frame Svelte effect lag.
-        // deck.gl updateTriggers prevent redundant GPU re-attribution when nothing changed.
-        const rafZoom = map?.getZoom() ?? 99;
-        const rafIsGlobe = projection === 'globe' && rafZoom <= 12;
-        const aisIconLayer = allVisTargets.length > 0 ? new IconLayer<AisTarget>({
-          id: 'ais-icon',
-          data: allVisTargets,
-          iconAtlas: ghostIconAtlasUrl,
-          iconMapping: VESSEL_ICON_MAPPING,
-          getIcon: () => 'vessel',
-          getPosition: (t: AisTarget) => [t.position!.longitude, t.position!.latitude, 0],
-          getAngle: (t: AisTarget) => {
-            const headingDeg = (t.heading ?? t.cog ?? 0) * 180 / Math.PI;
-            return rafIsGlobe ? 180 - headingDeg : -headingDeg;
-          },
-          getSize: () => 64 * ghostSettingsIconSize,
-          getColor: (t: AisTarget) => {
-            const a = Math.round(vesselIconOpacity(t, mapZoom, ghostSettingsIconSize) * 255);
-            return [255, 255, 255, a];
-          },
-          billboard: false,
-          sizeUnits: 'pixels' as const,
-          sizeMinPixels: 6,
-          pickable: true,
-          updateTriggers: {
-            getColor: [mapZoom, ghostSettingsIconSize],
-            getAngle: [rafIsGlobe],
-          },
-        }) : null;
+        // Confirmed icon layer — outline+fill in one layer; shader handles both passes.
+        const confirmedIconLayer = confirmedIconProps
+          ? new AisIconLayer({ ...confirmedIconProps, timeSinceUpload: 0, zoom: rafZoom })
+          : null;
 
         // --- Ruler layers ---
         type HandleDatum    = { rulerId: string; endpoint: 'a' | 'b'; lon: number; lat: number; snapId?: string };
@@ -580,8 +521,7 @@
             ...aisAnimLayers,
             // COG arc (stable, rebuilt on AIS tick)
             ...stableLayers,
-            // confirmed icon — rebuilt per-frame so getAngle uses current zoom/bearing
-            ...(aisIconLayer ? [aisIconLayer] : []),
+            ...(confirmedIconLayer ? [confirmedIconLayer] : []),
             // rulers render on top of AIS so handles are always clickable
             ...rulerLineLayers,
           ],
@@ -609,12 +549,10 @@
     map.on('click', (e) => {
       if (!overlay) return;
       const { x, y } = e.point;
-      const aisLayerIds = ['ais-icon', 'ais-hull-ghost', 'ais-hull-confirmed', 'ais-ghost-icon'];
+      const aisLayerIds = ['ais-confirmed-icon', 'ais-hull-ghost', 'ais-hull-confirmed', 'ais-ghost-icon'];
       const picked = overlay.pickObject({ x, y, radius: 5, layerIds: aisLayerIds });
       if (!picked?.object) return;
-      // Ghost icon stores { target, lon, lat, heading }; AIS layers store AisTarget directly.
-      const obj = picked.object as AisTarget | GhostItem;
-      const target: AisTarget = 'target' in obj ? (obj as GhostItem).target : (obj as AisTarget);
+      const target = picked.object as AisTarget;
       if (!target?.position) return;
       handleAisClick({ ...picked, object: target });
     });
@@ -879,14 +817,45 @@
       t.heading !== undefined && t.lengthM !== undefined && t.beamM !== undefined;
     const cogTargets  = visTargets.filter(t => t.cog !== undefined && (t.sog ?? 0) > 0.1);
 
-    const vesselColor = hexToRgba(ap.vesselColor, 220);
-    const iconAtlasUrl = makeVesselIconDataUrl(64, ap.vesselColor);
+    const vesselColor      = hexToRgba(ap.vesselColor, 220);
+    const ghostVesselColor = hexToRgba(ap.vesselColor, 130);
 
     allVisTargets = visTargets;
     hullTargets = visTargets.filter(hasHull);
     ghostTargets = visTargets.filter(t => t.cog !== undefined && (t.sog ?? 0) > 0.1);
-    ghostIconAtlasUrl = iconAtlasUrl;
-    ghostSettingsIconSize = settingsIconSize;
+    aisIconSize = settingsIconSize;
+
+    // Ghost icon layer props (moving vessels, DR in GPU shader)
+    ghostIconProps = ghostTargets.length > 0 ? {
+      id: 'ais-ghost-icon',
+      data: ghostTargets,
+      getPosition:    (t: AisTarget) => [t.position!.longitude, t.position!.latitude, 0],
+      getSog:         (t: AisTarget) => t.sog     ?? 0,
+      getCog:         (t: AisTarget) => t.cog     ?? 0,
+      getHeading:     (t: AisTarget) => t.heading ?? t.cog ?? 0,
+      getRot:         (t: AisTarget) => t.rot     ?? 0,
+      getAgeAtUpload: (t: AisTarget) => (now - positionUpdateMs(t)) / 1000,
+      getLength:      (t: AisTarget) => t.lengthM ?? 0,
+      getColor:       ghostVesselColor,
+      settingsIconSize,
+      pickable: true,
+    } : null;
+
+    // Confirmed icon layer props (static at last-known position, cross-fades with hull)
+    confirmedIconProps = allVisTargets.length > 0 ? {
+      id: 'ais-confirmed-icon',
+      data: allVisTargets,
+      getPosition:    (t: AisTarget) => [t.position!.longitude, t.position!.latitude, 0],
+      getSog:         () => 0,
+      getCog:         () => 0,
+      getHeading:     (t: AisTarget) => t.heading ?? t.cog ?? 0,
+      getRot:         () => 0,
+      getAgeAtUpload: () => 0,
+      getLength:      (t: AisTarget) => t.lengthM ?? 0,
+      getColor:       vesselColor,
+      settingsIconSize,
+      pickable: true,
+    } : null;
 
     hullProps = {
       id: 'ais-hull-ghost',
@@ -936,12 +905,12 @@
           const totalSec = cogLengthMinutes * 60;
           const rot = t.rot ?? 0;
           if (Math.abs(rot) < 1e-4) {
-            const [endLon, endLat] = extrapolatePos(longitude, latitude, t.cog!, t.sog ?? 0, 0, 0, totalSec * 1000, totalSec);
+            const [endLon, endLat] = extrapolatePos(longitude, latitude, t.cog!, t.sog ?? 0, 0, 0, totalSec * 1000);
             return [[longitude, latitude], [endLon, endLat]];
           }
           const N = 24;
           return Array.from({ length: N + 1 }, (_, i) => {
-            const [lon, lat] = extrapolatePos(longitude, latitude, t.cog!, t.sog ?? 0, rot, 0, totalSec * i / N * 1000, totalSec);
+            const [lon, lat] = extrapolatePos(longitude, latitude, t.cog!, t.sog ?? 0, rot, 0, totalSec * i / N * 1000);
             return [lon, lat] as [number, number];
           });
         },
@@ -959,8 +928,7 @@
           getDashArray: [cogStyle, cogWidth],
         },
       }),
-      // ais-icon (confirmed position) is built per-frame in the rAF loop
-      // so getAngle always reads the current zoom without a one-frame Svelte lag.
+      // AIS icon layers are built per-frame in the rAF loop.
     ];
   });
 
