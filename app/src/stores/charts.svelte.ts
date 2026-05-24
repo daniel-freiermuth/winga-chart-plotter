@@ -7,6 +7,7 @@ export type { WmtsLayerInfo };
 
 const LS_OVERRIDES_KEY  = 'chart-wmts-overrides';
 const LS_LAYER_SEL_KEY  = 'chart-wmts-layer-sel';
+const LS_SELECTED_KEY   = 'chart-selected';
 
 function loadLS(key: string): Map<string, string> {
   try {
@@ -16,6 +17,14 @@ function loadLS(key: string): Map<string, string> {
   return new Map();
 }
 
+function loadSelectedIds(): Set<string> {
+  try {
+    const raw = localStorage.getItem(LS_SELECTED_KEY);
+    if (raw) return new Set(JSON.parse(raw) as string[]);
+  } catch { /* ignore */ }
+  return new Set();
+}
+
 function saveLS(key: string, m: Map<string, string>) {
   localStorage.setItem(key, JSON.stringify([...m]));
 }
@@ -23,6 +32,7 @@ function saveLS(key: string, m: Map<string, string>) {
 function createChartsStore() {
   let available     = $state<ChartRecord>({});
   const selected    = new SvelteSet<string>();
+  const savedSelected = loadSelectedIds();
   let loading       = $state(false);
   let error         = $state<string | null>(null);
   let serverBase    = '';
@@ -117,6 +127,12 @@ function createChartsStore() {
       try {
         available = await fetchCharts(base);
 
+        // Restore previously selected charts that still exist on this server.
+        for (const id of savedSelected) {
+          if (id in available) selected.add(id);
+        }
+        savedSelected.clear();
+
         const wmtsTasks = Object.values(available)
           .filter(c => c.type === 'WMTS' && !wmtsOverrides.has(c.identifier))
           .map(async c => {
@@ -151,6 +167,7 @@ function createChartsStore() {
     toggle(id: string) {
       if (selected.has(id)) selected.delete(id);
       else selected.add(id);
+      localStorage.setItem(LS_SELECTED_KEY, JSON.stringify([...selected]));
     },
   };
 }
