@@ -153,6 +153,8 @@
   let confirmedHullProps: HullProps | null = null;
   // Targets that have hull data — accessible to rAF loop for ghost icon computation:
   let hullTargets: AisTarget[] = [];
+  // All moving targets (position + cog) — used for ghost icons even without hull dimensions:
+  let ghostTargets: AisTarget[] = [];
   let ghostIconAtlasUrl = '';
   let ghostSettingsIconSize = 1;
   // Stable layers rebuilt on AIS tick (COG arc + confirmed icon):
@@ -192,8 +194,8 @@
         const nowMs = Date.now();
         const elapsed = (nowMs - uploadTime) / 1000;
 
-        // Compute dead-reckoned position + heading for each hull target (arc if ROT ≠ 0)
-        const ghostData: GhostItem[] = hullTargets.map(t => {
+        // Compute dead-reckoned position + heading for each moving target (arc if ROT ≠ 0)
+        const ghostData: GhostItem[] = ghostTargets.map(t => {
           const [lon, lat] = extrapolatePos(
             t.position!.longitude, t.position!.latitude,
             t.cog ?? 0, t.sog ?? 0, t.rot ?? 0,
@@ -495,6 +497,7 @@
     const iconAtlasUrl = makeVesselIconDataUrl(64, ap.vesselColor);
 
     hullTargets = visTargets.filter(hasHull);
+    ghostTargets = visTargets.filter(t => t.cog !== undefined && (t.sog ?? 0) > 0.1);
     ghostIconAtlasUrl = iconAtlasUrl;
     ghostSettingsIconSize = settingsIconSize;
 
