@@ -31,9 +31,8 @@
       <button class="close-btn" onclick={close} title="Close">✕</button>
     </div>
 
-    <!-- Base layers -->
-    <p class="section-title">Base layers</p>
     <ul class="chart-list">
+      <!-- Base layers -->
       {#each BASE_LAYERS as layer (layer.id)}
         <li class="chart-row">
           <input
@@ -45,18 +44,13 @@
           <label for="base-{layer.id}" class="chart-name">{layer.name}</label>
         </li>
       {/each}
-    </ul>
 
-    <!-- SignalK charts -->
-    <p class="section-title">Charts from Signal K</p>
-    {#if charts.loading}
-      <p class="hint">Loading charts…</p>
-    {:else if charts.error}
-      <p class="hint error">⚠ {charts.error}</p>
-    {:else if Object.keys(charts.available).length === 0}
-      <p class="hint">No charts available from the Signal K server.</p>
-    {:else}
-      <ul class="chart-list">
+      <!-- SignalK charts -->
+      {#if charts.loading}
+        <li class="chart-row hint-row">Loading charts…</li>
+      {:else if charts.error}
+        <li class="chart-row hint-row error">⚠ {charts.error}</li>
+      {:else}
         {#each Object.entries(charts.available) as [id, chart] (id)}
           <li class="chart-row">
             <input
@@ -121,8 +115,8 @@
             </div>
           </li>
         {/each}
-      </ul>
-    {/if}
+      {/if}
+    </ul>
   </div>
 {/if}
 
@@ -194,25 +188,13 @@
   }
   .close-btn:hover { color: white; }
 
-  .hint {
+  .hint-row {
     font-size: 12px;
     color: #666688;
-    padding: 4px 16px 12px;
-    margin: 0;
+    padding: 10px 16px;
+    list-style: none;
   }
-  .hint.error { color: #f87171; }
-
-  .section-title {
-    font-size: 10px;
-    font-weight: 600;
-    color: #666688;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    margin: 0;
-    padding: 10px 16px 4px;
-    border-top: 1px solid #2a2a3e;
-  }
-  .section-title:first-of-type { border-top: none; padding-top: 6px; }
+  .hint-row.error { color: #f87171; }
 
   .chart-list {
     list-style: none;
