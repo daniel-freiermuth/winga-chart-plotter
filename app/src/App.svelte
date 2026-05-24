@@ -63,13 +63,22 @@
   });
 
   // Charts and vessel info only depend on the HTTP URL — no WASM needed on main thread.
+  // Vessel info is re-fetched periodically: AIS static data (name, type, dimensions)
+  // is broadcast by vessels every ~6 minutes, so Signal K may not have it at startup.
+  const VESSEL_INFO_INTERVAL_MS = 3 * 60 * 1000;
   let lastHttpUrl = '';
+  let vesselInfoTimer: ReturnType<typeof setInterval> | null = null;
   $effect(() => {
     const httpUrl = settings.signalkHttpUrl;
     if (httpUrl === lastHttpUrl) return;
     lastHttpUrl = httpUrl;
     void charts.load(httpUrl);
-    void fetchVesselInfo(httpUrl).then(info => ais.setInfoCache(info));
+
+    if (vesselInfoTimer !== null) clearInterval(vesselInfoTimer);
+    const refresh = () => void fetchVesselInfo(httpUrl).then(info => ais.setInfoCache(info));
+    refresh();
+    vesselInfoTimer = setInterval(refresh, VESSEL_INFO_INTERVAL_MS);
+    return () => { if (vesselInfoTimer !== null) clearInterval(vesselInfoTimer); };
   });
 
   let lastUrl = '';
