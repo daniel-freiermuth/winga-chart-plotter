@@ -12,6 +12,7 @@
   import { ais, type AisTarget } from '../stores/ais.svelte';
   import { MapboxOverlay } from '@deck.gl/mapbox';
   import { IconLayer, PathLayer } from '@deck.gl/layers';
+  import { PathStyleExtension } from '@deck.gl/extensions';
   import type { PickingInfo } from '@deck.gl/core';
   import { AisHullLayer } from '../layers/AisHullLayer';
   import { makeVesselIconData, makeVesselIconDataUrl, vesselIconOpacity, extrapolatePos, extrapolateHeading } from '../lib/deadReckoning';
@@ -139,6 +140,21 @@
     const g = parseInt(h.slice(2, 4), 16);
     const b = parseInt(h.slice(4, 6), 16);
     return [isNaN(r) ? 0 : r, isNaN(g) ? 0 : g, isNaN(b) ? 0 : b, alpha];
+  }
+
+  /**
+   * Map a LineStyle + line width to a PathStyleExtension dash array [dashPx, gapPx].
+   * Values are in pixels (same units as widthUnits: 'pixels').
+   * Pattern scales with width so dots stay circular and dashes stay proportional.
+   */
+  function lineStyleDash(style: LineStyle, width: number): [number, number] {
+    const w = Math.max(1, width);
+    switch (style) {
+      case 'dashed':   return [6 * w, 3 * w];
+      case 'dotted':   return [w,     2 * w];  // dot ≈ square/circular, gap = 2× width
+      case 'dash-dot': return [6 * w, 2 * w];  // deck.gl only supports two-element arrays
+      default:         return [0, 0];
+    }
   }
 
 
@@ -488,6 +504,13 @@
     const now = Date.now();
     uploadTime = now;
 
+    // Capture COG line settings explicitly so Svelte 5 tracks them as dependencies
+    // and the closures below always close over the current values.
+    const cogColor        = ap.cog.color;
+    const cogWidth        = ap.cog.width;
+    const cogStyle        = ap.cog.style;
+    const cogLengthMinutes = ap.cog.lengthMinutes;
+
     const visTargets = targets.filter(t => t.position);
     const hasHull = (t: AisTarget) =>
       t.heading !== undefined && t.lengthM !== undefined && t.beamM !== undefined;
@@ -548,24 +571,31 @@
         data: cogTargets,
         getPath: (t: AisTarget) => {
           const { longitude, latitude } = t.position!;
-          const totalSec = ap.cog.lengthMinutes * 60;
+          const totalSec = cogLengthMinutes * 60;
           const rot = t.rot ?? 0;
           if (Math.abs(rot) < 1e-4) {
-            const [endLon, endLat] = extrapolatePos(longitude, latitude, t.cog!, t.sog ?? 0, 0, 0, totalSec * 1000);
+            const [endLon, endLat] = extrapolatePos(longitude, latitude, t.cog!, t.sog ?? 0, 0, 0, totalSec * 1000, totalSec);
             return [[longitude, latitude], [endLon, endLat]];
           }
           const N = 24;
           return Array.from({ length: N + 1 }, (_, i) => {
-            const [lon, lat] = extrapolatePos(longitude, latitude, t.cog!, t.sog ?? 0, rot, 0, totalSec * i / N * 1000);
+            const [lon, lat] = extrapolatePos(longitude, latitude, t.cog!, t.sog ?? 0, rot, 0, totalSec * i / N * 1000, totalSec);
             return [lon, lat] as [number, number];
           });
         },
-        getColor: () => hexToRgba(ap.cog.color, 200),
-        getWidth: ap.cog.width,
+        getColor: () => hexToRgba(cogColor, 200),
+        getWidth: cogWidth,
+        getDashArray: lineStyleDash(cogStyle, cogWidth),
         widthUnits: 'pixels',
         widthMinPixels: 1,
         pickable: false,
-        updateTriggers: { getColor: [ap.cog.color], getWidth: [ap.cog.width] },
+        extensions: [new PathStyleExtension({ dash: true })],
+        updateTriggers: {
+          getPath:     [cogLengthMinutes],
+          getColor:    [cogColor],
+          getWidth:    [cogWidth],
+          getDashArray: [cogStyle, cogWidth],
+        },
       }),
       // Confirmed icon at last known position (full opacity, cross-fades with hull)
       new IconLayer<AisTarget>({
