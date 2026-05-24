@@ -523,7 +523,7 @@
       });
 
       if (t.cog !== undefined && t.sog !== undefined && t.sog > 0.1) {
-        const distM = t.sog * 3 * 60;
+        const distM = settings.appearance.ais.cog.lengthMinutes * 60 * t.sog;
         cogLines.push({
           type: 'Feature',
           geometry: { type: 'LineString', coordinates: rhumbCoords(longitude, latitude, t.cog, distM) },
@@ -558,9 +558,9 @@
     if (!state.position) return;
     const { longitude, latitude } = state.position;
 
-    function lineDistM(line: LineAppearance): number {
+    function lineDistM(line: LineAppearance, sogMs: number | null): number {
       if (line.lengthUnit === 'nm')  return line.lengthValue * 1852;
-      if (line.lengthUnit === 'min') return state.sog !== null ? line.lengthValue * 60 * state.sog : 0;
+      if (line.lengthUnit === 'min') return sogMs !== null ? line.lengthValue * 60 * sogMs : 0;
       // px → meters per pixel at current zoom & latitude (WebMercator, 512px tile)
       const mpp = (Math.cos(latitude * Math.PI / 180) * 40075016.686) / (512 * Math.pow(2, zoom));
       return line.lengthValue * mpp;
@@ -586,7 +586,7 @@
     cogSrc.setData(
       state.cog !== null ? { type: 'FeatureCollection', features: [{
         type: 'Feature',
-        geometry: { type: 'LineString', coordinates: rhumbCoords(longitude, latitude, state.cog, lineDistM(ap.cog)) },
+        geometry: { type: 'LineString', coordinates: rhumbCoords(longitude, latitude, state.cog, lineDistM(ap.cog, state.sog)) },
         properties: {},
       }]} : EMPTY_FC
     );
@@ -594,7 +594,7 @@
     gcSrc.setData(
       state.cog !== null ? { type: 'FeatureCollection', features: [{
         type: 'Feature',
-        geometry: { type: 'LineString', coordinates: gcCoords(longitude, latitude, state.cog, lineDistM(ap.gc)) },
+        geometry: { type: 'LineString', coordinates: gcCoords(longitude, latitude, state.cog, lineDistM(ap.gc, state.sog)) },
         properties: {},
       }]} : EMPTY_FC
     );
@@ -602,7 +602,7 @@
     hdgSrc.setData(
       state.heading !== null ? { type: 'FeatureCollection', features: [{
         type: 'Feature',
-        geometry: { type: 'LineString', coordinates: rhumbCoords(longitude, latitude, state.heading, lineDistM(ap.heading)) },
+        geometry: { type: 'LineString', coordinates: rhumbCoords(longitude, latitude, state.heading, lineDistM(ap.heading, state.sog)) },
         properties: {},
       }]} : EMPTY_FC
     );

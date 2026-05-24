@@ -17,6 +17,7 @@ export interface AisAppearance {
     color: string;
     width: number;
     style: LineStyle;
+    lengthMinutes: number;
   };
 }
 
@@ -49,7 +50,7 @@ const DEFAULTS: SettingsData = {
     ais: {
       vesselColor: '#f59e0b',
       vesselSize: 16,
-      cog: { color: '#f59e0b', width: 1.5, style: 'dashed' },
+      cog: { color: '#f59e0b', width: 1.5, style: 'dashed', lengthMinutes: 3 },
     },
   },
 };

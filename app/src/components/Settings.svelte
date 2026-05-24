@@ -186,6 +186,13 @@
           </select>
         </div>
       </div>
+      <div class="row">
+        <label>Length</label>
+        <div class="field">
+          <input type="number" bind:value={settings.appearance.ais.cog.lengthMinutes} min="1" max="60" step="1" oninput={applyAppearance} />
+          <span class="unit">min</span>
+        </div>
+      </div>
     {/if}
 
     <div class="actions">
