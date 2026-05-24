@@ -199,11 +199,22 @@
 
   // Native pointer-event drag handlers — deck.gl drag callbacks break when the layer
   // is recreated mid-drag (which happens every rAF because the data changes).
+  // In interleaved mode deck.gl doesn't forward mouse events, so hover/click are
+  // also handled here via overlay.pickObject().
   function handleRulerPointerDown(e: PointerEvent) {
     if (!overlay || !map) return;
     const rect = mapContainer.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
+    // Check delete button first — small ✕ offset from B endpoint.
+    const deletePick = overlay.pickObject({ x, y, radius: 12, layerIds: ['ruler-delete'] });
+    if (deletePick?.object) {
+      type HandleDatum = { rulerId: string };
+      const d = deletePick.object as HandleDatum;
+      rulers.remove(d.rulerId);
+      e.stopPropagation();
+      return;
+    }
     const picked = overlay.pickObject({ x, y, radius: 10, layerIds: ['ruler-handles'] });
     if (!picked?.object) return;
     type HandleDatum = { rulerId: string; endpoint: 'a' | 'b' };
@@ -216,10 +227,18 @@
   }
 
   function handleRulerPointerMove(e: PointerEvent) {
-    if (!rulerDrag || !map) return;
+    if (!map) return;
     const rect = mapContainer.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
+    if (!rulerDrag) {
+      // Hover detection replaces deck.gl onHover (which doesn't fire in interleaved mode).
+      if (overlay) {
+        const hoverPick = overlay.pickObject({ x, y, radius: 10, layerIds: ['ruler-handles'] });
+        setHandleHover(!!hoverPick?.object);
+      }
+      return;
+    }
     const coord = map.unproject([x, y]);
     rulers.moveEndpoint(rulerDrag.rulerId, rulerDrag.endpoint, coord.lng, coord.lat);
     e.stopPropagation();
@@ -299,8 +318,29 @@
     map.addControl(new maplibregl.NavigationControl(), 'top-right');
     map.addControl(new maplibregl.ScaleControl(), 'bottom-left');
 
-    // deck.gl overlay shares the MapLibre WebGL context
-    overlay = new MapboxOverlay({ layers: [], interleaved: false });
+    // deck.gl overlay — interleaved mode shares MapLibre's WebGL context and render pass.
+    //
+    // deck.gl v9.1+ (Globe View ♥ MapLibre): GlobeViewport is updated to match
+    // MapLibre v5's camera matrices — MapboxOverlay works without additional configuration.
+    // Do NOT pass a custom `views` prop; let getDeckInstance choose GlobeView or MapView.
+    //
+    // depthCompare:'always' — in globe mode MapLibre renders the sphere into the depth
+    // buffer before custom layers. Our geometry sits exactly on the sphere surface, so
+    // depth values are nearly identical → z-fighting → flickering. Bypass the depth test
+    // so all deck.gl fragments pass. This is correct semantics for an overlay (AIS, ruler)
+    // that should always appear above the basemap. No depth ordering is needed between our
+    // own layers since they are drawn in painter's order.
+    //
+    // cullMode:'none' — getDefaultParameters adds cullMode:'back' in globe mode. Our
+    // flat map-geometry (hull polygons, icon quads with billboard:false) has downward-
+    // facing normals (back-faces from camera) and would be culled. Billboarded layers
+    // (TextLayer, ScatterplotLayer) survive because they always face the camera. Override
+    // to 'none' to disable back-face culling globally for our overlay.
+    overlay = new MapboxOverlay({
+      layers: [],
+      interleaved: true,
+      parameters: { depthCompare: 'always', cullMode: 'none' },
+    });
     map.addControl(overlay as unknown as maplibregl.IControl);
 
     // rAF loop: updates timeSinceUpload on hull (GPU) and rebuilds ghost icon positions (JS) each frame.
@@ -368,10 +408,6 @@
             sizeUnits: 'pixels' as const,
             sizeMinPixels: 6,
             pickable: true,
-            onClick: (info: PickingInfo) => {
-              const d = info.object as GhostItem | null | undefined;
-              return d?.target ? handleAisClick({ ...info, object: d.target }) : false;
-            },
           }) : null;
 
           aisAnimLayers.push(
@@ -459,7 +495,6 @@
             getLineWidth: 1.5,
             stroked: true,
             pickable: true,
-            onHover: (info: PickingInfo) => { setHandleHover(!!info.object); },
             updateTriggers: {
               getPosition:  [currentRulers],
               getFillColor: [currentRulers, rulerColor],
@@ -499,11 +534,6 @@
             getTextAnchor: 'middle' as const,
             getAlignmentBaseline: 'center' as const,
             pickable: true,
-            onClick: (info: PickingInfo) => {
-              const d = info.object as HandleDatum | null;
-              if (d) rulers.remove(d.rulerId);
-              return true;
-            },
             updateTriggers: { getPosition: [currentRulers] },
           }),
         ] : [];
@@ -534,6 +564,20 @@
     map.on('zoom', () => { mapZoom = map?.getZoom() ?? mapZoom; });
     // User dragging the map cancels follow mode.
     map.on('dragstart', () => { if (!rulerDrag) followMode.following = false; });
+
+    // AIS vessel click — interleaved mode doesn't forward deck.gl onClick, so we pick manually.
+    map.on('click', (e) => {
+      if (!overlay) return;
+      const { x, y } = e.point;
+      const aisLayerIds = ['ais-icon', 'ais-hull-ghost', 'ais-hull-confirmed', 'ais-ghost-icon'];
+      const picked = overlay.pickObject({ x, y, radius: 5, layerIds: aisLayerIds });
+      if (!picked?.object) return;
+      // Ghost icon stores { target, lon, lat, heading }; AIS layers store AisTarget directly.
+      const obj = picked.object as AisTarget | GhostItem;
+      const target: AisTarget = 'target' in obj ? (obj as GhostItem).target : (obj as AisTarget);
+      if (!target?.position) return;
+      handleAisClick({ ...picked, object: target });
+    });
 
     // style.load fires on initial style ready AND after MapLibre's internal setStyle
     // (which it calls automatically on WebGL context restore), so this covers both cases.
@@ -817,7 +861,6 @@
       settingsIconSize,
       opacity: 0.75,
       pickable: true,
-      onClick: handleAisClick,
     };
 
     // Confirmed hull: same data/geometry as ghost but dt=0 — stays at last-known position.
@@ -837,7 +880,6 @@
       settingsIconSize,
       opacity: 1,
       pickable: true,
-      onClick: handleAisClick,
     };
 
     stableLayers = [
@@ -893,7 +935,6 @@
         sizeUnits: 'pixels',
         sizeMinPixels: 6,
         pickable: true,
-        onClick: handleAisClick,
         updateTriggers: { getColor: [zoom, settingsIconSize], getAngle: [now] },
       }),
     ];
