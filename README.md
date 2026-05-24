@@ -91,6 +91,7 @@ See [`KNOWLEDGE_BASE.md`](./KNOWLEDGE_BASE.md) for full architecture decisions, 
 - AIS target to scale
 - Great-circle
 - Highly customizable appearance
+- 3D mode
 
 ## Missing features compared to Freeboard
 - S57 support (planned)
