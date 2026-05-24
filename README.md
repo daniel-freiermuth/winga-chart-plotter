@@ -1,41 +1,15 @@
-# signalk-chart-rs
+# Portolan
 
-A professional sea chart plotting application for sailing, built on [Signal K](https://signalk.org/).
+A fast and reliable sea chart plotting application for [Signal K](https://signalk.org/).
 
-> **Status: Early PoC** — the core pipeline is proven end-to-end. Active development.
+## Why another chart plotter for SignalK
+Portolan is an experiment to overcome some of [Freeboard-sk](https://github.com/SignalK/freeboard-sk)'s limitations.
 
----
+My sailing tablet gets laggy as soon as Freeboard has many AIS target, chart layers, waypoints or routes to show. Portolan is written with speed in mind, uses WASM for heavy computation and WebGL for rendering.
 
-## What works today
+Portolan tries to be projection-agnostic. Currently, there are two projection modes: mercator and globe.  Routes are great-circle by default.
 
-### Rust/WASM core (`crates/core`)
-- **`Projection` trait** — abstraction over geographic projections; no business logic hardcodes a CRS
-- **`WebMercator` implementation** — EPSG:3857 forward/inverse transforms with sub-microdegree accuracy (tested)
-- **Signal K delta parser** — parses Signal K v1 delta JSON, extracts:
-  - `navigation.position` → longitude/latitude
-  - `navigation.courseOverGroundTrue` → COG (radians)
-  - `navigation.speedOverGround` → SOG (m/s)
-  - `navigation.headingMagnetic` → heading (radians)
-- **Typed `VesselState`** — immutable-style state accumulation from delta stream
-- **WASM bindings** via `wasm-bindgen` — full JS/TS interop
-- **5 unit tests** — projection round-trips, delta parsing, error handling
-
-### Frontend (`app/`)
-- **MapLibre GL JS** map with WebGL rendering
-- **OpenStreetMap** base tile layer
-- **OpenSeaMap** seamark overlay
-- **Own vessel marker** — blue dot on the chart, updated from live Signal K data
-- **Signal K WebSocket** connection (`/signalk/v1/stream?subscribe=self`)
-- **WASM integration** — delta messages parsed in Rust, position fed to map
-- **Status overlay** — live WASM and Signal K connection indicators
-- **Svelte 5** UI shell (runes syntax)
-
-### Architecture
-- Full pipeline proven: **Signal K WebSocket → Rust/WASM → Svelte store → MapLibre GL**
-- Browser-first: runs in Firefox with no native shell required
-- Tauri-ready: no browser APIs that would block native packaging
-
----
+Being a system for marine navigation, Portolan takes great effort in correctness and avoiding bugs.
 
 ## Getting started
 
@@ -63,7 +37,39 @@ npm install
 npm run dev
 ```
 
-Open `http://localhost:5173` in Firefox. Edit `src/App.svelte` to point `SIGNALK_WS` at your Signal K server.
+Open `http://localhost:5173`. Edit `src/App.svelte` to point `SIGNALK_WS` at your Signal K server.
+
+### Deploy
+
+Build a production-optimised bundle into `app/dist/`:
+
+```sh
+make build
+# or manually:
+cd app && npm run build:wasm && npm run build
+```
+
+`app/dist/` is a self-contained static site — serve it with any HTTP server.
+
+**Option A — on the boat (recommended): serve from the Signal K server**
+
+Signal K's built-in HTTP server can host static webapps under `@signalk/server-admin-ui` plugin directory. Copy `app/dist/` to:
+```
+~/.signalk/plugin-config-data/<your-subfolder>/
+```
+and expose it via a Signal K webapp plugin, or simply drop the `dist/` contents into Signal K's `public/` directory and reach it at `http://<server>:3000/`.
+
+**Option B — standalone static server**
+
+Any `serve`-compatible tool works:
+```sh
+npx serve app/dist
+# or nginx, caddy, etc.
+```
+
+**Option C — install as PWA**
+
+With the dev server or any of the above servers running, open the app in Chrome/Edge/Firefox and use "Add to Home Screen" / "Install app". The PWA manifest (`display: standalone`) gives a full-screen, no-chrome experience — no browser address bar at the helm.
 
 ### Run Rust tests
 
@@ -71,46 +77,27 @@ Open `http://localhost:5173` in Firefox. Edit `src/App.svelte` to point `SIGNALK
 cargo test
 ```
 
----
-
-## Project structure
-
-```
-signalk-chart-rs/
-├── crates/
-│   └── core/               # Rust/WASM core library
-│       └── src/
-│           ├── projection.rs   # Projection trait + WebMercator
-│           └── signalk.rs      # Signal K types + delta parser
-└── app/                    # Svelte + MapLibre frontend
-    └── src/
-        ├── App.svelte          # WebSocket → WASM → store wiring
-        ├── stores/vessel.ts    # Typed vessel state store
-        └── components/Map.svelte  # MapLibre map + vessel marker
-```
-
----
-
 ## Design
+Do one task, do it good. This means that some features might be left to other layers. E.g. notification and alarm management as well as instrument might be left to KIP. Stable, Fast, Correct
 
 See [`KNOWLEDGE_BASE.md`](./KNOWLEDGE_BASE.md) for full architecture decisions, user stories, and open questions.
 
-**Key principles:**
-- All navigation math lives in Rust — never in TypeScript
-- Projection abstraction from day one — no hardcoded EPSG:3857 in business logic
-- Browser-first — Tauri is packaging, not a dependency
-- TDD — tests before implementation
-- Zero panics in library code
+## Additional features compared to Freeboard
+- Globe projection
+- WebGL rendering
+- WMTS layer discovery
+- AIS target to scale
+- Great-circle
+- Highly customizable appearance
 
----
+## Missing features compared to Freeboard
+- S57 support (planned)
+- Alarm management
+- Anchor (planned)
 
 ## Roadmap
 
-- [ ] Vessel heading/COG indicator (rotate marker)
-- [ ] Breadcrumb track (accumulate positions → GeoJSON line)
-- [ ] AIS targets (other vessels from Signal K)
-- [ ] Globe projection mode
+- [ ] Tracks
 - [ ] Wind particle overlay
-- [ ] Service Worker tile cache (offline support)
 - [ ] Tauri packaging (Android + Windows)
 - [ ] S-57 vector chart support
