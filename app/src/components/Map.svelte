@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import FaIcon from '../lib/FaIcon.svelte';
-  import { faGlobe, faMap } from '@fortawesome/free-solid-svg-icons';
+  import { faGlobe, faMap, faExpand, faCompress } from '@fortawesome/free-solid-svg-icons';
   import maplibregl from 'maplibre-gl';
   import 'maplibre-gl/dist/maplibre-gl.css';
   import type * as GeoJSON from 'geojson';
@@ -15,6 +15,16 @@
 
   let mapContainer: HTMLDivElement;
   let map: maplibregl.Map | undefined;
+  let isFullscreen = $state(!!document.fullscreenElement);
+  let onFsChange = () => {};
+
+  function toggleFullscreen() {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen().catch(() => {});
+    } else {
+      document.exitFullscreen().catch(() => {});
+    }
+  }
 
   export function flyToVessel() {
     const pos = $vesselState.position;
@@ -188,6 +198,9 @@
     map.addControl(new maplibregl.NavigationControl(), 'top-right');
     map.addControl(new maplibregl.ScaleControl(), 'bottom-left');
 
+    onFsChange = () => { isFullscreen = !!document.fullscreenElement; };
+    document.addEventListener('fullscreenchange', onFsChange);
+
     map.on('zoom', () => { mapZoom = map?.getZoom() ?? mapZoom; });
 
     // style.load fires on initial style ready AND after MapLibre's internal setStyle
@@ -333,7 +346,10 @@
     });
   });
 
-  onDestroy(() => { map?.remove(); });
+  onDestroy(() => {
+    document.removeEventListener('fullscreenchange', onFsChange);
+    map?.remove();
+  });
 
   // Add / remove chart tile layers when selection changes
   $effect(() => {
@@ -601,6 +617,11 @@
     title="Switch to {projection === 'mercator' ? 'Globe' : 'Mercator'}"
     onclick={() => { setProjection(projection === 'mercator' ? 'globe' : 'mercator'); }}
   ><FaIcon icon={projection === 'mercator' ? faGlobe : faMap} /></button>
+  <button
+    class="proj-btn"
+    title="{isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}"
+    onclick={toggleFullscreen}
+  ><FaIcon icon={isFullscreen ? faCompress : faExpand} /></button>
 </div>
 
 <style>
