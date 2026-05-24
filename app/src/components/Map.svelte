@@ -5,6 +5,7 @@
   import maplibregl from 'maplibre-gl';
   import 'maplibre-gl/dist/maplibre-gl.css';
   import type * as GeoJSON from 'geojson';
+  import { get } from 'svelte/store';
   import { vesselState } from '../stores/vessel';
   import { settings, type LineAppearance, type LineStyle } from '../stores/settings.svelte';
   import { followMode } from '../stores/follow.svelte';
@@ -12,9 +13,11 @@
   import { baseLayers, BASE_LAYERS } from '../stores/baseLayers.svelte';
   import { ais, type AisTarget } from '../stores/ais.svelte';
   import { MapboxOverlay } from '@deck.gl/mapbox';
-  import { IconLayer, PathLayer } from '@deck.gl/layers';
+  import { IconLayer, PathLayer, ScatterplotLayer, TextLayer } from '@deck.gl/layers';
   import { PathStyleExtension } from '@deck.gl/extensions';
   import type { PickingInfo } from '@deck.gl/core';
+  import { rulers, rulerBearingText, rulerDistanceText, type Ruler, type RulerEndpoint } from '../stores/rulers.svelte';
+  import { gcLine } from '../lib/geoMath';
   import { AisHullLayer } from '../layers/AisHullLayer';
   import { makeVesselIconData, makeVesselIconDataUrl, vesselIconOpacity, extrapolatePos, extrapolateHeading } from '../lib/deadReckoning';
 
@@ -163,9 +166,99 @@
   }
 
 
-  type HullProps = ConstructorParameters<typeof AisHullLayer>[0] & { timeSinceUpload?: number };
+  /** Add a new ruler in the lower third of the screen, endpoints ¼ screen-width apart. */
+  export function addRuler() {
+    if (!map) return;
+    const w = mapContainer.clientWidth;
+    const h = mapContainer.clientHeight;
+    // Centre X, lower-third Y
+    const cx = w / 2;
+    const cy = h * 0.75;
+    const halfSpanPx = w / 8;  // ¼ screen width total → ⅛ each side
+    const a = map.unproject([cx - halfSpanPx, cy]);
+    const b = map.unproject([cx + halfSpanPx, cy]);
+    rulers.add(a.lng, a.lat, b.lng, b.lat);
+  }
 
-  // deck.gl overlay state — created in onMount, driven by rAF loop
+  // Ruler drag state: which (rulerId, endpoint) is currently being dragged.
+  type DragState = { rulerId: string; endpoint: 'a' | 'b' } | null;
+  let rulerDrag: DragState = null;
+  // True while the cursor is over a ruler handle — dragPan disabled proactively on hover.
+  let isHoveringHandle = false;
+
+  function setHandleHover(hovering: boolean) {
+    if (hovering === isHoveringHandle) return;
+    isHoveringHandle = hovering;
+    mapContainer.style.cursor = hovering ? 'grab' : '';
+    if (hovering) {
+      map?.dragPan.disable();
+    } else if (!rulerDrag) {
+      map?.dragPan.enable();
+    }
+  }
+
+  // Native pointer-event drag handlers — deck.gl drag callbacks break when the layer
+  // is recreated mid-drag (which happens every rAF because the data changes).
+  function handleRulerPointerDown(e: PointerEvent) {
+    if (!overlay || !map) return;
+    const rect = mapContainer.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    const picked = overlay.pickObject({ x, y, radius: 10, layerIds: ['ruler-handles'] });
+    if (!picked?.object) return;
+    type HandleDatum = { rulerId: string; endpoint: 'a' | 'b' };
+    const d = picked.object as HandleDatum;
+    rulerDrag = { rulerId: d.rulerId, endpoint: d.endpoint };
+    map.dragPan.disable();
+    mapContainer.style.cursor = 'grabbing';
+    mapContainer.setPointerCapture(e.pointerId);
+    e.stopPropagation();
+  }
+
+  function handleRulerPointerMove(e: PointerEvent) {
+    if (!rulerDrag || !map) return;
+    const rect = mapContainer.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    const coord = map.unproject([x, y]);
+    rulers.moveEndpoint(rulerDrag.rulerId, rulerDrag.endpoint, coord.lng, coord.lat);
+    e.stopPropagation();
+  }
+
+  function handleRulerPointerUp(e: PointerEvent) {
+    if (!rulerDrag || !map) return;
+    const rect = mapContainer.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    const coord = map.unproject([x, y]);
+    // Snap check: find nearest target (AIS ghost or own vessel) within threshold
+    let snapId: string | undefined;
+    let snapLon = coord.lng;
+    let snapLat = coord.lat;
+    for (const t of liveSnapTargets) {
+      const pt = map.project([t.position.longitude, t.position.latitude]);
+      if (Math.hypot(pt.x - x, pt.y - y) < RULER_SNAP_PX) {
+        snapId  = t.id;
+        snapLon = t.position.longitude;
+        snapLat = t.position.latitude;
+        break;
+      }
+    }
+    rulers.snapEndpoint(rulerDrag.rulerId, rulerDrag.endpoint, snapId, snapLon, snapLat);
+    rulerDrag = null;
+    mapContainer.style.cursor = isHoveringHandle ? 'grab' : '';
+    if (!isHoveringHandle) map.dragPan.enable();
+    mapContainer.releasePointerCapture(e.pointerId);
+  }
+
+  // Snap threshold in pixels.
+  const RULER_SNAP_PX = 24;
+
+  // Ghost positions updated each rAF — dead-reckoned (lon, lat) keyed by AIS target id.
+  // Used for ruler snap so endpoints follow the animated ghost, not last-known position.
+  let liveSnapTargets: { id: string; position: { longitude: number; latitude: number } }[] = [];
+
+  type HullProps = ConstructorParameters<typeof AisHullLayer>[0] & { timeSinceUpload?: number };
   let overlay: MapboxOverlay | null = null;
   let uploadTime = 0;
   // Ghost hull props (animated forward, 75% opacity):
@@ -174,6 +267,8 @@
   let confirmedHullProps: HullProps | null = null;
   // Targets that have hull data — accessible to rAF loop for ghost icon computation:
   let hullTargets: AisTarget[] = [];
+  // All AIS targets with a known position — used for ruler snap hit-test:
+  let allVisTargets: AisTarget[] = [];
   // All moving targets (position + cog) — used for ghost icons even without hull dimensions:
   let ghostTargets: AisTarget[] = [];
   let ghostIconAtlasUrl = '';
@@ -211,51 +306,215 @@
     // rAF loop: updates timeSinceUpload on hull (GPU) and rebuilds ghost icon positions (JS) each frame.
     // stableLayers (confirmed icon + COG lines) are same JS objects — deck.gl skips re-processing them.
     function rafTick() {
-      if (overlay !== null && hullProps !== null) {
+      if (overlay !== null) {
         const nowMs = Date.now();
-        const elapsed = (nowMs - uploadTime) / 1000;
 
-        // Compute dead-reckoned position + heading for each moving target (arc if ROT ≠ 0)
-        const ghostData: GhostItem[] = ghostTargets.map(t => {
-          const [lon, lat] = extrapolatePos(
-            t.position!.longitude, t.position!.latitude,
-            t.cog ?? 0, t.sog ?? 0, t.rot ?? 0,
-            t.lastSeen, nowMs,
-          );
-          const heading = extrapolateHeading(t.heading ?? t.cog ?? 0, t.rot ?? 0, t.lastSeen, nowMs);
-          return { target: t, lon, lat, heading };
-        });
+        // --- AIS animated layers ---
+        const aisAnimLayers: (AisHullLayer | IconLayer<GhostItem> | PathLayer<AisTarget> | IconLayer<AisTarget>)[] = [];
 
-        const ghostIconLayer = ghostData.length > 0 ? new IconLayer<GhostItem>({
-          id: 'ais-ghost-icon',
-          data: ghostData,
-          iconAtlas: ghostIconAtlasUrl,
-          iconMapping: VESSEL_ICON_MAPPING,
-          getIcon: () => 'vessel',
-          getPosition: (d: GhostItem) => [d.lon, d.lat, 0],
-          getAngle: (d: GhostItem) => -(d.heading * 180 / Math.PI),
-          getSize: () => 64 * ghostSettingsIconSize,
-          getColor: () => [255, 255, 255, 130] as [number,number,number,number],
-          billboard: false,
-          sizeUnits: 'pixels' as const,
-          sizeMinPixels: 6,
-          pickable: true,
-          onClick: (info: PickingInfo) => {
-            const d = info.object as GhostItem | null | undefined;
-            return d?.target ? handleAisClick({ ...info, object: d.target }) : false;
-          },
-        }) : null;
+        // Build live snap targets every frame.
+        // For moving vessels: two snap points — last-known (id) and dead-reckoned (id+':ghost').
+        // For stationary vessels: one snap point at last-known position.
+        // Own vessel always included.
+        const ownPosForSnap = get(vesselState).position;
+        {
+          const nowForSnap = nowMs;
+          liveSnapTargets = [
+            ...allVisTargets.flatMap(t => {
+              const lastKnown = { id: t.id, position: { longitude: t.position!.longitude, latitude: t.position!.latitude } };
+              if (t.cog !== undefined && (t.sog ?? 0) > 0.1) {
+                const [gLon, gLat] = extrapolatePos(
+                  t.position!.longitude, t.position!.latitude,
+                  t.cog, t.sog ?? 0, t.rot ?? 0,
+                  t.lastSeen, nowForSnap,
+                );
+                return [
+                  lastKnown,
+                  { id: t.id + ':ghost', position: { longitude: gLon, latitude: gLat } },
+                ];
+              }
+              return [lastKnown];
+            }),
+            ...(ownPosForSnap ? [{ id: 'own-vessel', position: { longitude: ownPosForSnap.longitude, latitude: ownPosForSnap.latitude } }] : []),
+          ];
+          rulers.syncSnapped(liveSnapTargets);
+        }
 
-        overlay.setProps({
-          layers: [
+        if (hullProps !== null) {
+          const elapsed = (nowMs - uploadTime) / 1000;
+
+          // Compute dead-reckoned position + heading for animated rendering
+          const ghostData: GhostItem[] = ghostTargets.map(t => {
+            const [lon, lat] = extrapolatePos(
+              t.position!.longitude, t.position!.latitude,
+              t.cog ?? 0, t.sog ?? 0, t.rot ?? 0,
+              t.lastSeen, nowMs,
+            );
+            const heading = extrapolateHeading(t.heading ?? t.cog ?? 0, t.rot ?? 0, t.lastSeen, nowMs);
+            return { target: t, lon, lat, heading };
+          });
+
+          const ghostIconLayer = ghostData.length > 0 ? new IconLayer<GhostItem>({
+            id: 'ais-ghost-icon',
+            data: ghostData,
+            iconAtlas: ghostIconAtlasUrl,
+            iconMapping: VESSEL_ICON_MAPPING,
+            getIcon: () => 'vessel',
+            getPosition: (d: GhostItem) => [d.lon, d.lat, 0],
+            getAngle: (d: GhostItem) => -(d.heading * 180 / Math.PI),
+            getSize: () => 64 * ghostSettingsIconSize,
+            getColor: () => [255, 255, 255, 130] as [number,number,number,number],
+            billboard: false,
+            sizeUnits: 'pixels' as const,
+            sizeMinPixels: 6,
+            pickable: true,
+            onClick: (info: PickingInfo) => {
+              const d = info.object as GhostItem | null | undefined;
+              return d?.target ? handleAisClick({ ...info, object: d.target }) : false;
+            },
+          }) : null;
+
+          aisAnimLayers.push(
             // bottom: confirmed hull at last-known position (full opacity, static)
             ...(confirmedHullProps ? [new AisHullLayer({ ...confirmedHullProps, timeSinceUpload: 0 })] : []),
             // ghost hull polygon (GPU animated, 75% opacity)
             new AisHullLayer({ ...hullProps, timeSinceUpload: elapsed }),
             // ghost icon at dead-reckoned position (50% opacity, animated in JS)
             ...(ghostIconLayer ? [ghostIconLayer] : []),
+          );
+        }
+
+        // --- Ruler layers ---
+        type HandleDatum    = { rulerId: string; endpoint: 'a' | 'b'; lon: number; lat: number; snapId?: string };
+        type LineDatum      = { ruler: Ruler };
+
+        const currentRulers = rulers.rulers;
+        const rulerColor    = settings.appearance.ruler.color;
+        const rulerWidth    = settings.appearance.ruler.width;
+
+        // Hex color → [r, g, b, a] for deck.gl
+        function hexToRgba(hex: string, alpha: number): [number, number, number, number] {
+          const n = parseInt(hex.replace('#', ''), 16);
+          return [(n >> 16) & 255, (n >> 8) & 255, n & 255, Math.round(alpha * 255)];
+        }
+        const lineRgba   = hexToRgba(rulerColor, 0.87);
+        const handleRgba = hexToRgba(rulerColor, 0.90);
+
+        type MidDatum = { ruler: Ruler; lon: number; lat: number };
+
+        // Exact GC midpoint — land on the line, not the chord.
+        // Omit entries where the two handles are <100px apart (label would overlap handles).
+        const LABEL_MIN_PX = 100;
+        const midData: MidDatum[] = currentRulers.flatMap(r => {
+          if (map) {
+            const pA = map.project([r.a.lon, r.a.lat]);
+            const pB = map.project([r.b.lon, r.b.lat]);
+            if (Math.hypot(pB.x - pA.x, pB.y - pA.y) < LABEL_MIN_PX) return [];
+          }
+          const pts = gcLine(r.a.lon, r.a.lat, r.b.lon, r.b.lat);
+          const mid = pts[Math.floor(pts.length / 2)];
+          return [{ ruler: r, lon: mid[0], lat: mid[1] }];
+        });
+
+        const handleData: HandleDatum[] = currentRulers.flatMap(r => [
+          { rulerId: r.id, endpoint: 'a', lon: r.a.lon, lat: r.a.lat, snapId: r.a.snapId },
+          { rulerId: r.id, endpoint: 'b', lon: r.b.lon, lat: r.b.lat, snapId: r.b.snapId },
+        ]);
+
+        // Delete handle at the B end — hidden when handles are too close (same threshold as label)
+        const deleteData: HandleDatum[] = currentRulers.flatMap(r => {
+          if (map) {
+            const pA = map.project([r.a.lon, r.a.lat]);
+            const pB = map.project([r.b.lon, r.b.lat]);
+            if (Math.hypot(pB.x - pA.x, pB.y - pA.y) < LABEL_MIN_PX) return [];
+          }
+          return [{ rulerId: r.id, endpoint: 'b' as const, lon: r.b.lon, lat: r.b.lat }];
+        });
+
+        const rulerLineLayers = currentRulers.length > 0 ? [
+          new PathLayer<LineDatum>({
+            id: 'ruler-line',
+            data: currentRulers.map(r => ({ ruler: r })),
+            getPath: (d: LineDatum) => gcLine(d.ruler.a.lon, d.ruler.a.lat, d.ruler.b.lon, d.ruler.b.lat),
+            getColor: () => lineRgba,
+            getWidth: rulerWidth,
+            widthUnits: 'pixels',
+            widthMinPixels: 1,
+            pickable: false,
+            updateTriggers: { getPath: [currentRulers] },
+          }),
+
+          // Endpoint handles — pickable for hover; drag handled via native pointer events
+          new ScatterplotLayer<HandleDatum>({
+            id: 'ruler-handles',
+            data: handleData,
+            getPosition: (d: HandleDatum) => [d.lon, d.lat, 0],
+            getRadius: 7,
+            radiusUnits: 'pixels',
+            getFillColor: (d: HandleDatum) => d.snapId
+              ? [255, 100, 50, 230] as [number, number, number, number]   // snapped: orange
+              : handleRgba,                                                // free: ruler color
+            getLineColor: [255, 255, 255, 180] as [number, number, number, number],
+            lineWidthUnits: 'pixels',
+            getLineWidth: 1.5,
+            stroked: true,
+            pickable: true,
+            onHover: (info: PickingInfo) => { setHandleHover(!!info.object); },
+            updateTriggers: {
+              getPosition:  [currentRulers],
+              getFillColor: [currentRulers, rulerColor],
+            },
+          }),
+
+          // Single annotation label at GC midpoint, sitting on the line
+          new TextLayer<MidDatum>({
+            id: 'ruler-labels',
+            data: midData,
+            getText: (d: MidDatum) => `${rulerBearingText(d.ruler)}  ·  ${rulerDistanceText(d.ruler)}`,
+            getPosition: (d: MidDatum) => [d.lon, d.lat, 0],
+            getSize: 13,
+            getColor: [255, 240, 180, 230] as [number, number, number, number],
+            getBackgroundColor: [0, 0, 0, 160] as [number, number, number, number],
+            background: true,
+            backgroundPadding: [4, 2, 4, 2] as [number, number, number, number],
+            getTextAnchor: 'middle' as const,
+            getAlignmentBaseline: 'center' as const,
+            fontFamily: 'monospace',
+            pickable: false,
+            updateTriggers: { getText: [currentRulers], getPosition: [currentRulers] },
+          }),
+
+          // Delete handle (×) at B endpoint
+          new TextLayer<HandleDatum>({
+            id: 'ruler-delete',
+            data: deleteData,
+            getText: () => '✕',
+            getPosition: (d: HandleDatum) => [d.lon, d.lat, 0],
+            getPixelOffset: [14, -14] as [number, number],
+            getSize: 11,
+            getColor: [255, 100, 100, 220] as [number, number, number, number],
+            getBackgroundColor: [30, 10, 10, 180] as [number, number, number, number],
+            background: true,
+            backgroundPadding: [3, 1, 3, 1] as [number, number, number, number],
+            getTextAnchor: 'middle' as const,
+            getAlignmentBaseline: 'center' as const,
+            pickable: true,
+            onClick: (info: PickingInfo) => {
+              const d = info.object as HandleDatum | null;
+              if (d) rulers.remove(d.rulerId);
+              return true;
+            },
+            updateTriggers: { getPosition: [currentRulers] },
+          }),
+        ] : [];
+
+        overlay.setProps({
+          layers: [
+            ...aisAnimLayers,
             // top: COG arc + confirmed icon (static until next AIS tick)
             ...stableLayers,
+            // rulers render on top of AIS so handles are always clickable
+            ...rulerLineLayers,
           ],
         });
       }
@@ -263,12 +522,18 @@
     }
     rafId = requestAnimationFrame(rafTick);
 
+    // Native ruler drag — must be capture phase so we intercept before MapLibre.
+    mapContainer.addEventListener('pointerdown', handleRulerPointerDown, { capture: true });
+    mapContainer.addEventListener('pointermove', handleRulerPointerMove, { capture: true });
+    mapContainer.addEventListener('pointerup',   handleRulerPointerUp,   { capture: true });
+    mapContainer.addEventListener('pointercancel', handleRulerPointerUp, { capture: true });
+
     onFsChange = () => { isFullscreen = !!document.fullscreenElement; };
     document.addEventListener('fullscreenchange', onFsChange);
 
     map.on('zoom', () => { mapZoom = map?.getZoom() ?? mapZoom; });
     // User dragging the map cancels follow mode.
-    map.on('dragstart', () => { followMode.following = false; });
+    map.on('dragstart', () => { if (!rulerDrag) followMode.following = false; });
 
     // style.load fires on initial style ready AND after MapLibre's internal setStyle
     // (which it calls automatically on WebGL context restore), so this covers both cases.
@@ -342,6 +607,10 @@
     cancelAnimationFrame(rafId);
     overlay?.finalize();
     document.removeEventListener('fullscreenchange', onFsChange);
+    mapContainer.removeEventListener('pointerdown',   handleRulerPointerDown, { capture: true });
+    mapContainer.removeEventListener('pointermove',   handleRulerPointerMove, { capture: true });
+    mapContainer.removeEventListener('pointerup',     handleRulerPointerUp,   { capture: true });
+    mapContainer.removeEventListener('pointercancel', handleRulerPointerUp,   { capture: true });
     map?.remove();
   });
 
@@ -526,6 +795,7 @@
     const vesselColor = hexToRgba(ap.vesselColor, 220);
     const iconAtlasUrl = makeVesselIconDataUrl(64, ap.vesselColor);
 
+    allVisTargets = visTargets;
     hullTargets = visTargets.filter(hasHull);
     ghostTargets = visTargets.filter(t => t.cog !== undefined && (t.sog ?? 0) > 0.1);
     ghostIconAtlasUrl = iconAtlasUrl;
@@ -733,7 +1003,7 @@
 <style>
   .projection-picker {
     position: absolute;
-    top: 160px;
+    top: 200px;
     left: 10px;
     z-index: 10;
     display: flex;

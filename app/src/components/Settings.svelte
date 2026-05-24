@@ -163,8 +163,7 @@
           <span class="unit">px</span>
         </div>
       </div>
-      <p class="section-title">AIS COG line</p>
-      <div class="row">
+      <p class="section-title">AIS COG line</p>      <div class="row">
         <label>Color</label>
         <div class="field"><input type="color" bind:value={settings.appearance.ais.cog.color} oninput={applyAppearance} /></div>
       </div>
@@ -191,6 +190,19 @@
         <div class="field">
           <input type="number" bind:value={settings.appearance.ais.cog.lengthMinutes} min="1" max="60" step="1" oninput={applyAppearance} />
           <span class="unit">min</span>
+        </div>
+      </div>
+
+      <p class="section-title">Ruler</p>
+      <div class="row">
+        <label>Color</label>
+        <div class="field"><input type="color" bind:value={settings.appearance.ruler.color} oninput={applyAppearance} /></div>
+      </div>
+      <div class="row">
+        <label>Width</label>
+        <div class="field">
+          <input type="number" bind:value={settings.appearance.ruler.width} min="1" max="8" step="0.5" oninput={applyAppearance} />
+          <span class="unit">px</span>
         </div>
       </div>
     {/if}

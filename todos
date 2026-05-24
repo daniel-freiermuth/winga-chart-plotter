@@ -1,7 +1,7 @@
-- ais
+- [x] ais
     - [x] draw real size
     - [x] Double AIS click target because two icons
-    - extrapolate
+    - [x] extrapolate
     - [x] Bug: NaN rot speed
     - [x] Bug: 511 Heading
     - [x] AIS icon Transition should be guided by icon size
@@ -9,13 +9,14 @@
     - [x] Vessel names not populated later
     - [x] Link to vesselfinder and marinetraffic
     - [-] Get the picture even from there?
-- Testing
-- remember layer
-- ONE common chart list
-- Heading on graphical level, not on geo layer
+- [x] remember layer
+- [x] lock follow
+- [x] ONE common chart list
+- [x] Heading on graphical level, not on geo layer
 - Measure. Many rulers
 - Login
 - Ad-hoc navigation
+- Testing
 - tracks, routes
     - Draw route
 - MOB button

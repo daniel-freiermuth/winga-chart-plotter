@@ -21,6 +21,11 @@ export interface AisAppearance {
   };
 }
 
+export interface RulerAppearance {
+  color: string;
+  width: number;  // screen pixels
+}
+
 export interface AppearanceSettings {
   vesselColor: string;
   vesselSize: number;  // screen pixels
@@ -28,6 +33,7 @@ export interface AppearanceSettings {
   cog:         LineAppearance;
   gc:          LineAppearance;
   ais:         AisAppearance;
+  ruler:       RulerAppearance;
 }
 
 export interface SettingsData {
@@ -52,6 +58,7 @@ const DEFAULTS: SettingsData = {
       vesselSize: 16,
       cog: { color: '#f59e0b', width: 1.5, style: 'dashed', lengthMinutes: 3 },
     },
+    ruler: { color: '#ffdc32', width: 2 },
   },
 };
 
@@ -76,6 +83,7 @@ function load(): SettingsData {
               ...(p.appearance?.ais ?? {}),
               cog: { ...DEFAULTS.appearance.ais.cog, ...(p.appearance?.ais?.cog ?? {}) },
             },
+            ruler: { ...DEFAULTS.appearance.ruler, ...(p.appearance?.ruler ?? {}) },
           },
         };
       }

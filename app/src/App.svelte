@@ -2,15 +2,14 @@
   import { onMount } from 'svelte';
   import Map from './components/Map.svelte';
   import FaIcon from './lib/FaIcon.svelte';
-  import { faLocationCrosshairs } from '@fortawesome/free-solid-svg-icons';
+  import { faLocationCrosshairs, faRuler } from '@fortawesome/free-solid-svg-icons';
   import Settings from './components/Settings.svelte';
   import ChartPicker from './components/ChartPicker.svelte';
   import { vesselState } from './stores/vessel';
   import { settings } from './stores/settings.svelte';
   import { followMode } from './stores/follow.svelte';
   import { charts } from './stores/charts.svelte';
-  import { ais } from './stores/ais.svelte';
-  import type { AisTarget } from './stores/ais.svelte';
+  import { ais, type AisTarget } from './stores/ais.svelte';
   import { fetchVesselInfo } from './lib/signalk-api';
 
   // Message types received from the SignalK worker.
@@ -122,5 +121,16 @@
       opacity: {$vesselState.position ? 1 : 0.35};
     "
   ><FaIcon icon={faLocationCrosshairs} /></button>
+
+  <button
+    title="Add ruler"
+    onclick={() => mapComp?.addRuler()}
+    style="
+      position: absolute; top: 158px; left: 10px; z-index: 10;
+      background: rgba(0,0,0,0.7); border: 1px solid transparent; color: white;
+      padding: 6px 10px; border-radius: 6px; cursor: pointer;
+      font-size: 16px;
+    "
+  ><FaIcon icon={faRuler} /></button>
 </div>
 
