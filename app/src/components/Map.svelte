@@ -338,6 +338,16 @@
 
     const lon = t.position?.longitude;
     const lat = t.position?.latitude;
+
+    const lastSeenDate = new Date(t.lastSeen);
+    const lastSeenTime = lastSeenDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const ageSec = Math.round((Date.now() - t.lastSeen) / 1000);
+    const ageStr = ageSec < 60
+      ? `${ageSec}s ago`
+      : ageSec < 3600
+        ? `${Math.floor(ageSec / 60)}m ${ageSec % 60}s ago`
+        : `${Math.floor(ageSec / 3600)}h ${Math.floor((ageSec % 3600) / 60)}m ago`;
+
     return `
       <div class="ais-popup">
         <div class="ais-popup-title">${t.name ?? t.mmsi ?? 'Unknown vessel'}</div>
@@ -345,6 +355,7 @@
           ${row('MMSI',     t.mmsi     ?? null)}
           ${row('Type',     t.shipType ?? null)}
           ${row('Position', lon !== undefined && lat !== undefined ? `${lat.toFixed(5)}°N, ${lon.toFixed(5)}°E` : null)}
+          ${row('Updated',  `${lastSeenTime} <span style="opacity:0.6;font-size:0.85em">(${ageStr})</span>`)}
           <tr><td colspan="2" class="ais-section">Navigation</td></tr>
           ${row('SOG',     t.sog     !== undefined ? (t.sog     * 1.94384).toFixed(1) : null, ' kn')}
           ${row('STW',     t.stw     !== undefined ? (t.stw     * 1.94384).toFixed(1) : null, ' kn')}
