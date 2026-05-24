@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "lint": "eslint src",
     "check": "svelte-check --tsconfig tsconfig.json",
-    "build:wasm": "$HOME/.cargo/bin/wasm-pack build ../crates/core --target web --out-dir ../../app/src/wasm"
+    "build:wasm": "$HOME/.cargo/bin/wasm-pack build ../crates/core --target web --out-dir ../../app/src/wasm",
+    "postinstall": "patch-package"
   },
   "dependencies": {
     "@deck.gl/core": "^9.1.0",
@@ -27,6 +28,7 @@
     "eslint": "^10.4.0",
     "eslint-plugin-svelte": "^3.17.1",
     "globals": "^17.6.0",
+    "patch-package": "^8.0.1",
     "svelte": "^5.0.0",
     "svelte-check": "^4.0.0",
     "typescript": "^6.0.0",

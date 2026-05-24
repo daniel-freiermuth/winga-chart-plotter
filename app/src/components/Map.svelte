@@ -52,9 +52,10 @@
     followMode.following = true;
     // The follow $effect will move the map once following is set.
   }
-  let mapLoaded = $state(false);
-  let mapZoom   = $state(10);
-  let projection = $state<ProjectionId>('mercator');
+  let mapLoaded   = $state(false);
+  let mapZoom     = $state(10);
+  let mapBearing  = $state(0);
+  let projection  = $state<ProjectionId>('mercator');
 
   function setProjection(id: ProjectionId) {
     projection = id;
@@ -325,17 +326,18 @@
     // Do NOT pass a custom `views` prop; let getDeckInstance choose GlobeView or MapView.
     //
     // depthCompare:'always' — in globe mode MapLibre renders the sphere into the depth
-    // buffer before custom layers. Our geometry sits exactly on the sphere surface, so
-    // depth values are nearly identical → z-fighting → flickering. Bypass the depth test
-    // so all deck.gl fragments pass. This is correct semantics for an overlay (AIS, ruler)
-    // that should always appear above the basemap. No depth ordering is needed between our
-    // own layers since they are drawn in painter's order.
+    // buffer before custom layers. Our geometry sits on the sphere surface, so depth
+    // values are nearly identical → z-fighting → flickering. Bypass the depth test so
+    // all deck.gl fragments pass. Correct semantics for overlay layers that must always
+    // appear above the basemap; no depth ordering is needed between our own layers since
+    // they are drawn in painter's order.
     //
-    // cullMode:'none' — getDefaultParameters adds cullMode:'back' in globe mode. Our
-    // flat map-geometry (hull polygons, icon quads with billboard:false) has downward-
-    // facing normals (back-faces from camera) and would be culled. Billboarded layers
-    // (TextLayer, ScatterplotLayer) survive because they always face the camera. Override
-    // to 'none' to disable back-face culling globally for our overlay.
+    // cullMode:'none' — getDefaultParameters adds cullMode:'back' in globe mode to cull
+    // far-hemisphere geometry. However, the IconLayer's billboard:false path applies a
+    // pixelOffset.y flip before the globe orientation matrix, resulting in CW (back-face)
+    // winding in screen space — culled invisible. We override to 'none' to keep all
+    // overlay layers visible. Far-hemisphere hull artifacts are handled by the per-vertex
+    // hemisphere discard in AisHullLayer instead.
     overlay = new MapboxOverlay({
       layers: [],
       interleaved: true,
@@ -401,7 +403,11 @@
             iconMapping: VESSEL_ICON_MAPPING,
             getIcon: () => 'vessel',
             getPosition: (d: GhostItem) => [d.lon, d.lat, 0],
-            getAngle: (d: GhostItem) => -(d.heading * 180 / Math.PI),
+            getAngle: (d: GhostItem) => {
+              const headingDeg = d.heading * 180 / Math.PI;
+              const isGlobeNow = projection === 'globe' && (map?.getZoom() ?? 13) <= 12;
+              return isGlobeNow ? 180 - headingDeg : -headingDeg;
+            },
             getSize: () => 64 * ghostSettingsIconSize,
             getColor: () => [255, 255, 255, 130] as [number,number,number,number],
             billboard: false,
@@ -419,6 +425,37 @@
             ...(ghostIconLayer ? [ghostIconLayer] : []),
           );
         }
+
+        // Build the static confirmed-icon layer per-frame so getAngle always reads
+        // the CURRENT zoom (from map directly) without a one-frame Svelte effect lag.
+        // deck.gl updateTriggers prevent redundant GPU re-attribution when nothing changed.
+        const rafZoom = map?.getZoom() ?? 99;
+        const rafIsGlobe = projection === 'globe' && rafZoom <= 12;
+        const aisIconLayer = allVisTargets.length > 0 ? new IconLayer<AisTarget>({
+          id: 'ais-icon',
+          data: allVisTargets,
+          iconAtlas: ghostIconAtlasUrl,
+          iconMapping: VESSEL_ICON_MAPPING,
+          getIcon: () => 'vessel',
+          getPosition: (t: AisTarget) => [t.position!.longitude, t.position!.latitude, 0],
+          getAngle: (t: AisTarget) => {
+            const headingDeg = (t.heading ?? t.cog ?? 0) * 180 / Math.PI;
+            return rafIsGlobe ? 180 - headingDeg : -headingDeg;
+          },
+          getSize: () => 64 * ghostSettingsIconSize,
+          getColor: (t: AisTarget) => {
+            const a = Math.round(vesselIconOpacity(t, mapZoom, ghostSettingsIconSize) * 255);
+            return [255, 255, 255, a];
+          },
+          billboard: false,
+          sizeUnits: 'pixels' as const,
+          sizeMinPixels: 6,
+          pickable: true,
+          updateTriggers: {
+            getColor: [mapZoom, ghostSettingsIconSize],
+            getAngle: [rafIsGlobe],
+          },
+        }) : null;
 
         // --- Ruler layers ---
         type HandleDatum    = { rulerId: string; endpoint: 'a' | 'b'; lon: number; lat: number; snapId?: string };
@@ -541,8 +578,10 @@
         overlay.setProps({
           layers: [
             ...aisAnimLayers,
-            // top: COG arc + confirmed icon (static until next AIS tick)
+            // COG arc (stable, rebuilt on AIS tick)
             ...stableLayers,
+            // confirmed icon — rebuilt per-frame so getAngle uses current zoom/bearing
+            ...(aisIconLayer ? [aisIconLayer] : []),
             // rulers render on top of AIS so handles are always clickable
             ...rulerLineLayers,
           ],
@@ -561,7 +600,8 @@
     onFsChange = () => { isFullscreen = !!document.fullscreenElement; };
     document.addEventListener('fullscreenchange', onFsChange);
 
-    map.on('zoom', () => { mapZoom = map?.getZoom() ?? mapZoom; });
+    map.on('zoom',   () => { mapZoom    = map?.getZoom()    ?? mapZoom; });
+    map.on('rotate', () => { mapBearing = map?.getBearing() ?? mapBearing; });
     // User dragging the map cancels follow mode.
     map.on('dragstart', () => { if (!rulerDrag) followMode.following = false; });
 
@@ -626,7 +666,9 @@
         },
       });
 
-      mapLoaded = true;
+      mapZoom    = map.getZoom();
+      mapBearing = map.getBearing();
+      mapLoaded  = true;
     }); // end style.load
 
     // On WebGL context loss, mark map as not ready. MapLibre internally calls setStyle()
@@ -916,27 +958,8 @@
           getDashArray: [cogStyle, cogWidth],
         },
       }),
-      // Confirmed icon at last known position (full opacity, cross-fades with hull)
-      new IconLayer<AisTarget>({
-        id: 'ais-icon',
-        data: visTargets,
-        iconAtlas: iconAtlasUrl,
-        iconMapping: VESSEL_ICON_MAPPING,
-        getIcon: () => 'vessel',
-        getPosition: (t: AisTarget) => [t.position!.longitude, t.position!.latitude, 0],
-        // deck.gl getAngle: CCW from north (billboard: false). Nautical heading is CW → negate.
-        getAngle: (t: AisTarget) => -((t.heading ?? t.cog ?? 0) * 180 / Math.PI),
-        getSize: () => 64 * settingsIconSize,
-        getColor: (t: AisTarget) => {
-          const a = Math.round(vesselIconOpacity(t, zoom, settingsIconSize) * 255);
-          return [255, 255, 255, a];
-        },
-        billboard: false,
-        sizeUnits: 'pixels',
-        sizeMinPixels: 6,
-        pickable: true,
-        updateTriggers: { getColor: [zoom, settingsIconSize], getAngle: [now] },
-      }),
+      // ais-icon (confirmed position) is built per-frame in the rAF loop
+      // so getAngle always reads the current zoom without a one-frame Svelte lag.
     ];
   });
 

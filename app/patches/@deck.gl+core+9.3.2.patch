@@ -1,0 +1,45 @@
+diff --git a/node_modules/@deck.gl/core/dist/viewports/globe-viewport.js b/node_modules/@deck.gl/core/dist/viewports/globe-viewport.js
+index 57b1e4c..dd029b3 100644
+--- a/node_modules/@deck.gl/core/dist/viewports/globe-viewport.js
++++ b/node_modules/@deck.gl/core/dist/viewports/globe-viewport.js
+@@ -25,7 +25,7 @@ function getDistanceScales() {
+ }
+ class GlobeViewport extends Viewport {
+     constructor(opts = {}) {
+-        const { longitude = 0, zoom = 0, 
++        const { longitude = 0, zoom = 0, bearing = 0, pitch = 0,
+         // Matches Maplibre defaults
+         // https://github.com/maplibre/maplibre-gl-js/blob/f8ab4b48d59ab8fe7b068b102538793bbdd4c848/src/geo/projection/globe_transform.ts#L632-L633
+         nearZMultiplier = 0.5, farZMultiplier = 1, resolution = 10 } = opts;
+@@ -45,8 +45,25 @@ class GlobeViewport extends Viewport {
+         const scale = Math.pow(2, zoom - zoomAdjust(latitude));
+         const nearZ = opts.nearZ ?? nearZMultiplier;
+         const farZ = opts.farZ ?? (altitude + (GLOBE_RADIUS * 2 * scale) / height) * farZMultiplier;
+-        // Calculate view matrix
+-        const viewMatrix = new Matrix4().lookAt({ eye: [0, -altitude, 0], up: [0, 0, 1] });
++        // Calculate view matrix.
++        // Bearing rotates the camera around the globe's Y axis (vertical at centre).
++        // Pitch tilts the camera backward along the bearing's right axis:
++        //
++        // Correct derivation (rotate camera around right axis by +pitch):
++        //   forward_original = (0, 1, 0)
++        //   right = (cb, 0, −sb)
++        //   right × forward = (sb, 0, cb)
++        //   forward' = forward·cos(pitch) + (right × forward)·sin(pitch)
++        //            = (sb·sp, cp, cb·sp)
++        //   eye = −alt · forward' = (−sb·sp·alt, −cp·alt, −cb·sp·alt)
++        //   right × up_original = (cb,0,−sb)×(sb,0,cb) = (0,−1,0)
++        //   up = (sb·cp, −sp, cb·cp)
++        //
++        // At pitch=0: eye=(0,−alt,0), up=(sb,0,cb). At bearing=pitch=0: matches original defaults.
++        const bearingRad = bearing * DEGREES_TO_RADIANS;
++        const pitchRad   = pitch   * DEGREES_TO_RADIANS;
++        const sb = Math.sin(bearingRad), cb = Math.cos(bearingRad);
++        const sp = Math.sin(pitchRad),   cp = Math.cos(pitchRad);
++        const viewMatrix = new Matrix4().lookAt({
++            eye: [-sb * sp * altitude, -cp * altitude, -cb * sp * altitude],
++            up:  [sb * cp, -sp, cb * cp],
++        });
+         viewMatrix.rotateX(latitude * DEGREES_TO_RADIANS);
+         viewMatrix.rotateZ(-longitude * DEGREES_TO_RADIANS);
+         viewMatrix.scale(scale / height);

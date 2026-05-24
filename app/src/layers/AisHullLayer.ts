@@ -117,6 +117,28 @@ void main(void) {
   geometry.worldPosition = instancePositions;
 
   // ------------------------------------------------------------------
+  // 6b. Far-hemisphere discard (globe mode only)
+  //
+  // In globe mode the deck.gl orientation matrix uses ux = -East, which
+  // mirrors hull X and flips winding CW→CCW as seen by the GPU.  That
+  // makes our CW hull appear as a front-face for near-side vessels — good.
+  // For far-side vessels the same mirror happens, but their clip-space W
+  // is negative (they project behind the camera), and negating W flips
+  // BOTH clip X and Y — an even number of flips — so the winding stays
+  // CCW and they also appear as front-faces.  Combined with
+  // depthCompare:'always' (which bypasses occlusion by the globe sphere)
+  // they would show through the globe as mirrored ghosts.
+  //
+  // Fix: discard any vertex whose anchor sits on the far hemisphere.
+  // dot(commonPos, cameraPosition) > 0 iff they are on the same side of
+  // the plane through the globe centre that is perpendicular to the camera.
+  // ------------------------------------------------------------------
+  if (project.projectionMode == PROJECTION_MODE_GLOBE &&
+      dot(worldPos.xyz, project.cameraPosition) < 0.0) {
+    gl_Position = vec4(0.0, 0.0, -2.0, 1.0); // outside clip volume → culled
+  }
+
+  // ------------------------------------------------------------------
   // 7. Cross-fade: hull fades in as zoom increases past the transition point
   // ------------------------------------------------------------------
   float lat_rad = instancePositions.y * radians(1.0);
@@ -155,9 +177,22 @@ void main(void) {
 // ---------------------------------------------------------------------------
 // Hull mesh (triangle list, normalized local space: bow=+Y, starboard=+X)
 // ---------------------------------------------------------------------------
-// 5 vertices → 3 triangles → 9 positions
+// 5 vertices → 3 triangles → 9 positions.
+//
+// Winding order: CW in ENU space.
+//
+// In globe mode, deck.gl's project_get_orientation_matrix() sets
+// ux = normalize(vec3(uz.y, -uz.x, 0)) which equals -East everywhere on the
+// sphere.  This mirrors the hull along the East/West axis, flipping the
+// on-screen winding from CW → CCW (front-face under cullMode:'back').
+//
+// In mercator mode cullMode is not active (getDefaultParameters only adds
+// cullMode:'back' for globe), so the winding direction is irrelevant there.
+//
+// Far-side vessels are discarded in the vertex shader before they can
+// appear as mirrored ghosts through the globe (see step 6b).
 const HULL_POSITIONS = new Float32Array([
-  //  X     Y      Z       triangle
+  //  X     Y      Z       triangle  (CW in ENU → CCW on screen in globe)
    0.0,  1.0,  0.0, //  bow          \ fan T0
    1.0,  0.6,  0.0, //  sb-shoulder   \
    1.0, -1.0,  0.0, //  sb-aft        /
