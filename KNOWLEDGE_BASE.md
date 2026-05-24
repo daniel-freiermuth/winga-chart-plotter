@@ -66,17 +66,36 @@ A professional, high-quality sea chart plotting application for sailing — desi
 **Decision:** Use MapLibre GL JS as the primary chart rendering engine.
 
 **Rationale:**
-- WebGL-based (GPU-accelerated), handles hundreds of AIS targets, wind particles, and vector tiles at 60fps
+- Fully WebGL-native: tiles, vector features, symbols — all GPU-accelerated
 - Proven in production (Felt, AWS, every major map product)
 - Native support for raster tiles, vector tiles (MVT), PMTiles, WMS
-- Globe projection mode works correctly at all latitudes including polar regions
+- Globe projection mode — geometrically correct at all latitudes, great-circle routes render correctly
 - Active open-source community, not controlled by a single vendor
-- deck.gl integrates cleanly on top for AIS/particle layers
+- deck.gl integrates cleanly on top for AIS/particle layers — first-class support
+- Wind particle animation possible via deck.gl (no equivalent in any alternative)
+
+**Projection limitation (known, accepted):**
+- MapLibre 5 supports only two projections: Mercator and Globe
+- No EPSG/PROJ arbitrary projection support yet (roadmap item in the community)
+- Globe mode covers 99% of sailing use cases correctly
+- Our Rust `Projection` trait abstracts all coordinate math — ready to leverage MapLibre projection improvements when they arrive
+- Polar stereographic (Arctic sailing) is a real gap; acceptable for current scope
 
 **Rejected alternatives:**
-- OpenLayers (Canvas 2D, performance ceiling for dense AIS and wind animation)
-- Bevy (game engine, zero geo/cartography infrastructure, months of reinvention)
-- egui + wgpu (same problem — blank slate for geo, better suited for instrument panels)
+
+- **OpenLayers 10**: tile and point rendering are now WebGL-accelerated (`WebGLTileLayer`, `WebGLVectorLayer`), but vector features (routes, tracks, chart overlays) still default to Canvas 2D `VectorLayer`. No deck.gl integration. No wind particle animation equivalent. Projection flexibility (any EPSG via proj4js, on-the-fly tile reprojection) is a genuine advantage over MapLibre, but not enough to offset the rendering and ecosystem gaps.
+
+- **CesiumJS**: True ECEF 3D globe with double-precision WGS84 math — geometrically correct at poles. Apache 2.0, fully open. But the fundamental problem is it's the wrong tool: designed for aerospace/digital-twin 3D visualization, not 2D nautical chart work. Bundle: ~6–8 MB minified (vs MapLibre ~2.3 MB); mobile WebGL contexts under real memory pressure. 2D mode (Columbus View) is a projection of the 3D scene — awkward for traditional plan-view chart navigation. No native vector tile (MVT) support. No deck.gl integration (deck.gl explicitly integrates with MapLibre and Google Maps, not Cesium). No S-57/ENC support. Wind particles and AIS layers would need fully custom Cesium API shaders. Verdict: outstanding for its intended purpose (aerospace, smart cities, 3D tiles) — wrong choice for a sailing chartplotter.
+
+- **Mapbox GL JS v3**: Technically closest to MapLibre (MapLibre was forked from Mapbox GL v1). Globe mode, Standard Style, deck.gl integration works. But: proprietary license — non-commercial use is free, commercial use is paid and terms can change. Vendor lock-in is fundamentally incompatible with an open ecosystem project. MapLibre was created precisely to solve this problem.
+
+- **deck.gl standalone** (no base map): deck.gl has a `GlobeView` but it is explicitly labeled experimental with hard limitations: no `HeatmapLayer`, no `TerrainLayer`, no `MaskExtension`, tile/MVT layers experimental, high-precision only up to zoom ~12 (insufficient for harbor-scale charts). Missing the entire tile rendering pipeline that MapLibre provides. The right architecture is deck.gl *on top of* MapLibre, which is first-class supported via `MapboxOverlay`.
+
+- **Leaflet**: Canvas/SVG, no WebGL. Excellent for lightweight embedded maps but entirely unsuitable for GPU-accelerated AIS layers, wind particles, or smooth rendering of large tile datasets. Not a serious contender for our use case.
+
+- **Bevy**: Game engine, zero geo/cartography infrastructure, months of reinvention required.
+
+- **egui + wgpu**: Blank slate for geo, better suited for instrument panels than chart rendering.
 
 ---
 
@@ -198,7 +217,7 @@ S-57 (.000) → Rust parser → GeoJSON/MVT → MapLibre
 | Native shell | Tauri 2 | Android + Windows packaging |
 | Data protocol | Signal K | WebSocket + REST |
 | Offline charts | PMTiles / MBTiles | Single-file chart regions |
-| Projections | MapLibre Globe + proj crate | All latitudes supported |
+| Projections | MapLibre Globe + Mercator | Globe for correctness; Rust proj crate ready for future EPSG support |
 
 ---
 
@@ -227,7 +246,7 @@ Freeboard-SK is Signal K's existing chartplotter. This project does not fork it.
 - Mature plugin ecosystem
 
 **Why this project exists:**
-- Freeboard-SK uses OpenLayers (Canvas 2D) — a performance ceiling for dense AIS, wind animation, and future features
+- Freeboard-SK uses OpenLayers with Canvas 2D vector rendering — a performance ceiling for dense AIS, wind animation, and route/track overlays (OL's WebGL support covers tiles and points, but not general vector features)
 - `fb-map.component.ts` is a 55KB monolith — OpenLayers is not behind an abstraction, it is the abstraction
 - Angular is a heavy framework for a map-first application
 - The project aims to demonstrate what the next level looks like
@@ -267,4 +286,4 @@ Tauri is packaging, not a dependency.
 
 ---
 
-*Last updated: 2026-05-22 — initial brainstorming session*
+*Last updated: 2026-05-24 — refined ADR-001 after fair OL WebGL comparison*
