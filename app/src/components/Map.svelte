@@ -694,7 +694,7 @@
     hdgSrc.setData(
       state.heading !== null ? { type: 'FeatureCollection', features: [{
         type: 'Feature',
-        geometry: { type: 'LineString', coordinates: rhumbCoords(longitude, latitude, state.heading, lineDistM(ap.heading, state.sog)) },
+        geometry: { type: 'LineString', coordinates: (projection === 'globe' ? gcCoords : rhumbCoords)(longitude, latitude, state.heading, lineDistM(ap.heading, state.sog)) },
         properties: {},
       }]} : EMPTY_FC
     );
