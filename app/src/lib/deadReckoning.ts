@@ -7,8 +7,6 @@
 
 import type { AisTarget } from '../stores/ais.svelte';
 
-const MAX_DR_SEC = 180;
-
 /**
  * Extrapolate a vessel's position forward from its last known position.
  * Uses arc trajectory when ROT ≠ 0 (circular turn), straight line otherwise.
@@ -18,9 +16,8 @@ export function extrapolatePos(
   lon: number, lat: number,
   cogRad: number, sogMs: number, rotRadPerSec: number,
   lastSeenMs: number, nowMs: number,
-  maxSec = MAX_DR_SEC,
 ): [number, number] {
-  const dtS = Math.min((nowMs - lastSeenMs) / 1000, maxSec);
+  const dtS = (nowMs - lastSeenMs) / 1000;
   if (dtS === 0 || sogMs < 0.01) return [lon, lat];
 
   let dEast: number, dNorth: number;
@@ -46,9 +43,8 @@ export function extrapolatePos(
 export function extrapolateHeading(
   headingRad: number, rotRadPerSec: number,
   lastSeenMs: number, nowMs: number,
-  maxSec = MAX_DR_SEC,
 ): number {
-  const dtS = Math.min((nowMs - lastSeenMs) / 1000, maxSec);
+  const dtS = (nowMs - lastSeenMs) / 1000;
   return headingRad + rotRadPerSec * dtS;
 }
 
