@@ -19,7 +19,7 @@
   import { rulers, rulerBearingText, rulerDistanceText, type Ruler, type RulerEndpoint } from '../stores/rulers.svelte';
   import { gcLine } from '../lib/geoMath';
   import { AisHullLayer } from '../layers/AisHullLayer';
-  import { makeVesselIconData, makeVesselIconDataUrl, vesselIconOpacity, extrapolatePos, extrapolateHeading } from '../lib/deadReckoning';
+  import { makeVesselIconData, makeVesselIconDataUrl, vesselIconOpacity, extrapolatePos, extrapolateHeading, positionUpdateMs } from '../lib/deadReckoning';
 
   type ProjectionId = 'mercator' | 'globe';
 
@@ -368,7 +368,7 @@
                 const [gLon, gLat] = extrapolatePos(
                   t.position!.longitude, t.position!.latitude,
                   t.cog, t.sog ?? 0, t.rot ?? 0,
-                  t.lastSeen, nowForSnap,
+                  positionUpdateMs(t), nowForSnap,
                 );
                 return [
                   lastKnown,
@@ -390,9 +390,9 @@
             const [lon, lat] = extrapolatePos(
               t.position!.longitude, t.position!.latitude,
               t.cog ?? 0, t.sog ?? 0, t.rot ?? 0,
-              t.lastSeen, nowMs,
+              positionUpdateMs(t), nowMs,
             );
-            const heading = extrapolateHeading(t.heading ?? t.cog ?? 0, t.rot ?? 0, t.lastSeen, nowMs);
+            const heading = extrapolateHeading(t.heading ?? t.cog ?? 0, t.rot ?? 0, positionUpdateMs(t), nowMs);
             return { target: t, lon, lat, heading };
           });
 
@@ -719,9 +719,10 @@
     const lon = t.position?.longitude;
     const lat = t.position?.latitude;
 
-    const lastSeenDate = new Date(t.lastSeen);
+    const posMs = positionUpdateMs(t);
+    const lastSeenDate = new Date(posMs);
     const lastSeenTime = lastSeenDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-    const ageSec = Math.round((Date.now() - t.lastSeen) / 1000);
+    const ageSec = Math.round((Date.now() - posMs) / 1000);
     const ageStr = ageSec < 60
       ? `${ageSec}s ago`
       : ageSec < 3600
@@ -895,7 +896,7 @@
       getCog:         (t: AisTarget) => t.cog     ?? 0,
       getHeading:     (t: AisTarget) => t.heading ?? 0,
       getRot:         (t: AisTarget) => t.rot     ?? 0,
-      getAgeAtUpload: (t: AisTarget) => (now - t.lastSeen) / 1000,
+      getAgeAtUpload: (t: AisTarget) => (now - positionUpdateMs(t)) / 1000,
       getLength:      (t: AisTarget) => t.lengthM ?? 50,
       getBeam:        (t: AisTarget) => t.beamM   ?? 10,
       getColor: vesselColor,

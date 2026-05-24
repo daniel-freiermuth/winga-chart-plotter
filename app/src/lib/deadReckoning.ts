@@ -8,6 +8,13 @@
 import type { AisTarget } from '../stores/ais.svelte';
 
 /**
+ * Return the best epoch-ms timestamp for a target's last position fix.
+ */
+export function positionUpdateMs(t: AisTarget): number {
+  return t.lastPositionUpdateMs;
+}
+
+/**
  * Extrapolate a vessel's position forward from its last known position.
  * Uses arc trajectory when ROT ≠ 0 (circular turn), straight line otherwise.
  * Returns [longitude, latitude].

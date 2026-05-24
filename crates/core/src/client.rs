@@ -2,7 +2,7 @@
 //! Owns the connection lifecycle and vessel state accumulation.
 //! Calls back into JS when state or connection status changes.
 
-use crate::signalk::{apply_message, extract_ais_targets, extract_vessel_state};
+use crate::signalk::{apply_message, extract_ais_targets, extract_vessel_state, prune_stale_vessels};
 use js_sys::Function;
 use signalk::{Storage, V1FullFormat};
 use std::{cell::RefCell, rc::Rc};
@@ -71,6 +71,7 @@ impl SignalKClient {
                 "context": "vessels.*",
                 "subscribe": [
                     {"path": "name",                            "period": 60000},
+                    {"path": "navigation.datetime",             "period": 1000},
                     {"path": "navigation.position",             "period": 1000},
                     {"path": "navigation.courseOverGroundTrue", "period": 1000},
                     {"path": "navigation.speedOverGround",      "period": 1000},
@@ -93,27 +94,29 @@ impl SignalKClient {
         // This reduces a potentially O(n²) serialisation cascade to O(1) emits.
         const AIS_DEBOUNCE_MS: i32 = 50;
         const AIS_MAX_INTERVAL_MS: f64 = 500.0;
+        const AIS_STALE_MS: f64 = 10.0 * 60.0 * 1000.0; // 10 minutes
 
         let last_ais_emit: Rc<RefCell<f64>> = Rc::new(RefCell::new(0.0));
         let debounce_handle: Rc<RefCell<Option<i32>>> = Rc::new(RefCell::new(None));
 
         let storage_clone = storage.clone();
         let state_cb = on_state_change.clone();
-        let ais_cb = on_ais_update.clone();
 
         // Helper closure that does the actual AIS emit — shared between the immediate
-        // path and the debounce timer. Wrapped in Rc<RefCell> so both paths can hold it.
+        // path and the debounce timer. Wrapped in Rc so both paths can hold it.
         let emit_ais = {
             let storage = storage_clone.clone();
-            let ais_cb = ais_cb.clone();
+            let ais_cb = on_ais_update.clone();
             let last_emit = last_ais_emit.clone();
             Rc::new(move || {
-                let targets = extract_ais_targets(&storage.borrow());
+                let now_ms = js_sys::Date::now();
+                prune_stale_vessels(&mut storage.borrow_mut(), now_ms, AIS_STALE_MS);
+                let targets = extract_ais_targets(&storage.borrow(), now_ms, AIS_STALE_MS);
                 if !targets.is_empty() {
                     let js_val = serde_wasm_bindgen::to_value(&targets).unwrap_or(JsValue::NULL);
                     let _ = ais_cb.call1(&JsValue::NULL, &js_val);
                 }
-                *last_emit.borrow_mut() = js_sys::Date::now();
+                *last_emit.borrow_mut() = now_ms;
             })
         };
 
@@ -169,16 +172,15 @@ impl SignalKClient {
 
         // onerror
         let status_cb = on_status_change.clone();
-        let on_error = Closure::wrap(Box::new(move |_: ErrorEvent| {
+        let on_error = Closure::wrap(Box::new(move |_e: ErrorEvent| {
             let _ = status_cb.call1(&JsValue::NULL, &JsValue::from(ConnectionStatus::Error));
         }) as Box<dyn FnMut(ErrorEvent)>);
         ws.set_onerror(Some(on_error.as_ref().unchecked_ref()));
 
         // onclose
         let status_cb = on_status_change.clone();
-        let on_close = Closure::wrap(Box::new(move |_: CloseEvent| {
-            let _ =
-                status_cb.call1(&JsValue::NULL, &JsValue::from(ConnectionStatus::Disconnected));
+        let on_close = Closure::wrap(Box::new(move |_e: CloseEvent| {
+            let _ = status_cb.call1(&JsValue::NULL, &JsValue::from(ConnectionStatus::Disconnected));
         }) as Box<dyn FnMut(CloseEvent)>);
         ws.set_onclose(Some(on_close.as_ref().unchecked_ref()));
 
@@ -191,13 +193,8 @@ impl SignalKClient {
         })
     }
 
-    /// Close the WebSocket connection.
-    pub fn close(&self) -> Result<(), JsValue> {
-        self.ws.close()
-    }
-
-    /// Returns the current WebSocket ready state (0=connecting, 1=open, 2=closing, 3=closed).
-    pub fn ready_state(&self) -> u16 {
-        self.ws.ready_state()
+    /// Close the underlying WebSocket connection.
+    pub fn close(&self) {
+        let _ = self.ws.close();
     }
 }

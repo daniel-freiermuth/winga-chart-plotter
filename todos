@@ -13,7 +13,12 @@
 - [x] lock follow
 - [x] ONE common chart list
 - [x] Heading on graphical level, not on geo layer
-- Measure. Many rulers
+- [x] Measure. Many rulers
+- [x] 3D
+- [x] Bug: many things not drawn on globe
+- Head-Up, by head, cog or course
+  - N, H, WPT, COG, MAN
+	- only pixel length
 - Login
 - Ad-hoc navigation
 - Testing
@@ -22,13 +27,10 @@
 - MOB button
 - look-ahead mode
   - cog, course
-- Head-Up, by head, cog or course
-	- only pixel length
+- Appearance settings next to the things itself
 - Own vessel -> drop waypoint
 - Windy?
   - https://ims.windy.com/im/v3.0/forecast/ecmwf-hres/2026052400/2026052409/wm_grid_257/5/4/2/wind-surface.jpg
   - https://node.windy.com/citytile/v1.0/ecmwf-hres/9/270/156?hours=362&labelsVersion=v2.0&refTime=2026-05-24T00:00:00Z&step=3&pr=1&sc=6&token2=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJtYWdpYyI6NTUzLCJpYXQiOjE3Nzk2MTIxMTgsImV4cCI6MTc3OTc4NDkxOH0.9ALhlYh8t8ijAdzghEF7mAatsNB9gs-UuRdAymA3Jls&uid=8296cabd-a025-197e-b06b-9c8fea9a2681&v=50.0.3&poc=24
 - Change Heading line and style by click on own vessel?
 - Achor watch
-- Something similar to navionics as ruler?
-- 3D
