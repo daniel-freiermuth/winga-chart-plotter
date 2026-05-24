@@ -9,9 +9,22 @@
   import { settings, type LineAppearance, type LineStyle } from '../stores/settings.svelte';
   import { charts } from '../stores/charts.svelte';
   import { baseLayers, BASE_LAYERS } from '../stores/baseLayers.svelte';
-  import { ais } from '../stores/ais.svelte';
+  import { ais, type AisTarget } from '../stores/ais.svelte';
+  import { MapboxOverlay } from '@deck.gl/mapbox';
+  import { IconLayer, PathLayer } from '@deck.gl/layers';
+  import type { PickingInfo } from '@deck.gl/core';
+  import { AisHullLayer } from '../layers/AisHullLayer';
+  import { makeVesselIconData, makeVesselIconDataUrl, vesselIconOpacity, extrapolatePos, extrapolateHeading } from '../lib/deadReckoning';
 
   type ProjectionId = 'mercator' | 'globe';
+
+  // Ghost icon item used in rAF loop
+  type GhostItem = { target: AisTarget; lon: number; lat: number; heading: number };
+
+  // Shared icon atlas mapping
+  const VESSEL_ICON_MAPPING = {
+    vessel: { x: 0, y: 0, width: 64, height: 64, anchorX: 32, anchorY: 32, mask: false },
+  };
 
   let mapContainer: HTMLDivElement;
   let map: maplibregl.Map | undefined;
@@ -43,9 +56,7 @@
   const COG_SOURCE      = 'vessel-cog';
   const HDG_SOURCE      = 'vessel-hdg';
   const GC_SOURCE       = 'vessel-gc';
-  const AIS_SOURCE      = 'ais-targets';
-  const AIS_COG_SOURCE  = 'ais-cog';
-  const AIS_SHAPE_SOURCE = 'ais-shapes';
+  const AIS_SOURCE      = 'ais-targets'; // kept for ais-label text layer
   const EMPTY_FC: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features: [] };
 
   // Track the tile URL each chart source was last created with, so we can
@@ -122,59 +133,31 @@
     return coords;
   }
 
-  /** Return correct GeoJSON geometry for a line, projection-aware. */
-  function makeVesselIconData(size: number, color: string): ImageData {
-    const canvas = document.createElement('canvas');
-    canvas.width = size; canvas.height = size;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) throw new Error('Could not get 2D canvas context');
-    const cx = size / 2, cy = size / 2, s = size / 32;
-    ctx.beginPath();
-    ctx.moveTo(cx,          cy - 12 * s); // bow tip
-    ctx.lineTo(cx + 8 * s,  cy -  4 * s); // starboard shoulder
-    ctx.lineTo(cx + 8 * s,  cy +  9 * s); // starboard aft
-    ctx.lineTo(cx,           cy +  6 * s); // stern notch
-    ctx.lineTo(cx - 8 * s,  cy +  9 * s); // port aft
-    ctx.lineTo(cx - 8 * s,  cy -  4 * s); // port shoulder
-    ctx.closePath();
-    ctx.fillStyle = color;
-    ctx.fill();
-    ctx.strokeStyle = '#ffffff';
-    ctx.lineWidth = 1.5 * s;
-    ctx.lineJoin = 'round';
-    ctx.stroke();
-    return ctx.getImageData(0, 0, size, size);
+  function hexToRgba(hex: string, alpha = 255): [number, number, number, number] {
+    const h = hex.replace('#', '');
+    const r = parseInt(h.slice(0, 2), 16);
+    const g = parseInt(h.slice(2, 4), 16);
+    const b = parseInt(h.slice(4, 6), 16);
+    return [isNaN(r) ? 0 : r, isNaN(g) ? 0 : g, isNaN(b) ? 0 : b, alpha];
   }
 
-  /**
-   * Build the geographic polygon ring for a vessel given its centre position,
-   * heading (radians, clockwise from north), length and beam (metres).
-   * Uses a flat-earth approximation — fine for vessels up to a few km long.
-   */
-  function vesselShapeRing(
-    lon: number, lat: number,
-    headingRad: number,
-    lengthM: number, beamM: number,
-  ): [number, number][] {
-    const mPerDegLat = 111320;
-    const mPerDegLon = 111320 * Math.cos(lat * Math.PI / 180);
-    const sinH = Math.sin(headingRad), cosH = Math.cos(headingRad);
-    // Forward unit: (sinH, cosH) in (east, north). Right unit: (cosH, -sinH).
-    const pt = (fwd: number, rgt: number): [number, number] => [
-      lon + (fwd * sinH + rgt * cosH) / mPerDegLon,
-      lat + (fwd * cosH - rgt * sinH) / mPerDegLat,
-    ];
-    const L2 = lengthM / 2, B2 = beamM / 2;
-    const shoulder = L2 * 0.6; // bow taper start
-    return [
-      pt( L2,        0),  // bow tip
-      pt( shoulder,  B2), // starboard shoulder
-      pt(-L2,        B2), // starboard aft
-      pt(-L2,       -B2), // port aft
-      pt( shoulder, -B2), // port shoulder
-      pt( L2,        0),  // close
-    ];
-  }
+
+  type HullProps = ConstructorParameters<typeof AisHullLayer>[0] & { timeSinceUpload?: number };
+
+  // deck.gl overlay state — created in onMount, driven by rAF loop
+  let overlay: MapboxOverlay | null = null;
+  let uploadTime = 0;
+  // Ghost hull props (animated forward, 75% opacity):
+  let hullProps: HullProps | null = null;
+  // Confirmed hull props (static at last-known position, full opacity):
+  let confirmedHullProps: HullProps | null = null;
+  // Targets that have hull data — accessible to rAF loop for ghost icon computation:
+  let hullTargets: AisTarget[] = [];
+  let ghostIconAtlasUrl = '';
+  let ghostSettingsIconSize = 1;
+  // Stable layers rebuilt on AIS tick (COG arc + confirmed icon):
+  let stableLayers: (IconLayer<AisTarget> | PathLayer<AisTarget>)[] = [];
+  let rafId = 0;
 
   onMount(() => {
     map = new maplibregl.Map({
@@ -198,6 +181,65 @@
     map.addControl(new maplibregl.NavigationControl(), 'top-right');
     map.addControl(new maplibregl.ScaleControl(), 'bottom-left');
 
+    // deck.gl overlay shares the MapLibre WebGL context
+    overlay = new MapboxOverlay({ layers: [], interleaved: false });
+    map.addControl(overlay as unknown as maplibregl.IControl);
+
+    // rAF loop: updates timeSinceUpload on hull (GPU) and rebuilds ghost icon positions (JS) each frame.
+    // stableLayers (confirmed icon + COG lines) are same JS objects — deck.gl skips re-processing them.
+    function rafTick() {
+      if (overlay !== null && hullProps !== null) {
+        const nowMs = Date.now();
+        const elapsed = (nowMs - uploadTime) / 1000;
+
+        // Compute dead-reckoned position + heading for each hull target (arc if ROT ≠ 0)
+        const ghostData: GhostItem[] = hullTargets.map(t => {
+          const [lon, lat] = extrapolatePos(
+            t.position!.longitude, t.position!.latitude,
+            t.cog ?? 0, t.sog ?? 0, t.rot ?? 0,
+            t.lastSeen, nowMs,
+          );
+          const heading = extrapolateHeading(t.heading ?? t.cog ?? 0, t.rot ?? 0, t.lastSeen, nowMs);
+          return { target: t, lon, lat, heading };
+        });
+
+        const ghostIconLayer = ghostData.length > 0 ? new IconLayer<GhostItem>({
+          id: 'ais-ghost-icon',
+          data: ghostData,
+          iconAtlas: ghostIconAtlasUrl,
+          iconMapping: VESSEL_ICON_MAPPING,
+          getIcon: () => 'vessel',
+          getPosition: (d: GhostItem) => [d.lon, d.lat, 0],
+          getAngle: (d: GhostItem) => -(d.heading * 180 / Math.PI),
+          getSize: () => 64 * ghostSettingsIconSize,
+          getColor: () => [255, 255, 255, 130] as [number,number,number,number],
+          billboard: false,
+          sizeUnits: 'pixels' as const,
+          sizeMinPixels: 6,
+          pickable: true,
+          onClick: (info: PickingInfo) => {
+            const d = info.object as GhostItem | null | undefined;
+            return d?.target ? handleAisClick({ ...info, object: d.target }) : false;
+          },
+        }) : null;
+
+        overlay.setProps({
+          layers: [
+            // bottom: confirmed hull at last-known position (full opacity, static)
+            ...(confirmedHullProps ? [new AisHullLayer({ ...confirmedHullProps, timeSinceUpload: 0 })] : []),
+            // ghost hull polygon (GPU animated, 75% opacity)
+            new AisHullLayer({ ...hullProps, timeSinceUpload: elapsed }),
+            // ghost icon at dead-reckoned position (50% opacity, animated in JS)
+            ...(ghostIconLayer ? [ghostIconLayer] : []),
+            // top: COG arc + confirmed icon (static until next AIS tick)
+            ...stableLayers,
+          ],
+        });
+      }
+      rafId = requestAnimationFrame(rafTick);
+    }
+    rafId = requestAnimationFrame(rafTick);
+
     onFsChange = () => { isFullscreen = !!document.fullscreenElement; };
     document.addEventListener('fullscreenchange', onFsChange);
 
@@ -210,41 +252,18 @@
       if (!m) return;
       const ap = settings.appearance;
       m.addImage('vessel-icon', { width: 64, height: 64, data: makeVesselIconData(64, ap.vesselColor).data });
-      m.addImage('ais-icon',    { width: 64, height: 64, data: makeVesselIconData(64, ap.ais.vesselColor).data });
 
-      m.addSource(VESSEL_SOURCE,    { type: 'geojson', data: EMPTY_FC });
-      m.addSource(COG_SOURCE,       { type: 'geojson', data: EMPTY_FC });
-      m.addSource(HDG_SOURCE,       { type: 'geojson', data: EMPTY_FC });
-      m.addSource(GC_SOURCE,        { type: 'geojson', data: EMPTY_FC });
-      m.addSource(AIS_SOURCE,       { type: 'geojson', data: EMPTY_FC });
-      m.addSource(AIS_COG_SOURCE,   { type: 'geojson', data: EMPTY_FC });
-      m.addSource(AIS_SHAPE_SOURCE, { type: 'geojson', data: EMPTY_FC });
+      m.addSource(VESSEL_SOURCE, { type: 'geojson', data: EMPTY_FC });
+      m.addSource(COG_SOURCE,    { type: 'geojson', data: EMPTY_FC });
+      m.addSource(HDG_SOURCE,    { type: 'geojson', data: EMPTY_FC });
+      m.addSource(GC_SOURCE,     { type: 'geojson', data: EMPTY_FC });
+      m.addSource(AIS_SOURCE,    { type: 'geojson', data: EMPTY_FC }); // for ais-label only
 
       m.addLayer({ id: 'vessel-gc-line', type: 'line', source: GC_SOURCE,
         paint: { 'line-color': ap.gc.color, 'line-width': ap.gc.width, 'line-dasharray': dashArray(ap.gc.style, ap.gc.width) } });
 
-      m.addLayer({ id: 'ais-cog-line', type: 'line', source: AIS_COG_SOURCE,
-        paint: { 'line-color': settings.appearance.ais.cog.color, 'line-width': settings.appearance.ais.cog.width, 'line-dasharray': dashArray(settings.appearance.ais.cog.style, settings.appearance.ais.cog.width) } });
-
-      // Exact-scale polygon footprints for vessels with known dimensions
-      m.addLayer({ id: 'ais-vessel-fill', type: 'fill', source: AIS_SHAPE_SOURCE,
-        paint: { 'fill-color': settings.appearance.ais.vesselColor, 'fill-opacity': ['get', 'shape_opacity'] } });
-      m.addLayer({ id: 'ais-vessel-outline', type: 'line', source: AIS_SHAPE_SOURCE,
-        paint: { 'line-color': '#ffffff', 'line-width': 1, 'line-opacity': ['get', 'shape_opacity'] } });
-
-      // Icon for all vessels; fades out as exact shape fades in
-      m.addLayer({ id: 'ais-icon', type: 'symbol', source: AIS_SOURCE,
-        layout: {
-          'icon-image': 'ais-icon',
-          'icon-size': ['coalesce', ['get', 'icon_size'], settings.appearance.ais.vesselSize / 64],
-          'icon-rotate': ['get', 'bearing_deg'],
-          'icon-rotation-alignment': 'map',
-          'icon-allow-overlap': true,
-          'icon-ignore-placement': true,
-        },
-        paint: { 'icon-opacity': ['get', 'icon_opacity'] },
-      });
-
+      // AIS vessel icon, hull, and COG line are rendered by deck.gl (see $effect below).
+      // Only the text label stays in MapLibre for quality text rendering + collision detection.
       m.addLayer({ id: 'ais-label', type: 'symbol', source: AIS_SOURCE,
         layout: {
           'text-field': ['get', 'label'],
@@ -276,67 +295,6 @@
       mapLoaded = true;
     }); // end style.load
 
-    // Event handlers on the Map object persist across style reloads — register once.
-    // Query both AIS layers at once to avoid double-popup when icon and fill overlap.
-    const showAisPopup = (e: maplibregl.MapMouseEvent) => {
-      const features = map!.queryRenderedFeatures(e.point, { layers: ['ais-icon', 'ais-vessel-fill'] });
-      const feature = features[0];
-      if (!feature) return;
-      const p = feature.properties as Record<string, string | number | null>;
-      const coords = feature.geometry.type === 'Point'
-        ? (feature.geometry as GeoJSON.Point).coordinates
-        : e.lngLat.toArray();
-      const [lon, lat] = coords;
-
-      const row = (label: string, value: string | number | null, unit = '') =>
-        `<tr><td>${label}</td><td><b>${value !== null ? `${String(value)}${unit}` : '<span style="opacity:0.4">—</span>'}</b></td></tr>`;
-
-      const rotVal = p['rot_dpm'] !== undefined ? Number(p['rot_dpm']) : null;
-      const rotStr = rotVal !== null
-        ? `${rotVal > 0 ? '▶ ' : rotVal < 0 ? '◀ ' : ''}${Math.abs(rotVal)}°/min`
-        : null;
-
-      const mmsi = p['mmsi'];
-      const lookupLinks = mmsi
-        ? `<div class="ais-links">
-            <a href="https://www.vesselfinder.com/vessels/details/${String(mmsi)}" target="_blank" rel="noopener">VesselFinder</a>
-            <a href="https://www.myshiptracking.com/?mmsi=${String(mmsi)}" target="_blank" rel="noopener">MyShipTracking</a>
-          </div>`
-        : '';
-
-      const html = `
-        <div class="ais-popup">
-          <div class="ais-popup-title">${String(p['name'] ?? p['mmsi'] ?? 'Unknown vessel')}</div>
-          <table>
-            ${row('MMSI',     p['mmsi'])}
-            ${row('Type',     p['ship_type'])}
-            ${row('Position', `${String(p['lat'])}°N, ${String(p['lon'])}°E`)}
-            <tr><td colspan="2" class="ais-section">Navigation</td></tr>
-            ${row('SOG',      p['sog_kn'],  ' kn')}
-            ${row('STW',      p['stw_kn'],  ' kn')}
-            ${row('COG',      p['cog_deg'], '°')}
-            ${row('Heading',  p['hdg_deg'], '°')}
-            ${row('ROT',      rotStr)}
-            <tr><td colspan="2" class="ais-section">Dimensions</td></tr>
-            ${row('Length',   p['length_m'], ' m')}
-            ${row('Beam',     p['beam_m'],   ' m')}
-            ${row('Draft',    p['draft_m'],  ' m')}
-          </table>
-          ${lookupLinks}
-        </div>`;
-
-      new maplibregl.Popup({ closeButton: true, maxWidth: '280px' })
-        .setLngLat([lon, lat])
-        .setHTML(html)
-        .addTo(map!);
-    };
-
-    map.on('mouseenter', 'ais-icon',         () => { map!.getCanvas().style.cursor = 'pointer'; });
-    map.on('mouseleave', 'ais-icon',         () => { map!.getCanvas().style.cursor = ''; });
-    map.on('mouseenter', 'ais-vessel-fill',  () => { map!.getCanvas().style.cursor = 'pointer'; });
-    map.on('mouseleave', 'ais-vessel-fill',  () => { map!.getCanvas().style.cursor = ''; });
-    map.on('click', showAisPopup);
-
     // On WebGL context loss, mark map as not ready. MapLibre internally calls setStyle()
     // on context restore, which re-fires style.load — that re-adds our sources/layers
     // and sets mapLoaded = true again, triggering all effects to re-run.
@@ -356,9 +314,61 @@
   });
 
   onDestroy(() => {
+    cancelAnimationFrame(rafId);
+    overlay?.finalize();
     document.removeEventListener('fullscreenchange', onFsChange);
     map?.remove();
   });
+
+  function buildAisPopupHtml(t: AisTarget): string {
+    const row = (label: string, value: string | number | null, unit = '') =>
+      `<tr><td>${label}</td><td><b>${value !== null ? `${String(value)}${unit}` : '<span style="opacity:0.4">—</span>'}</b></td></tr>`;
+
+    const rotDpm = t.rot !== undefined ? (t.rot * 180 / Math.PI) * 60 : null;
+    const rotStr = rotDpm !== null
+      ? `${rotDpm > 0 ? '▶ ' : rotDpm < 0 ? '◀ ' : ''}${Math.abs(rotDpm).toFixed(1)}°/min`
+      : null;
+
+    const lookupLinks = t.mmsi
+      ? `<div class="ais-links">
+          <a href="https://www.vesselfinder.com/vessels/details/${t.mmsi}" target="_blank" rel="noopener">VesselFinder</a>
+          <a href="https://www.myshiptracking.com/?mmsi=${t.mmsi}" target="_blank" rel="noopener">MyShipTracking</a>
+        </div>`
+      : '';
+
+    const lon = t.position?.longitude;
+    const lat = t.position?.latitude;
+    return `
+      <div class="ais-popup">
+        <div class="ais-popup-title">${t.name ?? t.mmsi ?? 'Unknown vessel'}</div>
+        <table>
+          ${row('MMSI',     t.mmsi     ?? null)}
+          ${row('Type',     t.shipType ?? null)}
+          ${row('Position', lon !== undefined && lat !== undefined ? `${lat.toFixed(5)}°N, ${lon.toFixed(5)}°E` : null)}
+          <tr><td colspan="2" class="ais-section">Navigation</td></tr>
+          ${row('SOG',     t.sog     !== undefined ? (t.sog     * 1.94384).toFixed(1) : null, ' kn')}
+          ${row('STW',     t.stw     !== undefined ? (t.stw     * 1.94384).toFixed(1) : null, ' kn')}
+          ${row('COG',     t.cog     !== undefined ? (t.cog     * 180 / Math.PI).toFixed(1) : null, '°')}
+          ${row('Heading', t.heading !== undefined ? (t.heading * 180 / Math.PI).toFixed(1) : null, '°')}
+          ${row('ROT',     rotStr)}
+          <tr><td colspan="2" class="ais-section">Dimensions</td></tr>
+          ${row('Length',  t.lengthM ?? null, ' m')}
+          ${row('Beam',    t.beamM   ?? null, ' m')}
+          ${row('Draft',   t.draftM  ?? null, ' m')}
+        </table>
+        ${lookupLinks}
+      </div>`;
+  }
+
+  function handleAisClick(info: PickingInfo): boolean {
+    const t = info.object as AisTarget | null | undefined;
+    if (!t?.position || !info.coordinate) return false;
+    new maplibregl.Popup({ closeButton: true, maxWidth: '280px' })
+      .setLngLat(info.coordinate as [number, number])
+      .setHTML(buildAisPopupHtml(t))
+      .addTo(map!);
+    return true;
+  }
 
   // Add / remove chart tile layers when selection changes
   $effect(() => {
@@ -433,117 +443,139 @@
     map.updateImage('vessel-icon', { width: 64, height: 64, data: iconData.data });
   });
 
+  // Update ais-label text color when AIS appearance settings change.
+  // Hull, icon, and COG rendering are handled by the deck.gl effect below.
   $effect(() => {
     if (!map || !mapLoaded) return;
-    const ap = settings.appearance.ais;
-    const aisIconData = makeVesselIconData(64, ap.vesselColor);
-    map.updateImage('ais-icon', { width: 64, height: 64, data: aisIconData.data });
-    // icon-size is data-driven (per-feature, based on vessel length); only update paint/style here
-    map.setPaintProperty('ais-vessel-fill', 'fill-color', ap.vesselColor);
-    map.setPaintProperty('ais-cog-line', 'line-color', ap.cog.color);
-    map.setPaintProperty('ais-cog-line', 'line-width', ap.cog.width);
-    map.setPaintProperty('ais-cog-line', 'line-dasharray', dashArray(ap.cog.style, ap.cog.width));
-    map.setPaintProperty('ais-label', 'text-color', ap.vesselColor);
+    map.setPaintProperty('ais-label', 'text-color', settings.appearance.ais.vesselColor);
   });
 
-  // Update AIS targets on map
+  // Update MapLibre ais-label source with vessel name positions (label layer only).
   $effect(() => {
     if (!map || !mapLoaded) return;
+    const aisSrc = map.getSource(AIS_SOURCE);
+    if (!(aisSrc instanceof maplibregl.GeoJSONSource)) return;
+    const features: GeoJSON.Feature[] = ais.targets
+      .filter(t => t.position)
+      .map(t => ({
+        type: 'Feature' as const,
+        geometry: { type: 'Point' as const, coordinates: [t.position!.longitude, t.position!.latitude] },
+        properties: { label: t.name ?? '' },
+      }));
+    aisSrc.setData({ type: 'FeatureCollection', features });
+  });
+
+  // Rebuild deck.gl AIS layers on AIS tick, zoom change, or appearance settings change.
+  // The rAF loop updates timeSinceUpload (hull) and ghost icon positions each frame.
+  $effect(() => {
     const targets = ais.targets;
     const zoom = mapZoom;
-    const settingsIconSize = settings.appearance.ais.vesselSize / 64;
-    const aisSrc     = map.getSource(AIS_SOURCE);
-    const aisCogSrc  = map.getSource(AIS_COG_SOURCE);
-    const aisShapeSrc = map.getSource(AIS_SHAPE_SOURCE);
-    if (!(aisSrc     instanceof maplibregl.GeoJSONSource)) return;
-    if (!(aisCogSrc  instanceof maplibregl.GeoJSONSource)) return;
-    if (!(aisShapeSrc instanceof maplibregl.GeoJSONSource)) return;
+    const ap = settings.appearance.ais;
+    const settingsIconSize = ap.vesselSize / 64;
+    const now = Date.now();
+    uploadTime = now;
 
-    const pointFeatures:  GeoJSON.Feature[] = [];
-    const shapeFeatures:  GeoJSON.Feature[] = [];
-    const cogLines:       GeoJSON.Feature[] = [];
+    const visTargets = targets.filter(t => t.position);
+    const hasHull = (t: AisTarget) =>
+      t.heading !== undefined && t.lengthM !== undefined && t.beamM !== undefined;
+    const cogTargets  = visTargets.filter(t => t.cog !== undefined && (t.sog ?? 0) > 0.1);
 
-    for (const t of targets) {
-      if (!t.position) continue;
-      const { longitude, latitude } = t.position;
-      const headingRad = t.heading ?? t.cog ?? 0;
-      const iconBearingDeg = (headingRad * 180) / Math.PI;
+    const vesselColor = hexToRgba(ap.vesselColor, 220);
+    const iconAtlasUrl = makeVesselIconDataUrl(64, ap.vesselColor);
 
-      const metersPerPixel = (40075016.686 * Math.cos(latitude * Math.PI / 180))
-                             / (256 * Math.pow(2, zoom));
+    hullTargets = visTargets.filter(hasHull);
+    ghostIconAtlasUrl = iconAtlasUrl;
+    ghostSettingsIconSize = settingsIconSize;
 
-      // icon-size: real-world scale, minimum = settingsIconSize
-      const iconSize = t.lengthM
-        ? Math.max(settingsIconSize, t.lengthM / (metersPerPixel * 64))
-        : settingsIconSize;
+    hullProps = {
+      id: 'ais-hull-ghost',
+      data: hullTargets,
+      getPosition: (t: AisTarget) => [t.position!.longitude, t.position!.latitude, 0],
+      getSog:         (t: AisTarget) => t.sog     ?? 0,
+      getCog:         (t: AisTarget) => t.cog     ?? 0,
+      getHeading:     (t: AisTarget) => t.heading ?? 0,
+      getRot:         (t: AisTarget) => t.rot     ?? 0,
+      getAgeAtUpload: (t: AisTarget) => (now - t.lastSeen) / 1000,
+      getLength:      (t: AisTarget) => t.lengthM ?? 50,
+      getBeam:        (t: AisTarget) => t.beamM   ?? 10,
+      getColor: vesselColor,
+      zoom,
+      settingsIconSize,
+      opacity: 0.75,
+      pickable: true,
+      onClick: handleAisClick,
+    };
 
-      // Cross-fade: compute transition zoom where real vessel length = minimum icon pixels.
-      // Below that zoom → full icon. Above → full shape.
-      const hasShape = !!(t.heading !== undefined && t.lengthM && t.beamM);
-      let iconOpacity = 1;
-      let shapeOpacity = 0;
-      if (hasShape) {
-        const transitionZoom = Math.log2(
-          settingsIconSize * 64 * 40075016.686 * Math.cos(latitude * Math.PI / 180)
-          / (t.lengthM! * 256)
-        );
-        // t01: 0 at (transitionZoom - 1), 1 at (transitionZoom + 1)
-        const t01 = Math.max(0, Math.min(1, (zoom - transitionZoom + 1) / 2));
-        shapeOpacity = t01 * 0.85;
-        iconOpacity  = 1 - t01;
-      }
+    // Confirmed hull: same data/geometry as ghost but dt=0 — stays at last-known position.
+    confirmedHullProps = {
+      id: 'ais-hull-confirmed',
+      data: hullTargets,
+      getPosition: (t: AisTarget) => [t.position!.longitude, t.position!.latitude, 0],
+      getSog:         () => 0,  // no movement — always renders at confirmed position
+      getCog:         () => 0,
+      getHeading:     (t: AisTarget) => t.heading ?? 0,
+      getRot:         () => 0,
+      getAgeAtUpload: () => 0,
+      getLength:      (t: AisTarget) => t.lengthM ?? 50,
+      getBeam:        (t: AisTarget) => t.beamM   ?? 10,
+      getColor: vesselColor,
+      zoom,
+      settingsIconSize,
+      opacity: 1,
+      pickable: true,
+      onClick: handleAisClick,
+    };
 
-      const sharedProps = {
-        id:        t.id,
-        name:      t.name      ?? null,
-        mmsi:      t.mmsi      ?? null,
-        ship_type: t.shipType  ?? null,
-        cog_deg:   t.cog    !== undefined ? Number(((t.cog    * 180) / Math.PI).toFixed(1))         : null,
-        sog_kn:    t.sog    !== undefined ? Number((t.sog    * 1.94384).toFixed(1))                  : null,
-        hdg_deg:   t.heading !== undefined ? Number(((t.heading * 180) / Math.PI).toFixed(1))        : null,
-        rot_dpm:   t.rot    !== undefined ? Number(((t.rot    * 180 / Math.PI) * 60).toFixed(1))     : null,
-        stw_kn:    t.stw    !== undefined ? Number((t.stw    * 1.94384).toFixed(1))                  : null,
-        length_m:  t.lengthM  ?? null,
-        beam_m:    t.beamM    ?? null,
-        draft_m:   t.draftM   ?? null,
-        lat:       Number(latitude.toFixed(5)),
-        lon:       Number(longitude.toFixed(5)),
-      };
-
-      if (hasShape) {
-        const ring = vesselShapeRing(longitude, latitude, headingRad, t.lengthM!, t.beamM!);
-        shapeFeatures.push({
-          type: 'Feature',
-          geometry: { type: 'Polygon', coordinates: [ring] },
-          properties: { ...sharedProps, shape_opacity: shapeOpacity },
-        });
-      }
-
-      pointFeatures.push({
-        type: 'Feature',
-        geometry: { type: 'Point', coordinates: [longitude, latitude] },
-        properties: {
-          ...sharedProps,
-          bearing_deg:  iconBearingDeg,
-          icon_size:    iconSize,
-          icon_opacity: iconOpacity,
-          label:        t.name ?? '',
+    stableLayers = [
+      // COG arc prediction line (below confirmed icon)
+      // Uses arc trajectory when ROT is significant, straight line otherwise.
+      new PathLayer<AisTarget>({
+        id: 'ais-cog',
+        data: cogTargets,
+        getPath: (t: AisTarget) => {
+          const { longitude, latitude } = t.position!;
+          const totalSec = ap.cog.lengthMinutes * 60;
+          const rot = t.rot ?? 0;
+          if (Math.abs(rot) < 1e-4) {
+            const [endLon, endLat] = extrapolatePos(longitude, latitude, t.cog!, t.sog ?? 0, 0, 0, totalSec * 1000);
+            return [[longitude, latitude], [endLon, endLat]];
+          }
+          const N = 24;
+          return Array.from({ length: N + 1 }, (_, i) => {
+            const [lon, lat] = extrapolatePos(longitude, latitude, t.cog!, t.sog ?? 0, rot, 0, totalSec * i / N * 1000);
+            return [lon, lat] as [number, number];
+          });
         },
-      });
-
-      if (t.cog !== undefined && t.sog !== undefined && t.sog > 0.1) {
-        const distM = settings.appearance.ais.cog.lengthMinutes * 60 * t.sog;
-        cogLines.push({
-          type: 'Feature',
-          geometry: { type: 'LineString', coordinates: rhumbCoords(longitude, latitude, t.cog, distM) },
-          properties: {},
-        });
-      }
-    }
-
-    aisSrc.setData({ type: 'FeatureCollection', features: pointFeatures });
-    aisShapeSrc.setData({ type: 'FeatureCollection', features: shapeFeatures });
-    aisCogSrc.setData({ type: 'FeatureCollection', features: cogLines });
+        getColor: () => hexToRgba(ap.cog.color, 200),
+        getWidth: ap.cog.width,
+        widthUnits: 'pixels',
+        widthMinPixels: 1,
+        pickable: false,
+        updateTriggers: { getColor: [ap.cog.color], getWidth: [ap.cog.width] },
+      }),
+      // Confirmed icon at last known position (full opacity, cross-fades with hull)
+      new IconLayer<AisTarget>({
+        id: 'ais-icon',
+        data: visTargets,
+        iconAtlas: iconAtlasUrl,
+        iconMapping: VESSEL_ICON_MAPPING,
+        getIcon: () => 'vessel',
+        getPosition: (t: AisTarget) => [t.position!.longitude, t.position!.latitude, 0],
+        // deck.gl getAngle: CCW from north (billboard: false). Nautical heading is CW → negate.
+        getAngle: (t: AisTarget) => -((t.heading ?? t.cog ?? 0) * 180 / Math.PI),
+        getSize: () => 64 * settingsIconSize,
+        getColor: (t: AisTarget) => {
+          const a = Math.round(vesselIconOpacity(t, zoom, settingsIconSize) * 255);
+          return [255, 255, 255, a];
+        },
+        billboard: false,
+        sizeUnits: 'pixels',
+        sizeMinPixels: 6,
+        pickable: true,
+        onClick: handleAisClick,
+        updateTriggers: { getColor: [zoom, settingsIconSize], getAngle: [now] },
+      }),
+    ];
   });
 
   $effect(() => {
@@ -719,4 +751,6 @@
   }
   :global(.maplibregl-popup-tip) { border-top-color: #1e1e2e; }
   :global(.maplibregl-popup-close-button) { color: #888; font-size: 16px; }
+  /* Ensure MapLibre popups (DOM elements) always render above the deck.gl WebGL canvas */
+  :global(.maplibregl-popup) { z-index: 10; }
 </style>
