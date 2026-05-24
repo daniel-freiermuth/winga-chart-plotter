@@ -2,6 +2,8 @@
 
 A fast and reliable sea chart plotting application for [Signal K](https://signalk.org/).
 
+![Screenshot](docs/Screenshot_2026-05-24_09-33-15.png)
+
 ## Why another chart plotter for SignalK
 Portolan is an experiment to overcome some of [Freeboard-sk](https://github.com/SignalK/freeboard-sk)'s limitations.
 
