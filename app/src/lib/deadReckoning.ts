@@ -20,7 +20,7 @@ export function extrapolatePos(
   lastSeenMs: number, nowMs: number,
   maxSec = MAX_DR_SEC,
 ): [number, number] {
-  const dtS = Math.min(Math.max(0, (nowMs - lastSeenMs) / 1000), maxSec);
+  const dtS = Math.min((nowMs - lastSeenMs) / 1000, maxSec);
   if (dtS === 0 || sogMs < 0.01) return [lon, lat];
 
   let dEast: number, dNorth: number;
@@ -48,7 +48,7 @@ export function extrapolateHeading(
   lastSeenMs: number, nowMs: number,
   maxSec = MAX_DR_SEC,
 ): number {
-  const dtS = Math.min(Math.max(0, (nowMs - lastSeenMs) / 1000), maxSec);
+  const dtS = Math.min((nowMs - lastSeenMs) / 1000, maxSec);
   return headingRad + rotRadPerSec * dtS;
 }
 
