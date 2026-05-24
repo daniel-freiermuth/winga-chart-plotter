@@ -7,6 +7,7 @@
   import ChartPicker from './components/ChartPicker.svelte';
   import { vesselState } from './stores/vessel';
   import { settings } from './stores/settings.svelte';
+  import { followMode } from './stores/follow.svelte';
   import { charts } from './stores/charts.svelte';
   import { ais } from './stores/ais.svelte';
   import type { AisTarget } from './stores/ais.svelte';
@@ -108,14 +109,16 @@
   </div>
 
   <button
-    title="Go to vessel"
+    title={followMode.following ? 'Stop following vessel' : 'Follow vessel'}
     disabled={!$vesselState.position}
     onclick={() => mapComp?.flyToVessel()}
     style="
       position: absolute; top: 120px; left: 10px; z-index: 10;
-      background: rgba(0,0,0,0.7); border: none; color: white;
+      background: {followMode.following ? 'rgba(255,255,255,0.9)' : 'rgba(0,0,0,0.7)'};
+      border: none;
+      color: {followMode.following ? '#111827' : 'white'};
       padding: 6px 10px; border-radius: 6px; cursor: pointer;
-      font-size: 16px; transition: background 0.15s;
+      font-size: 16px; transition: background 0.15s, color 0.15s;
       opacity: {$vesselState.position ? 1 : 0.35};
     "
   ><FaIcon icon={faLocationCrosshairs} /></button>

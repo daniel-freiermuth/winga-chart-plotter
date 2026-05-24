@@ -7,6 +7,7 @@
   import type * as GeoJSON from 'geojson';
   import { vesselState } from '../stores/vessel';
   import { settings, type LineAppearance, type LineStyle } from '../stores/settings.svelte';
+  import { followMode } from '../stores/follow.svelte';
   import { charts } from '../stores/charts.svelte';
   import { baseLayers, BASE_LAYERS } from '../stores/baseLayers.svelte';
   import { ais, type AisTarget } from '../stores/ais.svelte';
@@ -41,8 +42,12 @@
   }
 
   export function flyToVessel() {
-    const pos = $vesselState.position;
-    if (pos && map) map.flyTo({ center: [pos.longitude, pos.latitude], speed: 1.5 });
+    if (followMode.following) {
+      followMode.following = false;
+      return;
+    }
+    followMode.following = true;
+    // The follow $effect will move the map once following is set.
   }
   let mapLoaded = $state(false);
   let mapZoom   = $state(10);
@@ -262,6 +267,8 @@
     document.addEventListener('fullscreenchange', onFsChange);
 
     map.on('zoom', () => { mapZoom = map?.getZoom() ?? mapZoom; });
+    // User dragging the map cancels follow mode.
+    map.on('dragstart', () => { followMode.following = false; });
 
     // style.load fires on initial style ready AND after MapLibre's internal setStyle
     // (which it calls automatically on WebGL context restore), so this covers both cases.
@@ -691,6 +698,20 @@
         properties: {},
       }]} : EMPTY_FC
     );
+  });
+
+  // Follow mode: smoothly track vessel position. Uses flyTo for large distances
+  // (first enable), easeTo for incremental updates.
+  $effect(() => {
+    const pos = $vesselState.position;
+    if (!pos || !map || !followMode.following) return;
+    const center = map.getCenter();
+    const dist = Math.hypot(center.lng - pos.longitude, center.lat - pos.latitude);
+    if (dist > 1) {
+      map.flyTo({ center: [pos.longitude, pos.latitude], speed: 1.5 });
+    } else {
+      map.easeTo({ center: [pos.longitude, pos.latitude], duration: 1000 });
+    }
   });
 </script>
 
