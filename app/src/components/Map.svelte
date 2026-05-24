@@ -296,6 +296,14 @@
         ? `${rotVal > 0 ? '▶ ' : rotVal < 0 ? '◀ ' : ''}${Math.abs(rotVal)}°/min`
         : null;
 
+      const mmsi = p['mmsi'];
+      const lookupLinks = mmsi
+        ? `<div class="ais-links">
+            <a href="https://www.vesselfinder.com/vessels/details/${String(mmsi)}" target="_blank" rel="noopener">VesselFinder</a>
+            <a href="https://www.myshiptracking.com/?mmsi=${String(mmsi)}" target="_blank" rel="noopener">MyShipTracking</a>
+          </div>`
+        : '';
+
       const html = `
         <div class="ais-popup">
           <div class="ais-popup-title">${String(p['name'] ?? p['mmsi'] ?? 'Unknown vessel')}</div>
@@ -314,6 +322,7 @@
             ${row('Beam',     p['beam_m'],   ' m')}
             ${row('Draft',    p['draft_m'],  ' m')}
           </table>
+          ${lookupLinks}
         </div>`;
 
       new maplibregl.Popup({ closeButton: true, maxWidth: '280px' })
@@ -681,6 +690,26 @@
     text-transform: uppercase;
     letter-spacing: 0.08em;
     padding-top: 8px;
+  }
+  :global(.ais-links) {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid #333;
+  }
+  :global(.ais-links a) {
+    font-size: 11px;
+    color: #60a5fa;
+    text-decoration: none;
+    flex: 1;
+    text-align: center;
+    padding: 3px 0;
+    border-radius: 4px;
+    background: rgba(96,165,250,0.1);
+  }
+  :global(.ais-links a:hover) {
+    background: rgba(96,165,250,0.2);
   }
   :global(.maplibregl-popup-content) {
     background: #1e1e2e;
