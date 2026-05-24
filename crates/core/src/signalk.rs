@@ -90,21 +90,35 @@ pub fn extract_ais_targets(storage: &Storage) -> Vec<AisTarget> {
         .filter_map(|(id, vessel)| {
             let nav = vessel.navigation.as_ref()?;
             let pos_value = nav.position.as_ref()?.value.as_ref()?;
+            // Reject non-finite positions — corrupt AIS messages can produce NaN coords.
+            if !pos_value.longitude.is_finite() || !pos_value.latitude.is_finite() {
+                return None;
+            }
             let position = Position {
                 longitude: pos_value.longitude,
                 latitude: pos_value.latitude,
                 altitude: pos_value.altitude,
             };
+            // AIS heading sentinel: 511° (not available). Signal K stores in radians,
+            // so 511° ≈ 8.92 rad — clearly outside the valid [0, 2π) range.
+            // COG sentinel: 360.0° (3600 in AIS 0.1° units) → 2π rad exactly.
+            // Reject anything outside [0, 2π) to suppress both sentinels.
+            let heading = nav.heading_true.as_ref()
+                .and_then(|v| v.value)
+                .filter(|&h| (0.0..std::f64::consts::TAU).contains(&h));
+            let cog = nav.course_over_ground_true.as_ref()
+                .and_then(|v| v.value)
+                .filter(|&c| (0.0..std::f64::consts::TAU).contains(&c));
             Some(AisTarget {
                 id: id.clone(),
                 mmsi: vessel.mmsi.clone(),
                 name: vessel.name.clone(),
                 position: Some(position),
-                cog: nav.course_over_ground_true.as_ref().and_then(|v| v.value),
-                sog: nav.speed_over_ground.as_ref().and_then(|v| v.value),
-                heading: nav.heading_true.as_ref().and_then(|v| v.value),
-                rot: nav.rate_of_turn.as_ref().and_then(|v| v.value),
-                stw: nav.speed_through_water.as_ref().and_then(|v| v.value),
+                cog,
+                sog: nav.speed_over_ground.as_ref().and_then(|v| v.value).filter(|v| v.is_finite()),
+                heading,
+                rot: nav.rate_of_turn.as_ref().and_then(|v| v.value).filter(|v| v.is_finite()),
+                stw: nav.speed_through_water.as_ref().and_then(|v| v.value).filter(|v| v.is_finite()),
             })
         })
         .collect()

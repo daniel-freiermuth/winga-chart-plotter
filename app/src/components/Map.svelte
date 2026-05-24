@@ -289,9 +289,9 @@
       const [lon, lat] = coords;
 
       const row = (label: string, value: string | number | null, unit = '') =>
-        value !== null ? `<tr><td>${label}</td><td><b>${String(value)}${unit}</b></td></tr>` : '';
+        `<tr><td>${label}</td><td><b>${value !== null ? `${String(value)}${unit}` : '<span style="opacity:0.4">—</span>'}</b></td></tr>`;
 
-      const rotVal = p['rot_dpm'] !== null ? Number(p['rot_dpm']) : null;
+      const rotVal = p['rot_dpm'] !== undefined ? Number(p['rot_dpm']) : null;
       const rotStr = rotVal !== null
         ? `${rotVal > 0 ? '▶ ' : rotVal < 0 ? '◀ ' : ''}${Math.abs(rotVal)}°/min`
         : null;
