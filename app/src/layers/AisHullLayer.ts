@@ -224,7 +224,6 @@ export interface AisHullLayerProps extends LayerProps {
   uploadTimestamp?: number;
   /** If true, draw() calls setNeedsRedraw() to keep animating each frame. */
   selfAnimate?: boolean;
-  zoom?: number;
   settingsIconSize?: number;
   opacity?: number;
 }
@@ -241,7 +240,6 @@ const defaultProps: DefaultProps<AisHullLayerProps> = {
   getColor:       { type: 'accessor', value: [0, 100, 200, 220] },
   uploadTimestamp: 0,
   selfAnimate: false,
-  zoom: 10,
   settingsIconSize: 1,
   opacity: 1,
 };
@@ -301,17 +299,20 @@ export class AisHullLayer extends Layer<AisHullLayerProps> {
   }
 
   override draw({ uniforms: _uniforms }: { uniforms: Record<string, unknown> }) {
-    const { uploadTimestamp, selfAnimate, zoom, settingsIconSize, opacity } = this.props;
+    const { uploadTimestamp, selfAnimate, settingsIconSize, opacity } = this.props;
     // Compute elapsed time in draw() so the uniform changes every frame without
     // creating new layer instances or triggering prop reconciliation.
     const timeSinceUpload = selfAnimate
       ? Math.max(0, (Date.now() - (uploadTimestamp ?? 0)) / 1000)
       : 0;
+    // Read zoom from the live viewport — no need to pass it as a prop or rebuild
+    // layer instances on zoom changes.
+    const zoom = this.context.viewport.zoom;
     const model = this.state['model'] as Model;
     model.shaderInputs.setProps({
       aisHull: {
         timeSinceUpload,
-        zoom: zoom ?? 10,
+        zoom,
         settingsIconSize: settingsIconSize ?? 1,
         opacity: opacity ?? 1,
       },

@@ -271,11 +271,9 @@
   // Used for ruler snap so endpoints follow the animated ghost, not last-known position.
   let liveSnapTargets: { id: string; position: { longitude: number; latitude: number } }[] = [];
 
-  type HullProps = ConstructorParameters<typeof AisHullLayer>[0];
   let overlay: MapboxOverlay | null = null;
   // All AIS targets with a known position — used for ruler snap hit-test in rafTick:
   let allVisTargets: AisTarget[] = [];
-  let aisIconSize = 1;
   // Layer groups composed into overlay.setProps() — AIS layers set on data tick,
   // ruler layers rebuilt in rafTick (need map.project() for pixel distance checks).
   let aisLayerGroup: Layer[] = [];
@@ -285,8 +283,6 @@
     overlay?.setProps({ layers: [...aisLayerGroup, ...rulerLayerGroup] });
   }
 
-  // GPU icon layer props — type alias for ConstructorParameters shorthand.
-  type IconProps = ConstructorParameters<typeof AisIconLayer>[0];
   let rafId = 0;
 
   onMount(() => {
@@ -769,11 +765,10 @@
     aisSrc.setData({ type: 'FeatureCollection', features });
   });
 
-  // Rebuild deck.gl AIS layers on AIS tick, zoom change, or appearance settings change.
-  // The rAF loop updates timeSinceUpload (hull) and ghost icon positions each frame.
+  // Rebuild deck.gl AIS layers on AIS tick or appearance settings change.
+  // Zoom is read from the live viewport in draw() — no rebuild needed on zoom changes.
   $effect(() => {
     const targets = ais.targets;
-    const zoom = mapZoom;
     const ap = settings.appearance.ais;
     const settingsIconSize = ap.vesselSize / 64;
     const now = Date.now();
@@ -794,7 +789,6 @@
     const ghostVesselColor = hexToRgba(ap.vesselColor, 130);
 
     allVisTargets = visTargets;
-    aisIconSize = settingsIconSize;
     const ghostTargets = visTargets.filter(t => t.cog !== undefined && (t.sog ?? 0) > 0.1);
     const hullTargets  = visTargets.filter(hasHull);
 
@@ -816,7 +810,6 @@
           getColor:       ghostVesselColor,
           uploadTimestamp: now,
           selfAnimate: true,
-          zoom,
           settingsIconSize,
           pickable: true,
         })
@@ -836,7 +829,6 @@
           getColor:       vesselColor,
           uploadTimestamp: now,
           selfAnimate: false,
-          zoom,
           settingsIconSize,
           pickable: true,
         })
@@ -857,7 +849,6 @@
           getColor:       vesselColor,
           uploadTimestamp: now,
           selfAnimate: true,
-          zoom,
           settingsIconSize,
           opacity: 0.75,
           pickable: true,
@@ -879,7 +870,6 @@
           getColor:       vesselColor,
           uploadTimestamp: now,
           selfAnimate: false,
-          zoom,
           settingsIconSize,
           opacity: 1,
           pickable: true,

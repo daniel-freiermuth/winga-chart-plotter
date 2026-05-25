@@ -240,7 +240,6 @@ export interface AisIconLayerProps extends LayerProps {
   uploadTimestamp?: number;
   /** If true, draw() calls setNeedsRedraw() to keep animating each frame. */
   selfAnimate?: boolean;
-  zoom?:            number;
   settingsIconSize?: number;
   opacity?:         number;
 }
@@ -256,7 +255,6 @@ const defaultProps: DefaultProps<AisIconLayerProps> = {
   getColor:       { type: 'accessor', value: [255, 255, 255, 255] },
   uploadTimestamp:  0,
   selfAnimate:      false,
-  zoom:             10,
   settingsIconSize: 1,
   opacity:          1,
 };
@@ -315,15 +313,17 @@ export class AisIconLayer extends Layer<AisIconLayerProps> {
   }
 
   override draw({ uniforms: _uniforms }: { uniforms: Record<string, unknown> }) {
-    const { uploadTimestamp, selfAnimate, zoom, settingsIconSize, opacity } = this.props;
+    const { uploadTimestamp, selfAnimate, settingsIconSize, opacity } = this.props;
     const timeSinceUpload = selfAnimate
       ? Math.max(0, (Date.now() - (uploadTimestamp ?? 0)) / 1000)
       : 0;
+    // Read zoom from the live viewport — no prop needed, no layer rebuild on zoom change.
+    const zoom = this.context.viewport.zoom;
     const model = this.state['model'] as Model;
     model.shaderInputs.setProps({
       aisIcon: {
         timeSinceUpload,
-        zoom:            zoom            ?? 10,
+        zoom,
         settingsIconSize: settingsIconSize ?? 1,
         opacity:         opacity         ?? 1,
       },
