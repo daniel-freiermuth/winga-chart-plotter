@@ -193,8 +193,7 @@
 
   // Native pointer-event drag handlers — deck.gl drag callbacks break when the layer
   // is recreated mid-drag (which happens every rAF because the data changes).
-  // In interleaved mode deck.gl doesn't forward mouse events, so hover/click are
-  // also handled here via overlay.pickObject().
+  // Hover/click are handled here via overlay.pickObject().
   function handleRulerPointerDown(e: PointerEvent) {
     if (!overlay || !map) return;
     const rect = mapContainer.getBoundingClientRect();
@@ -226,7 +225,7 @@
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
     if (!rulerDrag) {
-      // Hover detection replaces deck.gl onHover (which doesn't fire in interleaved mode).
+      // Hover detection via pickObject (avoids deck.gl layer recreation race on drag).
       if (overlay) {
         const hoverPick = overlay.pickObject({ x, y, radius: 10, layerIds: ['ruler-handles'] });
         setHandleHover(!!hoverPick?.object);
@@ -307,18 +306,13 @@
     map.addControl(new maplibregl.NavigationControl(), 'top-right');
     map.addControl(new maplibregl.ScaleControl(), 'bottom-left');
 
-    // deck.gl overlay — interleaved mode shares MapLibre's WebGL context and render pass.
+    // deck.gl overlay — non-interleaved mode: deck.gl renders on its own canvas (on top of
+    // MapLibre) with its own rAF loop. This decouples deck.gl animation from MapLibre's render
+    // pipeline, preventing AIS animation from driving MapLibre's symbol worker continuously.
     //
     // deck.gl v9.1+ (Globe View ♥ MapLibre): GlobeViewport is updated to match
     // MapLibre v5's camera matrices — MapboxOverlay works without additional configuration.
     // Do NOT pass a custom `views` prop; let getDeckInstance choose GlobeView or MapView.
-    //
-    // depthCompare:'always' — in globe mode MapLibre renders the sphere into the depth
-    // buffer before custom layers. Our geometry sits on the sphere surface, so depth
-    // values are nearly identical → z-fighting → flickering. Bypass the depth test so
-    // all deck.gl fragments pass. Correct semantics for overlay layers that must always
-    // appear above the basemap; no depth ordering is needed between our own layers since
-    // they are drawn in painter's order.
     //
     // cullMode:'none' — getDefaultParameters adds cullMode:'back' in globe mode to cull
     // far-hemisphere geometry. However, the IconLayer's billboard:false path applies a
@@ -328,8 +322,8 @@
     // hemisphere discard in AisHullLayer instead.
     overlay = new MapboxOverlay({
       layers: [],
-      interleaved: true,
-      parameters: { depthCompare: 'always', cullMode: 'none' },
+      interleaved: false,
+      parameters: { cullMode: 'none' },
     });
     map.addControl(overlay as unknown as maplibregl.IControl);
     // Flush any AIS layers that were built before the overlay was ready.
@@ -515,7 +509,7 @@
     // User dragging the map cancels follow mode.
     map.on('dragstart', () => { if (!rulerDrag) followMode.following = false; });
 
-    // AIS vessel click — interleaved mode doesn't forward deck.gl onClick, so we pick manually.
+    // AIS vessel click — pick manually to stay consistent with ruler pointer handling.
     map.on('click', (e) => {
       if (!overlay) return;
       const { x, y } = e.point;
