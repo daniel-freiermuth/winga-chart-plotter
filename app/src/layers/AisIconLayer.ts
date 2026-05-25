@@ -236,7 +236,10 @@ export interface AisIconLayerProps extends LayerProps {
   /** Vessel length in metres. 0 = unknown → icon always visible, no cross-fade. */
   getLength?:      Accessor<AisTarget, number>;
   getColor?:       Accessor<AisTarget, [number, number, number, number]>;
-  timeSinceUpload?: number;
+  /** Unix ms timestamp of the last data upload. draw() computes elapsed from this. */
+  uploadTimestamp?: number;
+  /** If true, draw() calls setNeedsRedraw() to keep animating each frame. */
+  selfAnimate?: boolean;
   zoom?:            number;
   settingsIconSize?: number;
   opacity?:         number;
@@ -251,7 +254,8 @@ const defaultProps: DefaultProps<AisIconLayerProps> = {
   getAgeAtUpload: { type: 'accessor', value: 0 },
   getLength:      { type: 'accessor', value: 0 },
   getColor:       { type: 'accessor', value: [255, 255, 255, 255] },
-  timeSinceUpload:  0,
+  uploadTimestamp:  0,
+  selfAnimate:      false,
   zoom:             10,
   settingsIconSize: 1,
   opacity:          1,
@@ -311,17 +315,21 @@ export class AisIconLayer extends Layer<AisIconLayerProps> {
   }
 
   override draw({ uniforms: _uniforms }: { uniforms: Record<string, unknown> }) {
-    const { timeSinceUpload, zoom, settingsIconSize, opacity } = this.props;
+    const { uploadTimestamp, selfAnimate, zoom, settingsIconSize, opacity } = this.props;
+    const timeSinceUpload = selfAnimate
+      ? Math.max(0, (Date.now() - (uploadTimestamp ?? 0)) / 1000)
+      : 0;
     const model = this.state['model'] as Model;
     model.shaderInputs.setProps({
       aisIcon: {
-        timeSinceUpload: timeSinceUpload ?? 0,
+        timeSinceUpload,
         zoom:            zoom            ?? 10,
         settingsIconSize: settingsIconSize ?? 1,
         opacity:         opacity         ?? 1,
       },
     });
     model.draw(this.context.renderPass);
+    if (selfAnimate) this.setNeedsRedraw();
   }
 
   _getModel() {
