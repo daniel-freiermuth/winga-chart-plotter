@@ -323,7 +323,10 @@
     overlay = new MapboxOverlay({
       layers: [],
       interleaved: false,
-      parameters: { cullMode: 'none' },
+      // depthCompare:'always' — our layers (hull + icon) occupy nearly identical depths so
+      // depth testing causes z-fighting. We draw in painter's order and don't need occlusion
+      // between our own layers. In non-interleaved mode this only affects deck.gl's canvas.
+      parameters: { depthCompare: 'always', cullMode: 'none' },
     });
     map.addControl(overlay as unknown as maplibregl.IControl);
     // Flush any AIS layers that were built before the overlay was ready.
