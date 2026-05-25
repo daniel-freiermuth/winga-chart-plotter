@@ -50,9 +50,57 @@
   let mapBearing  = $state(0);
   let projection  = $state<ProjectionId>('mercator');
 
+  // When we switch mercator→globe, MapLibre creates a fresh VerticalPerspectiveProjection
+  // whose GPU latitude-error correction starts at 0. Over 500 ms the correction converges,
+  // causing tiles to drift south then slide north. We work around this by caching the
+  // converged correction before leaving globe mode and injecting it immediately into the
+  // new projection instance so the first frame is already correct.
+  let _cachedGlobeCorrection: number | null = null;
+  let _globeInjectionPending = false;
+
   function setProjection(id: ProjectionId) {
+    // Phase 0 — cache the converged latitude correction before leaving globe mode.
+    if (id !== 'globe' && projection === 'globe') {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const vp = (map as any)?.style?.projection?._verticalPerspectiveProjection;
+      if (vp) _cachedGlobeCorrection = vp._errorCorrectionUsable as number;
+    }
+
     projection = id;
     map?.setProjection({ type: id });
+
+    if (id === 'globe' && _cachedGlobeCorrection !== null) {
+      // Phase 1 — synchronously inject cached correction into the fresh VP projection
+      // so the very first rendered frame is already at the correct latitude.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const vp = (map as any)?.style?.projection?._verticalPerspectiveProjection;
+      if (vp) {
+        vp._errorCorrectionUsable       = _cachedGlobeCorrection;
+        vp._errorCorrectionPreviousValue = _cachedGlobeCorrection;
+        // Pre-set lastValue so the first updateGPUdependent call doesn't immediately
+        // start a transition away from the cached value.
+        vp._errorMeasurementLastValue = -_cachedGlobeCorrection;
+      }
+
+      // Phase 2 — after the first render, seed _measuredError (lazily created by
+      // updateGPUdependent) so the ~167 ms drift before the real GPU readback returns
+      // is also prevented.
+      _globeInjectionPending = true;
+      requestAnimationFrame(() => {
+        if (!_globeInjectionPending) return;
+        _globeInjectionPending = false;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const vp2 = (map as any)?.style?.projection?._verticalPerspectiveProjection;
+        if (vp2?._errorMeasurement && _cachedGlobeCorrection !== null) {
+          vp2._errorMeasurement._measuredError  = -_cachedGlobeCorrection;
+          vp2._errorMeasurementLastValue         = -_cachedGlobeCorrection;
+          // Far-past timestamp forces mix=1 immediately, so correction is applied without delay.
+          vp2._errorMeasurementLastChangeTime    = performance.now() - 10_000;
+        }
+      });
+    } else {
+      _globeInjectionPending = false;
+    }
   }
 
   const VESSEL_SOURCE   = 'vessel';
