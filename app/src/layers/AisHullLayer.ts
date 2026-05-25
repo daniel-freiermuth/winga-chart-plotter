@@ -105,7 +105,14 @@ void main(void) {
 
   // ------------------------------------------------------------------
   // 5. Total ENU offset from stored (fp64) anchor position
+  //
+  // geometry.worldPosition must be set BEFORE project_size() so that the
+  // Mercator latitude correction (1/cos(lat)) uses the vessel's actual
+  // latitude. Without this, the correction defaults to 1.0 (equator) and
+  // EW offsets are undersized at non-equatorial latitudes (e.g. 55°N → 74%
+  // of correct value).
   // ------------------------------------------------------------------
+  geometry.worldPosition = instancePositions;
   vec3 offset = project_size(vec3(dEast + hullEast, dNorth + hullNorth, 0.0));
 
   // ------------------------------------------------------------------
@@ -114,7 +121,6 @@ void main(void) {
   vec4 worldPos;
   gl_Position = project_position_to_clipspace(instancePositions, instancePositions64Low, offset, worldPos);
   DECKGL_FILTER_GL_POSITION(gl_Position, geometry);
-  geometry.worldPosition = instancePositions;
 
   // ------------------------------------------------------------------
   // 6b. Far-hemisphere discard (globe mode only)

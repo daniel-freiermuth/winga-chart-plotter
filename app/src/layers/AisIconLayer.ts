@@ -115,12 +115,16 @@ void main(void) {
   // ------------------------------------------------------------------
   // 5. Total offset: DR movement (metres → common) + rotated icon corner
   //
+  // geometry.worldPosition must be set BEFORE project_size() — see AisHullLayer
+  // for details on the Mercator latitude correction.
+  //
   // In globe mode, project_position_to_clipspace applies orientation matrix
   // mat3(-East, -North, up), which inverts both ENU axes. Negate the total
   // offset here so the net result after the orientation matrix is correct.
   // In mercator mode project_needs_rotation() returns false and no rotation
   // is applied, so the un-negated offset is used as-is.
   // ------------------------------------------------------------------
+  geometry.worldPosition = instancePositions;
   vec3 drCommon    = project_size(vec3(dEast, dNorth, 0.0));
   vec3 totalOffset = drCommon + vec3(iconCommonX, iconCommonY, 0.0);
   if (project.projectionMode == PROJECTION_MODE_GLOBE) {
@@ -133,7 +137,6 @@ void main(void) {
   vec4 worldPos;
   gl_Position = project_position_to_clipspace(instancePositions, instancePositions64Low, totalOffset, worldPos);
   DECKGL_FILTER_GL_POSITION(gl_Position, geometry);
-  geometry.worldPosition = instancePositions;
 
   // ------------------------------------------------------------------
   // 6b. Far-hemisphere discard (globe mode) — see AisHullLayer for details.
