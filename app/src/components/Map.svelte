@@ -336,9 +336,11 @@
       parameters: { depthCompare: 'always', cullMode: 'none' },
     });
     map.addControl(overlay as unknown as maplibregl.IControl);
+    // Flush any AIS layers that were built before the overlay was ready.
+    flushLayers();
 
-    // rAF loop: updates timeSinceUpload on hull (GPU) and rebuilds ghost icon positions (JS) each frame.
-    // stableLayers (COG lines) are same JS objects — deck.gl skips re-processing them.
+    // rAF loop: updates ruler layers (need map.project()) and snap targets each frame.
+    // AIS layers are self-animating — no setProps() from here for them.
     function rafTick() {
       if (overlay !== null) {
         const nowMs = Date.now();
@@ -775,7 +777,6 @@
     const ap = settings.appearance.ais;
     const settingsIconSize = ap.vesselSize / 64;
     const now = Date.now();
-    uploadTime = now;
 
     // Capture COG line settings explicitly so Svelte 5 tracks them as dependencies
     // and the closures below always close over the current values.
