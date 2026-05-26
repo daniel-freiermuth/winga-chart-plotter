@@ -4,6 +4,9 @@ import wasm from 'vite-plugin-wasm';
 import { VitePWA } from 'vite-plugin-pwa';
 
 export default defineConfig({
+  // Use relative asset paths so the app works when Signal K mounts it
+  // under a subpath (e.g. /winga-chart-plotter-signalk/) and in dev (/).
+  base: './',
   plugins: [
     wasm(),
     svelte(),
