@@ -3,10 +3,11 @@ import { svelte } from '@sveltejs/vite-plugin-svelte';
 import wasm from 'vite-plugin-wasm';
 import { VitePWA } from 'vite-plugin-pwa';
 
-export default defineConfig({
-  // Use relative asset paths so the app works when Signal K mounts it
-  // under a subpath (e.g. /winga-chart-plotter-signalk/) and in dev (/).
-  base: './',
+export default defineConfig(({ command }) => ({
+  // Relative base for production so the app works when Signal K mounts it
+  // under a subpath (e.g. /winga-chart-plotter-signalk/). Dev server keeps
+  // the default '/' so Vite HMR and module resolution work correctly.
+  base: command === 'build' ? './' : '/',
   plugins: [
     wasm(),
     svelte(),
@@ -34,4 +35,4 @@ export default defineConfig({
   server: {
     port: 5173,
   },
-});
+}));
