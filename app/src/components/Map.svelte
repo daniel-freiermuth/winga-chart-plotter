@@ -126,13 +126,15 @@
   // detect URL changes (e.g. WMTS layer switch) and recreate the source.
   const chartSourceUrls = new Map<string, string>();
 
-  function dashArray(style: LineStyle, width: number): number[] {
+  // Returns null for solid lines — callers must pass null to setPaintProperty / omit from addLayer paint.
+  // MapLibre requires all dasharray values to be > 0; [1, 0] is invalid and causes worker errors.
+  function dashArray(style: LineStyle, width: number): number[] | null {
     const w = Math.max(1, width);
     switch (style) {
       case 'dashed':   return [5, 3];
-      case 'dotted':   return [w / w, 3];  // dot = 1 unit wide, gap = 3
+      case 'dotted':   return [w, 3];
       case 'dash-dot': return [5, 3, 1, 3];
-      default:         return [1, 0];       // solid
+      default:         return null; // solid — no dasharray
     }
   }
 
@@ -609,7 +611,7 @@
       m.addSource(AIS_SOURCE,    { type: 'geojson', data: EMPTY_FC }); // for ais-label only
 
       m.addLayer({ id: 'vessel-gc-line', type: 'line', source: GC_SOURCE,
-        paint: { 'line-color': ap.gc.color, 'line-width': ap.gc.width, 'line-dasharray': dashArray(ap.gc.style, ap.gc.width) } });
+        paint: { 'line-color': ap.gc.color, 'line-width': ap.gc.width, ...(dashArray(ap.gc.style, ap.gc.width) !== null && { 'line-dasharray': dashArray(ap.gc.style, ap.gc.width)! }) } });
 
       // AIS vessel icon, hull, and COG line are rendered by deck.gl (see $effect below).
       // Only the text label stays in MapLibre for quality text rendering + collision detection.
@@ -625,7 +627,7 @@
       });
 
       m.addLayer({ id: 'vessel-cog-line', type: 'line', source: COG_SOURCE,
-        paint: { 'line-color': ap.cog.color, 'line-width': ap.cog.width, 'line-dasharray': dashArray(ap.cog.style, ap.cog.width) } });
+        paint: { 'line-color': ap.cog.color, 'line-width': ap.cog.width, ...(dashArray(ap.cog.style, ap.cog.width) !== null && { 'line-dasharray': dashArray(ap.cog.style, ap.cog.width)! }) } });
 
       m.addLayer({ id: 'vessel-hdg-line', type: 'line', source: HDG_SOURCE,
         paint: { 'line-color': ap.heading.color, 'line-width': ap.heading.width } });
@@ -1072,13 +1074,13 @@
     // Paint properties fire immediately — they're cheap and only change when appearance settings change.
     map.setPaintProperty('vessel-gc-line',  'line-color',     ap.gc.color);
     map.setPaintProperty('vessel-gc-line',  'line-width',     ap.gc.width);
-    map.setPaintProperty('vessel-gc-line',  'line-dasharray', dashArray(ap.gc.style, ap.gc.width));
+    map.setPaintProperty('vessel-gc-line',  'line-dasharray', dashArray(ap.gc.style, ap.gc.width) ?? undefined);
     map.setPaintProperty('vessel-cog-line', 'line-color',     ap.cog.color);
     map.setPaintProperty('vessel-cog-line', 'line-width',     ap.cog.width);
-    map.setPaintProperty('vessel-cog-line', 'line-dasharray', dashArray(ap.cog.style, ap.cog.width));
+    map.setPaintProperty('vessel-cog-line', 'line-dasharray', dashArray(ap.cog.style, ap.cog.width) ?? undefined);
     map.setPaintProperty('vessel-hdg-line', 'line-color',     ap.heading.color);
     map.setPaintProperty('vessel-hdg-line', 'line-width',     ap.heading.width);
-    map.setPaintProperty('vessel-hdg-line', 'line-dasharray', dashArray(ap.heading.style, ap.heading.width));
+    map.setPaintProperty('vessel-hdg-line', 'line-dasharray', dashArray(ap.heading.style, ap.heading.width) ?? undefined);
     map.setLayoutProperty('vessel-icon',    'icon-size',       ap.vesselSize / 64);
 
     if (!state.position) return;
