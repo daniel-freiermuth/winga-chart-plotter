@@ -63,6 +63,12 @@
   let _vesselRafId: number | null = null;
   let _pendingVesselSetData: (() => void) | null = null;
 
+  // AIS-label setData throttle: individual vessel updates trigger rebuilds of the whole
+  // FeatureCollection. Limit to 1 Hz — labels don't need sub-second precision.
+  let _aisLastUpdateMs = 0;
+  let _aisThrottleId: ReturnType<typeof setTimeout> | null = null;
+  let _pendingAisSetData: (() => void) | null = null;
+
   function setProjection(id: ProjectionId) {
     // Phase 0 — cache the converged latitude correction before leaving globe mode.
     if (id !== 'globe' && projection === 'globe') {
@@ -801,6 +807,8 @@
   });
 
   // Update MapLibre ais-label source with vessel name positions (label layer only).
+  // Throttled to 1 Hz: AIS label positions don't need sub-second precision, and
+  // rebuilding the full FeatureCollection on every individual vessel update is wasteful.
   $effect(() => {
     if (!map || !mapLoaded) return;
     const aisSrc = map.getSource(AIS_SOURCE);
@@ -812,7 +820,26 @@
         geometry: { type: 'Point' as const, coordinates: [t.position!.longitude, t.position!.latitude] },
         properties: { label: t.name ?? '' },
       }));
-    aisSrc.setData({ type: 'FeatureCollection', features });
+
+    const flush = () => {
+      _aisLastUpdateMs = Date.now();
+      aisSrc.setData({ type: 'FeatureCollection', features });
+      if ((window as any).__mapDiag) (window as any).__mapDiag.aisLabels++;
+    };
+    _pendingAisSetData = flush;
+
+    const remaining = 1000 - (Date.now() - _aisLastUpdateMs);
+    if (remaining <= 0) {
+      if (_aisThrottleId !== null) { clearTimeout(_aisThrottleId); _aisThrottleId = null; }
+      flush();
+      _pendingAisSetData = null;
+    } else if (_aisThrottleId === null) {
+      _aisThrottleId = setTimeout(() => {
+        _aisThrottleId = null;
+        _pendingAisSetData?.();
+        _pendingAisSetData = null;
+      }, remaining);
+    }
   });
 
   // Rebuild deck.gl AIS layers on AIS tick or appearance settings change.
