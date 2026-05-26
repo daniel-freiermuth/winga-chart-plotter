@@ -58,6 +58,11 @@
   let _cachedGlobeCorrection: number | null = null;
   let _globeInjectionPending = false;
 
+  // Own-vessel setData coalescing: multiple Signal K field updates (lat, lon, COG, SOG, heading)
+  // arrive per epoch and each triggers the $effect. We batch them into one setData per rAF frame.
+  let _vesselRafId: number | null = null;
+  let _pendingVesselSetData: (() => void) | null = null;
+
   function setProjection(id: ProjectionId) {
     // Phase 0 — cache the converged latitude correction before leaving globe mode.
     if (id !== 'globe' && projection === 'globe') {
@@ -972,7 +977,7 @@
     const zoom  = mapZoom;
     if (!map || !mapLoaded) return;
 
-    // Line paint properties
+    // Paint properties fire immediately — they're cheap and only change when appearance settings change.
     map.setPaintProperty('vessel-gc-line',  'line-color',     ap.gc.color);
     map.setPaintProperty('vessel-gc-line',  'line-width',     ap.gc.width);
     map.setPaintProperty('vessel-gc-line',  'line-dasharray', dashArray(ap.gc.style, ap.gc.width));
@@ -995,46 +1000,58 @@
       return line.lengthValue * mpp;
     }
 
-    const orientRad = state.heading ?? state.cog ?? null;
+    const orientRad  = state.heading ?? state.cog ?? null;
     const bearingDeg = orientRad !== null ? (orientRad * 180) / Math.PI : 0;
 
-    const vesselSrc = map.getSource(VESSEL_SOURCE);
-    const cogSrc    = map.getSource(COG_SOURCE);
-    const gcSrc     = map.getSource(GC_SOURCE);
-    const hdgSrc    = map.getSource(HDG_SOURCE);
-    if (!(vesselSrc instanceof maplibregl.GeoJSONSource)) return;
-    if (!(cogSrc    instanceof maplibregl.GeoJSONSource)) return;
-    if (!(gcSrc     instanceof maplibregl.GeoJSONSource)) return;
-    if (!(hdgSrc    instanceof maplibregl.GeoJSONSource)) return;
-
-    vesselSrc.setData({
+    // Compute GeoJSON eagerly (cheap CPU work) so the closure captures the current values.
+    const vesselFC: GeoJSON.FeatureCollection = {
       type: 'FeatureCollection',
       features: [{ type: 'Feature', geometry: { type: 'Point', coordinates: [longitude, latitude] }, properties: { bearing_deg: bearingDeg } }],
-    });
+    };
+    const cogFC: GeoJSON.FeatureCollection = state.cog !== null ? { type: 'FeatureCollection', features: [{
+      type: 'Feature',
+      geometry: { type: 'LineString', coordinates: rhumbCoords(longitude, latitude, state.cog, lineDistM(ap.cog, state.sog)) },
+      properties: {},
+    }]} : EMPTY_FC;
+    const gcFC: GeoJSON.FeatureCollection = state.cog !== null ? { type: 'FeatureCollection', features: [{
+      type: 'Feature',
+      geometry: { type: 'LineString', coordinates: gcCoords(longitude, latitude, state.cog, lineDistM(ap.gc, state.sog)) },
+      properties: {},
+    }]} : EMPTY_FC;
+    const hdgFC: GeoJSON.FeatureCollection = state.heading !== null ? { type: 'FeatureCollection', features: [{
+      type: 'Feature',
+      geometry: { type: 'LineString', coordinates: (projection === 'globe' ? gcCoords : rhumbCoords)(longitude, latitude, state.heading, lineDistM(ap.heading, state.sog)) },
+      properties: {},
+    }]} : EMPTY_FC;
 
-    cogSrc.setData(
-      state.cog !== null ? { type: 'FeatureCollection', features: [{
-        type: 'Feature',
-        geometry: { type: 'LineString', coordinates: rhumbCoords(longitude, latitude, state.cog, lineDistM(ap.cog, state.sog)) },
-        properties: {},
-      }]} : EMPTY_FC
-    );
+    const m = map; // stable reference for the rAF closure
 
-    gcSrc.setData(
-      state.cog !== null ? { type: 'FeatureCollection', features: [{
-        type: 'Feature',
-        geometry: { type: 'LineString', coordinates: gcCoords(longitude, latitude, state.cog, lineDistM(ap.gc, state.sog)) },
-        properties: {},
-      }]} : EMPTY_FC
-    );
+    // Coalesce: multiple Signal K field updates (lat, lon, COG, SOG, heading) fire this effect
+    // separately in the same epoch. We only call setData once per animation frame so MapLibre
+    // only queues one repaint per epoch instead of ~5–8.
+    _pendingVesselSetData = () => {
+      const vesselSrc = m.getSource(VESSEL_SOURCE);
+      const cogSrc    = m.getSource(COG_SOURCE);
+      const gcSrc     = m.getSource(GC_SOURCE);
+      const hdgSrc    = m.getSource(HDG_SOURCE);
+      if (!(vesselSrc instanceof maplibregl.GeoJSONSource)) return;
+      if (!(cogSrc    instanceof maplibregl.GeoJSONSource)) return;
+      if (!(gcSrc     instanceof maplibregl.GeoJSONSource)) return;
+      if (!(hdgSrc    instanceof maplibregl.GeoJSONSource)) return;
+      vesselSrc.setData(vesselFC);
+      cogSrc.setData(cogFC);
+      gcSrc.setData(gcFC);
+      hdgSrc.setData(hdgFC);
+      if ((window as any).__mapDiag) (window as any).__mapDiag.ownVessel++;
+    };
 
-    hdgSrc.setData(
-      state.heading !== null ? { type: 'FeatureCollection', features: [{
-        type: 'Feature',
-        geometry: { type: 'LineString', coordinates: (projection === 'globe' ? gcCoords : rhumbCoords)(longitude, latitude, state.heading, lineDistM(ap.heading, state.sog)) },
-        properties: {},
-      }]} : EMPTY_FC
-    );
+    if (_vesselRafId === null) {
+      _vesselRafId = requestAnimationFrame(() => {
+        _vesselRafId = null;
+        _pendingVesselSetData?.();
+        _pendingVesselSetData = null;
+      });
+    }
   });
 
   // Follow mode: smoothly track vessel position. Uses flyTo for large distances
