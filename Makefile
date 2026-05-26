@@ -19,6 +19,9 @@ build-wasm: ## Compile Rust core to WebAssembly
 build: build-wasm ## Build WASM + frontend for production
 	cd $(APP) && npm run build
 
+package: build ## Build and assemble Signal K npm package (output: public/)
+	rm -rf public && cp -r $(APP)/dist public
+
 dev: build-wasm ## Build WASM then start the Vite dev server
 	cd $(APP) && npm run dev
 

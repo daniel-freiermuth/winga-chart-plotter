@@ -44,9 +44,7 @@ export interface SettingsData {
 }
 
 const DEFAULTS: SettingsData = {
-  signalkProtocol: 'ws',
-  signalkHost: 'localhost',
-  signalkPort: 3000,
+  ...detectSignalkOrigin(),
   appearance: {
     vesselColor: '#2563eb',
     vesselSize: 24,
@@ -63,6 +61,20 @@ const DEFAULTS: SettingsData = {
 };
 
 const SIGNALK_PATH     = '/signalk/v1/stream?subscribe=self';
+
+// When the app is served by the Signal K server itself (installed as a webapp),
+// the page origin IS the Signal K endpoint — no manual host configuration needed.
+// Detect this by checking if we're running on port 3000 (Signal K default) or
+// any non-Vite-dev-server port that isn't a typical static file server.
+function detectSignalkOrigin(): Pick<SettingsData, 'signalkProtocol' | 'signalkHost' | 'signalkPort'> {
+  const loc = window.location;
+  const port = parseInt(loc.port || (loc.protocol === 'https:' ? '443' : '80'));
+  return {
+    signalkProtocol: loc.protocol === 'https:' ? 'wss' : 'ws',
+    signalkHost: loc.hostname,
+    signalkPort: port,
+  };
+}
 
 function load(): SettingsData {
   try {
