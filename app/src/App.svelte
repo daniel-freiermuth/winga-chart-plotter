@@ -9,7 +9,7 @@
   import { settings } from './stores/settings.svelte';
   import { followMode } from './stores/follow.svelte';
   import { charts } from './stores/charts.svelte';
-  import { ais, type AisTarget } from './stores/ais.svelte';
+  import { ais } from './stores/ais.svelte';
   import { fetchVesselInfo } from './lib/signalk-api';
 
   // Message types received from the SignalK worker.
@@ -17,10 +17,11 @@
     position?: { longitude: number; latitude: number };
     cog?: number; sog?: number; heading?: number;
   }
+  interface AisColdData { id: string; name?: string; mmsi?: string; }
   type WorkerMsg =
     | { type: 'state';  state: WsState }
     | { type: 'status'; status: number }
-    | { type: 'ais';    targets: AisTarget[] }
+    | { type: 'ais';    hot: ArrayBuffer; ids: string[]; cold: AisColdData[] }
     | { type: 'error';  message: string };
 
   let mapComp = $state<ReturnType<typeof Map> | null>(null);
@@ -50,7 +51,7 @@
         if (msg.status === 3) error = 'Connection error';
         if (msg.status === 2) error = null;
       } else if (msg.type === 'ais') {
-        ais.update(msg.targets);
+        ais.updateBinary(msg.hot, msg.ids, msg.cold);
       } else {
         error = `Signal K client failed: ${msg.message}`;
         console.error('[signalk] worker error', msg.message);

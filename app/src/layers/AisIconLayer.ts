@@ -15,7 +15,6 @@
 import { Layer, project32, picking } from '@deck.gl/core';
 import type { LayerProps, UpdateParameters, DefaultProps, Accessor } from '@deck.gl/core';
 import { Model, Geometry } from '@luma.gl/engine';
-import type { AisTarget } from '../stores/ais.svelte';
 
 // ---------------------------------------------------------------------------
 // Shader uniform module
@@ -228,17 +227,17 @@ const IS_OUTLINE     = new Float32Array([
 // Props
 // ---------------------------------------------------------------------------
 
-export interface AisIconLayerProps extends LayerProps {
-  data: AisTarget[];
-  getPosition?:    Accessor<AisTarget, [number, number] | [number, number, number]>;
-  getSog?:         Accessor<AisTarget, number>;
-  getCog?:         Accessor<AisTarget, number>;
-  getHeading?:     Accessor<AisTarget, number>;
-  getRot?:         Accessor<AisTarget, number>;
-  getAgeAtUpload?: Accessor<AisTarget, number>;
+export interface AisIconLayerProps<DataT = number> extends LayerProps {
+  data: DataT[] | { length: number };
+  getPosition?:    Accessor<DataT, [number, number] | [number, number, number]>;
+  getSog?:         Accessor<DataT, number>;
+  getCog?:         Accessor<DataT, number>;
+  getHeading?:     Accessor<DataT, number>;
+  getRot?:         Accessor<DataT, number>;
+  getAgeAtUpload?: Accessor<DataT, number>;
   /** Vessel length in metres. 0 = unknown → icon always visible, no cross-fade. */
-  getLength?:      Accessor<AisTarget, number>;
-  getColor?:       Accessor<AisTarget, [number, number, number, number]>;
+  getLength?:      Accessor<DataT, number>;
+  getColor?:       Accessor<DataT, [number, number, number, number]>;
   /** Unix ms timestamp of the last data upload. draw() computes elapsed from this. */
   uploadTimestamp?: number;
   /** If true, draw() calls setNeedsRedraw() to keep animating each frame. */
@@ -247,7 +246,7 @@ export interface AisIconLayerProps extends LayerProps {
   opacity?:         number;
 }
 
-const defaultProps: DefaultProps<AisIconLayerProps> = {
+const defaultProps: DefaultProps<AisIconLayerProps<number>> = {
   getPosition:    { type: 'accessor', value: [0, 0] },
   getSog:         { type: 'accessor', value: 0 },
   getCog:         { type: 'accessor', value: 0 },
@@ -266,7 +265,7 @@ const defaultProps: DefaultProps<AisIconLayerProps> = {
 // Layer class
 // ---------------------------------------------------------------------------
 
-export class AisIconLayer extends Layer<AisIconLayerProps> {
+export class AisIconLayer<DataT = number> extends Layer<AisIconLayerProps<DataT>> {
   static override layerName = 'AisIconLayer';
   static override defaultProps = defaultProps;
 

@@ -2,6 +2,9 @@ use serde::{Deserialize, Serialize};
 use signalk::{SignalKStreamMessage, Storage};
 use wasm_bindgen::prelude::*;
 
+#[cfg(target_arch = "wasm32")]
+use js_sys::Float64Array;
+
 /// A geographic position with optional accuracy metadata.
 #[wasm_bindgen]
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -21,7 +24,7 @@ impl Position {
 
 /// Parsed Signal K self-vessel state relevant for chart display.
 #[wasm_bindgen]
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct VesselState {
     pub position: Option<Position>,
     pub cog: Option<f64>,     // Course over ground, radians
@@ -241,7 +244,140 @@ pub fn extract_ais_targets(
         .collect()
 }
 
-/// Remove vessels from `storage` whose `navigation.datetime` is older than `stale_ms`
+/// Cold (non-positional) metadata for an AIS vessel, transmitted alongside the hot buffer.
+///
+/// Only fields available from the AIS stream itself are included here; additional fields
+/// such as `shipType`, `lengthM`, `beamM`, and `draftM` are supplied by the REST API
+/// enrichment path on the JS side.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AisColdData {
+    pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mmsi: Option<String>,
+}
+
+/// Stride of the typed array produced by [`extract_ais_binary`]: 7 `f64` values per vessel.
+pub const AIS_HOT_STRIDE: usize = 7;
+
+/// Like [`extract_ais_targets`] but returns data as a flat `Float64Array` for zero-copy
+/// transfer via `postMessage([arrayBuffer])`, plus a parallel list of IDs and cold metadata.
+///
+/// Schema per vessel (stride = 7 × f64 = 56 bytes):
+///
+/// | offset | field           | sentinel      |
+/// |--------|-----------------|---------------|
+/// | 0      | longitude       | never NaN     |
+/// | 1      | latitude        | never NaN     |
+/// | 2      | cog (rad)       | NaN = unknown |
+/// | 3      | sog (m/s)       | NaN = unknown |
+/// | 4      | heading (rad)   | NaN = unknown |
+/// | 5      | rot (rad/s)     | NaN = unknown |
+/// | 6      | ageAtUpload\_s  | always finite |
+///
+/// `stw` (speed through water) is omitted; it is rarely used in chart display.
+#[cfg(target_arch = "wasm32")]
+pub fn extract_ais_binary(
+    storage: &Storage,
+    now_ms: f64,
+    stale_ms: f64,
+) -> (Float64Array, Vec<String>, Vec<AisColdData>) {
+    let data = storage.data();
+    let self_key = data.self_.strip_prefix("vessels.").unwrap_or(&data.self_);
+
+    let Some(vessels) = data.vessels.as_ref() else {
+        return (Float64Array::new_with_length(0), vec![], vec![]);
+    };
+
+    struct Row {
+        id: String,
+        name: Option<String>,
+        mmsi: Option<String>,
+        lon: f64,
+        lat: f64,
+        cog: f64,
+        sog: f64,
+        hdg: f64,
+        rot: f64,
+        age: f64,
+    }
+
+    let rows: Vec<Row> = vessels
+        .iter()
+        .filter(|(id, _)| id.as_str() != self_key)
+        .filter_map(|(id, vessel)| {
+            let nav = vessel.navigation.as_ref()?;
+            let last_ms = nav.datetime.as_ref().and_then(|dt| {
+                let json = serde_json::to_string(dt).ok()?;
+                let s = if json.starts_with('"') {
+                    serde_json::from_str::<String>(&json).ok()?
+                } else {
+                    serde_json::from_str::<serde_json::Value>(&json)
+                        .ok()?
+                        .get("value")?
+                        .as_str()?
+                        .to_owned()
+                };
+                parse_iso8601_utc_ms(&s)
+            })?;
+            if now_ms - last_ms > stale_ms {
+                return None;
+            }
+            let pos_value = nav.position.as_ref()?.value.as_ref()?;
+            if !pos_value.longitude.is_finite() || !pos_value.latitude.is_finite() {
+                return None;
+            }
+            let heading = nav.heading_true.as_ref()
+                .and_then(|v| v.value)
+                .filter(|&h| (0.0..std::f64::consts::TAU).contains(&h));
+            let cog = nav.course_over_ground_true.as_ref()
+                .and_then(|v| v.value)
+                .filter(|&c| (0.0..std::f64::consts::TAU).contains(&c));
+            Some(Row {
+                id: id.clone(),
+                name: vessel.name.clone(),
+                mmsi: vessel.mmsi.clone(),
+                lon: pos_value.longitude,
+                lat: pos_value.latitude,
+                cog: cog.unwrap_or(f64::NAN),
+                sog: nav.speed_over_ground.as_ref()
+                    .and_then(|v| v.value)
+                    .filter(|v| v.is_finite())
+                    .unwrap_or(f64::NAN),
+                hdg: heading.unwrap_or(f64::NAN),
+                rot: nav.rate_of_turn.as_ref()
+                    .and_then(|v| v.value)
+                    .and_then(compensate_aisstream_rot)
+                    .unwrap_or(f64::NAN),
+                age: (now_ms - last_ms) / 1000.0,
+            })
+        })
+        .collect();
+
+    let n = rows.len();
+    let mut hot = vec![0.0f64; n * AIS_HOT_STRIDE];
+    let mut ids = Vec::with_capacity(n);
+    let mut cold = Vec::with_capacity(n);
+
+    for (i, r) in rows.into_iter().enumerate() {
+        let b = i * AIS_HOT_STRIDE;
+        hot[b]     = r.lon;
+        hot[b + 1] = r.lat;
+        hot[b + 2] = r.cog;
+        hot[b + 3] = r.sog;
+        hot[b + 4] = r.hdg;
+        hot[b + 5] = r.rot;
+        hot[b + 6] = r.age;
+        cold.push(AisColdData { id: r.id.clone(), name: r.name, mmsi: r.mmsi });
+        ids.push(r.id);
+    }
+
+    (Float64Array::from(hot.as_slice()), ids, cold)
+}
+
+
 /// milliseconds relative to `now_ms`.
 ///
 /// The `signalk` crate never evicts vessels from its internal HashMap, so without this

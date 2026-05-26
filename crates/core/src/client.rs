@@ -2,7 +2,7 @@
 //! Owns the connection lifecycle and vessel state accumulation.
 //! Calls back into JS when state or connection status changes.
 
-use crate::signalk::{apply_message, extract_ais_targets, extract_vessel_state, prune_stale_vessels};
+use crate::signalk::{apply_message, extract_ais_binary, extract_vessel_state, prune_stale_vessels, VesselState};
 use js_sys::Function;
 use signalk::{Storage, V1FullFormat};
 use std::{cell::RefCell, rc::Rc};
@@ -101,6 +101,8 @@ impl SignalKClient {
 
         let storage_clone = storage.clone();
         let state_cb = on_state_change.clone();
+        let last_vessel_state: Rc<RefCell<Option<VesselState>>> = Rc::new(RefCell::new(None));
+        let last_vessel_state_clone = last_vessel_state.clone();
 
         // Helper closure that does the actual AIS emit — shared between the immediate
         // path and the debounce timer. Wrapped in Rc so both paths can hold it.
@@ -111,10 +113,18 @@ impl SignalKClient {
             Rc::new(move || {
                 let now_ms = js_sys::Date::now();
                 prune_stale_vessels(&mut storage.borrow_mut(), now_ms, AIS_STALE_MS);
-                let targets = extract_ais_targets(&storage.borrow(), now_ms, AIS_STALE_MS);
-                if !targets.is_empty() {
-                    let js_val = serde_wasm_bindgen::to_value(&targets).unwrap_or(JsValue::NULL);
-                    let _ = ais_cb.call1(&JsValue::NULL, &js_val);
+                let (hot_arr, ids, cold) = extract_ais_binary(&storage.borrow(), now_ms, AIS_STALE_MS);
+                if !ids.is_empty() {
+                    let js_ids = js_sys::Array::new_with_length(ids.len() as u32);
+                    for (i, id) in ids.iter().enumerate() {
+                        js_ids.set(i as u32, JsValue::from_str(id));
+                    }
+                    let cold_js = serde_wasm_bindgen::to_value(&cold).unwrap_or(JsValue::NULL);
+                    let payload = js_sys::Object::new();
+                    let _ = js_sys::Reflect::set(&payload, &JsValue::from_str("hot"), &hot_arr.buffer());
+                    let _ = js_sys::Reflect::set(&payload, &JsValue::from_str("ids"), &js_ids);
+                    let _ = js_sys::Reflect::set(&payload, &JsValue::from_str("cold"), &cold_js);
+                    let _ = ais_cb.call1(&JsValue::NULL, &payload);
                 }
                 *last_emit.borrow_mut() = now_ms;
             })
@@ -127,8 +137,14 @@ impl SignalKClient {
             // Always forward own-vessel state immediately — it's a single cheap struct.
             let state = extract_vessel_state(&storage_clone.borrow());
             if state.position.is_some() {
-                let js_val = serde_wasm_bindgen::to_value(&state).unwrap_or(JsValue::NULL);
-                let _ = state_cb.call1(&JsValue::NULL, &js_val);
+                // Only emit when something relevant actually changed — many incoming
+                // WebSocket messages are AIS deltas that don't touch own-vessel state.
+                let changed = last_vessel_state_clone.borrow().as_ref() != Some(&state);
+                if changed {
+                    *last_vessel_state_clone.borrow_mut() = Some(state.clone());
+                    let js_val = serde_wasm_bindgen::to_value(&state).unwrap_or(JsValue::NULL);
+                    let _ = state_cb.call1(&JsValue::NULL, &js_val);
+                }
             }
 
             let now = js_sys::Date::now();

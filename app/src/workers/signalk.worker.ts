@@ -15,6 +15,13 @@ type InMessage =
   | { type: 'connect'; url: string }
   | { type: 'disconnect' };
 
+// AIS payload from WASM — hot data as ArrayBuffer + parallel metadata arrays.
+interface AisWasmPayload {
+  hot: ArrayBuffer;
+  ids: string[];
+  cold: Array<{ id: string; name?: string; mmsi?: string }>;
+}
+
 let client: SignalKClient | null = null;
 let wasmReady = false;
 
@@ -35,7 +42,13 @@ self.onmessage = async (e: MessageEvent<InMessage>): Promise<void> => {
         msg.url,
         (state: unknown) => { self.postMessage({ type: 'state', state }); },
         (status: number) => { self.postMessage({ type: 'status', status }); },
-        (targets: unknown) => { self.postMessage({ type: 'ais', targets }); },
+        (payload: AisWasmPayload) => {
+          // Transfer the hot ArrayBuffer — zero-copy handoff to main thread.
+          self.postMessage(
+            { type: 'ais', hot: payload.hot, ids: payload.ids, cold: payload.cold },
+            [payload.hot],
+          );
+        },
       );
     } catch (err) {
       self.postMessage({ type: 'error', message: String(err) });

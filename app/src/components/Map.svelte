@@ -11,7 +11,8 @@
   import { followMode } from '../stores/follow.svelte';
   import { charts } from '../stores/charts.svelte';
   import { baseLayers, BASE_LAYERS } from '../stores/baseLayers.svelte';
-  import { ais, type AisTarget } from '../stores/ais.svelte';
+  import { ais, AIS_HOT_STRIDE, AIS_F_LON, AIS_F_LAT, AIS_F_COG, AIS_F_SOG, AIS_F_HDG, AIS_F_ROT, AIS_F_AGE } from '../stores/ais.svelte';
+  import type { AisTarget } from '../stores/ais.svelte';
   import { MapboxOverlay } from '@deck.gl/mapbox';
   import { PathLayer, ScatterplotLayer, TextLayer } from '@deck.gl/layers';
   import { PathStyleExtension } from '@deck.gl/extensions';
@@ -20,7 +21,7 @@
   import { gcLine } from '../lib/geoMath';
   import { AisHullLayer } from '../layers/AisHullLayer';
   import { AisIconLayer } from '../layers/AisIconLayer';
-  import { makeVesselIconData, extrapolatePos, positionUpdateMs } from '../lib/deadReckoning';
+  import { makeVesselIconData, extrapolatePos } from '../lib/deadReckoning';
 
   type ProjectionId = 'mercator' | 'globe';
 
@@ -330,8 +331,10 @@
   let liveSnapTargets: { id: string; position: { longitude: number; latitude: number } }[] = [];
 
   let overlay: MapboxOverlay | null = null;
-  // All AIS targets with a known position — used for ruler snap hit-test in rafTick:
-  let allVisTargets: AisTarget[] = [];
+  // Typed-array snapshots of the last AIS data batch — used by rafTick for ruler snap.
+  let aisHotSnapshot: Float64Array | null = null;
+  let aisIdsSnapshot: string[] = [];
+  let aisUploadTimestamp = 0;
   // Layer groups composed into overlay.setProps() — AIS layers set on data tick,
   // ruler layers rebuilt in rafTick (need map.project() for pixel distance checks).
   let aisLayerGroup: Layer[] = [];
@@ -404,24 +407,30 @@
         const ownPosForSnap = get(vesselState).position;
         {
           const nowForSnap = nowMs;
-          liveSnapTargets = [
-            ...allVisTargets.flatMap(t => {
-              const lastKnown = { id: t.id, position: { longitude: t.position!.longitude, latitude: t.position!.latitude } };
-              if (t.cog !== undefined && (t.sog ?? 0) > 0.1) {
-                const [gLon, gLat] = extrapolatePos(
-                  t.position!.longitude, t.position!.latitude,
-                  t.cog, t.sog ?? 0, t.rot ?? 0,
-                  positionUpdateMs(t), nowForSnap,
-                );
-                return [
-                  lastKnown,
-                  { id: t.id + ':ghost', position: { longitude: gLon, latitude: gLat } },
-                ];
+          const snapPts: typeof liveSnapTargets = [];
+          const S = AIS_HOT_STRIDE;
+          if (aisHotSnapshot && aisIdsSnapshot.length > 0) {
+            const hd = aisHotSnapshot;
+            const ids = aisIdsSnapshot;
+            const n = ids.length;
+            for (let i = 0; i < n; i++) {
+              const lon = hd[i * S + AIS_F_LON];
+              const lat = hd[i * S + AIS_F_LAT];
+              snapPts.push({ id: ids[i], position: { longitude: lon, latitude: lat } });
+              const cog = hd[i * S + AIS_F_COG];
+              const sog = hd[i * S + AIS_F_SOG];
+              if (!isNaN(cog) && !isNaN(sog) && sog > 0.1) {
+                const rot = hd[i * S + AIS_F_ROT];
+                const lastPosMs = aisUploadTimestamp - hd[i * S + AIS_F_AGE] * 1000;
+                const [gLon, gLat] = extrapolatePos(lon, lat, cog, sog, isNaN(rot) ? 0 : rot, lastPosMs, nowForSnap);
+                snapPts.push({ id: ids[i] + ':ghost', position: { longitude: gLon, latitude: gLat } });
               }
-              return [lastKnown];
-            }),
-            ...(ownPosForSnap ? [{ id: 'own-vessel', position: { longitude: ownPosForSnap.longitude, latitude: ownPosForSnap.latitude } }] : []),
-          ];
+            }
+          }
+          if (ownPosForSnap) {
+            snapPts.push({ id: 'own-vessel', position: { longitude: ownPosForSnap.longitude, latitude: ownPosForSnap.latitude } });
+          }
+          liveSnapTargets = snapPts;
           rulers.syncSnapped(liveSnapTargets);
         }
 
@@ -577,9 +586,11 @@
       const { x, y } = e.point;
       const aisLayerIds = ['ais-confirmed-icon', 'ais-hull-ghost', 'ais-hull-confirmed', 'ais-ghost-icon'];
       const picked = overlay.pickObject({ x, y, radius: 5, layerIds: aisLayerIds });
-      if (!picked?.object) return;
-      const target = picked.object as AisTarget;
-      if (!target?.position) return;
+      if (picked === null) return;
+      const vesselIdx = picked.object as number | undefined | null;
+      if (vesselIdx === undefined || vesselIdx === null) return;
+      const target = ais.getTarget(vesselIdx);
+      if (!target?.position || !picked.coordinate) return;
       handleAisClick({ ...picked, object: target });
     });
 
@@ -683,7 +694,7 @@
     const lon = t.position?.longitude;
     const lat = t.position?.latitude;
 
-    const posMs = positionUpdateMs(t);
+    const posMs = t.lastPositionUpdateMs;
     const lastSeenDate = new Date(posMs);
     const lastSeenTime = lastSeenDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     const ageSec = Math.round((Date.now() - posMs) / 1000);
@@ -703,7 +714,6 @@
           ${row('Updated',  `${lastSeenTime} <span style="opacity:0.6;font-size:0.85em">(${ageStr})</span>`)}
           <tr><td colspan="2" class="ais-section">Navigation</td></tr>
           ${row('SOG',     t.sog     !== undefined ? (t.sog     * 1.94384).toFixed(1) : null, ' kn')}
-          ${row('STW',     t.stw     !== undefined ? (t.stw     * 1.94384).toFixed(1) : null, ' kn')}
           ${row('COG',     t.cog     !== undefined ? (t.cog     * 180 / Math.PI).toFixed(1) : null, '°')}
           ${row('Heading', t.heading !== undefined ? (t.heading * 180 / Math.PI).toFixed(1) : null, '°')}
           ${row('ROT',     rotStr)}
@@ -717,7 +727,7 @@
   }
 
   function handleAisClick(info: PickingInfo): boolean {
-    const t = info.object as AisTarget | null | undefined;
+    const t = info.object as AisTarget | null;
     if (!t?.position || !info.coordinate) return false;
     new maplibregl.Popup({ closeButton: true, maxWidth: '280px' })
       .setLngLat(info.coordinate as [number, number])
@@ -813,13 +823,26 @@
     if (!map || !mapLoaded) return;
     const aisSrc = map.getSource(AIS_SOURCE);
     if (!(aisSrc instanceof maplibregl.GeoJSONSource)) return;
-    const features: GeoJSON.Feature[] = ais.targets
-      .filter(t => t.position)
-      .map(t => ({
-        type: 'Feature' as const,
-        geometry: { type: 'Point' as const, coordinates: [t.position!.longitude, t.position!.latitude] },
-        properties: { label: t.name ?? '' },
-      }));
+
+    const hotData = ais.hotData;
+    const ids     = ais.ids;
+    const coldMap = ais.coldMap;
+    const _coldVer = ais.coldVersion; // register reactive dependency on cold data changes
+
+    const S = AIS_HOT_STRIDE;
+    const features: GeoJSON.Feature[] = [];
+    if (hotData && ids.length > 0) {
+      for (let i = 0; i < ids.length; i++) {
+        features.push({
+          type: 'Feature' as const,
+          geometry: {
+            type: 'Point' as const,
+            coordinates: [hotData[i * S + AIS_F_LON], hotData[i * S + AIS_F_LAT]],
+          },
+          properties: { label: coldMap.get(ids[i])?.name ?? '' },
+        });
+      }
+    }
 
     const flush = () => {
       _aisLastUpdateMs = Date.now();
@@ -845,45 +868,83 @@
   // Rebuild deck.gl AIS layers on AIS tick or appearance settings change.
   // Zoom is read from the live viewport in draw() — no rebuild needed on zoom changes.
   $effect(() => {
-    const targets = ais.targets;
+    const hotData  = ais.hotData;
+    const ids      = ais.ids;
+    const coldMap  = ais.coldMap;
+    const _coldVer = ais.coldVersion; // register reactive dependency on cold data changes
     const ap = settings.appearance.ais;
     const settingsIconSize = ap.vesselSize / 64;
     const now = Date.now();
 
     // Capture COG line settings explicitly so Svelte 5 tracks them as dependencies
     // and the closures below always close over the current values.
-    const cogColor        = ap.cog.color;
-    const cogWidth        = ap.cog.width;
-    const cogStyle        = ap.cog.style;
+    const cogColor         = ap.cog.color;
+    const cogWidth         = ap.cog.width;
+    const cogStyle         = ap.cog.style;
     const cogLengthMinutes = ap.cog.lengthMinutes;
 
-    const visTargets = targets.filter(t => t.position);
-    const hasHull = (t: AisTarget) =>
-      t.heading !== undefined && t.lengthM !== undefined && t.beamM !== undefined;
-    const cogTargets  = visTargets.filter(t => t.cog !== undefined && (t.sog ?? 0) > 0.1);
+    if (!hotData || ids.length === 0) {
+      aisLayerGroup = [];
+      flushLayers();
+      aisHotSnapshot    = null;
+      aisIdsSnapshot    = [];
+      aisUploadTimestamp = 0;
+      return;
+    }
+
+    const S = AIS_HOT_STRIDE;
+    const n = ids.length;
+    // Single O(N) pass to build per-category index arrays — no object creation.
+    const visIndices:   number[] = [];
+    const ghostIndices: number[] = [];
+    const hullIndices:  number[] = [];
+    const cogIndices:   number[] = [];
+
+    for (let i = 0; i < n; i++) {
+      visIndices.push(i);
+      const icog = hotData[i * S + AIS_F_COG];
+      const isog = hotData[i * S + AIS_F_SOG];
+      if (!isNaN(icog) && !isNaN(isog) && isog > 0.1) {
+        ghostIndices.push(i);
+        cogIndices.push(i);
+      }
+      const ihdg  = hotData[i * S + AIS_F_HDG];
+      const cold = coldMap.get(ids[i]);
+      if (!isNaN(ihdg) && (cold?.lengthM ?? 0) > 0 && (cold?.beamM ?? 0) > 0) {
+        hullIndices.push(i);
+      }
+    }
+
+    // Snapshot for rafTick dead-reckoning (ruler snap).
+    aisHotSnapshot     = hotData;
+    aisIdsSnapshot     = ids;
+    aisUploadTimestamp = now;
 
     const vesselColor      = hexToRgba(ap.vesselColor, 220);
     const ghostVesselColor = hexToRgba(ap.vesselColor, 130);
 
-    allVisTargets = visTargets;
-    const ghostTargets = visTargets.filter(t => t.cog !== undefined && (t.sog ?? 0) > 0.1);
-    const hullTargets  = visTargets.filter(hasHull);
+    // Accessor lambdas — close over hotData, coldMap, ids. Zero allocations per frame.
+    const getPos  = (i: number): [number, number, number] => [hotData[i * S + AIS_F_LON], hotData[i * S + AIS_F_LAT], 0];
+    const getSog  = (i: number) => { const v = hotData[i * S + AIS_F_SOG]; return isNaN(v) ? 0 : v; };
+    const getCog  = (i: number) => { const v = hotData[i * S + AIS_F_COG]; return isNaN(v) ? 0 : v; };
+    const getHdg  = (i: number) => { const h = hotData[i * S + AIS_F_HDG]; if (!isNaN(h)) return h; const c = hotData[i * S + AIS_F_COG]; return isNaN(c) ? 0 : c; };
+    const getHdgStrict = (i: number) => { const h = hotData[i * S + AIS_F_HDG]; return isNaN(h) ? 0 : h; };
+    const getRot  = (i: number) => { const v = hotData[i * S + AIS_F_ROT]; return isNaN(v) ? 0 : v; };
+    const getAge  = (i: number) => hotData[i * S + AIS_F_AGE];
+    const getLen  = (i: number, fallback: number) => coldMap.get(ids[i])?.lengthM ?? fallback;
+    const getBeam = (i: number, fallback: number) => coldMap.get(ids[i])?.beamM ?? fallback;
 
-    // Create layer instances once per AIS data tick.
-    // Animated layers set selfAnimate=true and drive their own repaint from draw().
-    // No per-frame setProps() for AIS — only flushLayers() when the group changes.
-
-    const ghostIconLayer = ghostTargets.length > 0
+    const ghostIconLayer = ghostIndices.length > 0
       ? new AisIconLayer({
           id: 'ais-ghost-icon',
-          data: ghostTargets,
-          getPosition:    (t: AisTarget) => [t.position!.longitude, t.position!.latitude, 0],
-          getSog:         (t: AisTarget) => t.sog     ?? 0,
-          getCog:         (t: AisTarget) => t.cog     ?? 0,
-          getHeading:     (t: AisTarget) => t.heading ?? t.cog ?? 0,
-          getRot:         (t: AisTarget) => t.rot     ?? 0,
-          getAgeAtUpload: (t: AisTarget) => (now - positionUpdateMs(t)) / 1000,
-          getLength:      (t: AisTarget) => t.lengthM ?? 0,
+          data: ghostIndices,
+          getPosition:    getPos,
+          getSog:         getSog,
+          getCog:         getCog,
+          getHeading:     getHdg,
+          getRot:         getRot,
+          getAgeAtUpload: getAge,
+          getLength:      (i) => getLen(i, 0),
           getColor:       ghostVesselColor,
           uploadTimestamp: now,
           selfAnimate: true,
@@ -892,17 +953,17 @@
         })
       : null;
 
-    const confirmedIconLayer = allVisTargets.length > 0
+    const confirmedIconLayer = visIndices.length > 0
       ? new AisIconLayer({
           id: 'ais-confirmed-icon',
-          data: allVisTargets,
-          getPosition:    (t: AisTarget) => [t.position!.longitude, t.position!.latitude, 0],
+          data: visIndices,
+          getPosition:    getPos,
           getSog:         () => 0,
           getCog:         () => 0,
-          getHeading:     (t: AisTarget) => t.heading ?? t.cog ?? 0,
+          getHeading:     getHdg,
           getRot:         () => 0,
           getAgeAtUpload: () => 0,
-          getLength:      (t: AisTarget) => t.lengthM ?? 0,
+          getLength:      (i) => getLen(i, 0),
           getColor:       vesselColor,
           uploadTimestamp: now,
           selfAnimate: false,
@@ -911,18 +972,18 @@
         })
       : null;
 
-    const ghostHullLayer = hullTargets.length > 0
+    const ghostHullLayer = hullIndices.length > 0
       ? new AisHullLayer({
           id: 'ais-hull-ghost',
-          data: hullTargets,
-          getPosition:    (t: AisTarget) => [t.position!.longitude, t.position!.latitude, 0],
-          getSog:         (t: AisTarget) => t.sog     ?? 0,
-          getCog:         (t: AisTarget) => t.cog     ?? 0,
-          getHeading:     (t: AisTarget) => t.heading ?? 0,
-          getRot:         (t: AisTarget) => t.rot     ?? 0,
-          getAgeAtUpload: (t: AisTarget) => (now - positionUpdateMs(t)) / 1000,
-          getLength:      (t: AisTarget) => t.lengthM ?? 50,
-          getBeam:        (t: AisTarget) => t.beamM   ?? 10,
+          data: hullIndices,
+          getPosition:    getPos,
+          getSog:         getSog,
+          getCog:         getCog,
+          getHeading:     getHdgStrict,
+          getRot:         getRot,
+          getAgeAtUpload: getAge,
+          getLength:      (i) => getLen(i, 50),
+          getBeam:        (i) => getBeam(i, 10),
           getColor:       vesselColor,
           uploadTimestamp: now,
           selfAnimate: true,
@@ -932,18 +993,18 @@
         })
       : null;
 
-    const confirmedHullLayer = hullTargets.length > 0
+    const confirmedHullLayer = hullIndices.length > 0
       ? new AisHullLayer({
           id: 'ais-hull-confirmed',
-          data: hullTargets,
-          getPosition:    (t: AisTarget) => [t.position!.longitude, t.position!.latitude, 0],
+          data: hullIndices,
+          getPosition:    getPos,
           getSog:         () => 0,
           getCog:         () => 0,
-          getHeading:     (t: AisTarget) => t.heading ?? 0,
+          getHeading:     getHdgStrict,
           getRot:         () => 0,
           getAgeAtUpload: () => 0,
-          getLength:      (t: AisTarget) => t.lengthM ?? 50,
-          getBeam:        (t: AisTarget) => t.beamM   ?? 10,
+          getLength:      (i) => getLen(i, 50),
+          getBeam:        (i) => getBeam(i, 10),
           getColor:       vesselColor,
           uploadTimestamp: now,
           selfAnimate: false,
@@ -959,21 +1020,25 @@
       // ghost hull polygon (GPU animated, 75% opacity)
       ...(ghostHullLayer ? [ghostHullLayer] : []),
       // COG arc prediction line
-      new PathLayer<AisTarget>({
+      new PathLayer<number>({
         id: 'ais-cog',
-        data: cogTargets,
-        getPath: (t: AisTarget) => {
-          const { longitude, latitude } = t.position!;
+        data: cogIndices,
+        getPath: (i: number) => {
+          const lon  = hotData[i * S + AIS_F_LON];
+          const lat  = hotData[i * S + AIS_F_LAT];
+          const c    = hotData[i * S + AIS_F_COG];
+          const s    = hotData[i * S + AIS_F_SOG];
+          const r    = hotData[i * S + AIS_F_ROT];
           const totalSec = cogLengthMinutes * 60;
-          const rot = t.rot ?? 0;
-          if (Math.abs(rot) < 1e-4) {
-            const [endLon, endLat] = extrapolatePos(longitude, latitude, t.cog!, t.sog ?? 0, 0, 0, totalSec * 1000);
-            return [[longitude, latitude], [endLon, endLat]];
+          const rotRad = isNaN(r) ? 0 : r;
+          if (Math.abs(rotRad) < 1e-4) {
+            const [endLon, endLat] = extrapolatePos(lon, lat, c, isNaN(s) ? 0 : s, 0, 0, totalSec * 1000);
+            return [[lon, lat], [endLon, endLat]];
           }
           const N = 24;
-          return Array.from({ length: N + 1 }, (_, i) => {
-            const [lon, lat] = extrapolatePos(longitude, latitude, t.cog!, t.sog ?? 0, rot, 0, totalSec * i / N * 1000);
-            return [lon, lat] as [number, number];
+          return Array.from({ length: N + 1 }, (_, k) => {
+            const [pLon, pLat] = extrapolatePos(lon, lat, c, isNaN(s) ? 0 : s, rotRad, 0, totalSec * k / N * 1000);
+            return [pLon, pLat] as [number, number];
           });
         },
         getColor: () => hexToRgba(cogColor, 200),
@@ -984,9 +1049,9 @@
         pickable: false,
         extensions: [new PathStyleExtension({ dash: true })],
         updateTriggers: {
-          getPath:     [cogLengthMinutes],
-          getColor:    [cogColor],
-          getWidth:    [cogWidth],
+          getPath:      [cogLengthMinutes],
+          getColor:     [cogColor],
+          getWidth:     [cogWidth],
           getDashArray: [cogStyle, cogWidth],
         },
       }),

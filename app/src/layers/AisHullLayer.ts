@@ -15,7 +15,6 @@
 import { Layer, project32, picking } from '@deck.gl/core';
 import type { LayerProps, UpdateParameters, DefaultProps, Accessor } from '@deck.gl/core';
 import { Model, Geometry } from '@luma.gl/engine';
-import type { AisTarget } from '../stores/ais.svelte';
 
 // ---------------------------------------------------------------------------
 // Shader uniform module
@@ -215,17 +214,17 @@ const VERTEX_COUNT = 9;
 // Props interface
 // ---------------------------------------------------------------------------
 
-export interface AisHullLayerProps extends LayerProps {
-  data: AisTarget[];
-  getPosition?: Accessor<AisTarget, [number, number] | [number, number, number]>;
-  getSog?: Accessor<AisTarget, number>;
-  getCog?: Accessor<AisTarget, number>;
-  getHeading?: Accessor<AisTarget, number>;
-  getRot?: Accessor<AisTarget, number>;
-  getAgeAtUpload?: Accessor<AisTarget, number>;
-  getLength?: Accessor<AisTarget, number>;
-  getBeam?: Accessor<AisTarget, number>;
-  getColor?: Accessor<AisTarget, [number, number, number, number]>;
+export interface AisHullLayerProps<DataT = number> extends LayerProps {
+  data: DataT[] | { length: number };
+  getPosition?: Accessor<DataT, [number, number] | [number, number, number]>;
+  getSog?: Accessor<DataT, number>;
+  getCog?: Accessor<DataT, number>;
+  getHeading?: Accessor<DataT, number>;
+  getRot?: Accessor<DataT, number>;
+  getAgeAtUpload?: Accessor<DataT, number>;
+  getLength?: Accessor<DataT, number>;
+  getBeam?: Accessor<DataT, number>;
+  getColor?: Accessor<DataT, [number, number, number, number]>;
   /** Unix ms timestamp of the last data upload. draw() computes elapsed from this. */
   uploadTimestamp?: number;
   /** If true, draw() calls setNeedsRedraw() to keep animating each frame. */
@@ -234,7 +233,7 @@ export interface AisHullLayerProps extends LayerProps {
   opacity?: number;
 }
 
-const defaultProps: DefaultProps<AisHullLayerProps> = {
+const defaultProps: DefaultProps<AisHullLayerProps<number>> = {
   getPosition:    { type: 'accessor', value: [0, 0] },
   getSog:         { type: 'accessor', value: 0 },
   getCog:         { type: 'accessor', value: 0 },
@@ -254,7 +253,7 @@ const defaultProps: DefaultProps<AisHullLayerProps> = {
 // Layer class
 // ---------------------------------------------------------------------------
 
-export class AisHullLayer extends Layer<AisHullLayerProps> {
+export class AisHullLayer<DataT = number> extends Layer<AisHullLayerProps<DataT>> {
   static override layerName = 'AisHullLayer';
   static override defaultProps = defaultProps;
 
