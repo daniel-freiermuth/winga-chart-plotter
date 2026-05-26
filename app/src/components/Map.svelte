@@ -535,11 +535,12 @@
               getTextAnchor: 'middle' as const,
               getAlignmentBaseline: 'center' as const,
               fontFamily: 'monospace',
+              characterSet: [...'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 °·.,\'-/T'],
               pickable: false,
               updateTriggers: { getText: [currentRulers], getPosition: [currentRulers] },
             }),
 
-            // Delete handle (×) at B endpoint
+            // Delete handle (✕) at B endpoint
             new TextLayer<HandleDatum>({
               id: 'ruler-delete',
               data: deleteData,
@@ -553,6 +554,7 @@
               backgroundPadding: [3, 1, 3, 1] as [number, number, number, number],
               getTextAnchor: 'middle' as const,
               getAlignmentBaseline: 'center' as const,
+              characterSet: ['✕'],
               pickable: true,
               updateTriggers: { getPosition: [currentRulers] },
             }),
