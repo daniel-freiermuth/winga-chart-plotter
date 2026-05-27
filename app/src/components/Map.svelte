@@ -60,6 +60,11 @@
   let _cachedGlobeCorrection: number | null = null;
   let _globeInjectionPending = false;
 
+  // Suppress programmatic camera moves while the user is interacting (drag, pinch, scroll).
+  // movestart fires for both user gestures and programmatic easeTo/flyTo; originalEvent is only
+  // present for gestures. moveend always fires, resetting the flag.
+  let _isInteracting = false;
+
   // Own-vessel setData coalescing: multiple Signal K field updates (lat, lon, COG, SOG, heading)
   // arrive per epoch and each triggers the $effect. We batch them into one setData per rAF frame.
   let _vesselRafId: number | null = null;
@@ -582,6 +587,10 @@
 
     map.on('zoom',   () => { mapZoom    = map?.getZoom()    ?? mapZoom; });
     map.on('rotate', () => { mapBearing = map?.getBearing() ?? mapBearing; });
+    // Track user interactions so programmatic easeTo calls don't interrupt gestures.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    map.on('movestart', (e: any) => { if (e.originalEvent) _isInteracting = true; });
+    map.on('moveend',   () => { _isInteracting = false; });
     // User dragging the map cancels follow mode.
     map.on('dragstart', () => { if (!rulerDrag) followMode.following = false; });
     // User rotating the map (gesture) switches to manual rotate mode.
@@ -1179,7 +1188,7 @@
       } else {
         map.easeTo({ center: [pos.longitude, pos.latitude], duration: 1000, ...bOpts });
       }
-    } else if (bearing !== undefined) {
+    } else if (bearing !== undefined && !_isInteracting) {
       map.easeTo({ bearing, duration: 300 });
     }
   });
