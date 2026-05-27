@@ -1,6 +1,6 @@
 {
   "name": "winga-chart-plotter-signalk",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "[Experimental] Sea chart plotting featuring WebGL",
   "license": "MIT",
   "keywords": [
@@ -15,6 +15,10 @@
   "files": [
     "public"
   ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/daniel-freiermuth/winga-chart-plotter.git"
+  },
   "scripts": {
     "build": "make package"
   }
