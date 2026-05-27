@@ -373,7 +373,7 @@
       zoom: 10,
     });
 
-    map.addControl(new maplibregl.NavigationControl(), 'top-right');
+    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
     map.addControl(new maplibregl.ScaleControl(), 'bottom-left');
 
     // deck.gl overlay — non-interleaved mode: deck.gl renders on its own canvas (on top of
