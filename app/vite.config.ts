@@ -32,6 +32,22 @@ export default defineConfig(({ command }) => ({
       manifest: false, // we maintain public/manifest.json ourselves
     }),
   ],
+  build: {
+    rollupOptions: {
+      output: {
+        // MapLibre GL creates its tile workers by stringifying function bodies at
+        // runtime (modules.worker.toString()). If the outer bundle and MapLibre are
+        // minified together, Rolldown may rename internal symbols (e.g. to `Ea`) in
+        // both the outer scope AND inside those function bodies — but when the blob
+        // worker runs in isolation, the outer-scope name is not defined.
+        // Isolating MapLibre in its own chunk prevents cross-chunk inlining so the
+        // worker blob remains self-contained.
+        manualChunks(id) {
+          if (id.includes('node_modules/maplibre-gl')) return 'maplibre-gl';
+        },
+      },
+    },
+  },
   server: {
     port: 5173,
   },
