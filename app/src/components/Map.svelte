@@ -9,6 +9,7 @@
   import { vesselState } from '../stores/vessel';
   import { settings, type LineAppearance, type LineStyle } from '../stores/settings.svelte';
   import { followMode } from '../stores/follow.svelte';
+  import { rotateMode } from '../stores/rotateMode.svelte';
   import { charts } from '../stores/charts.svelte';
   import { baseLayers, BASE_LAYERS } from '../stores/baseLayers.svelte';
   import { ais, AIS_HOT_STRIDE, AIS_F_LON, AIS_F_LAT, AIS_F_COG, AIS_F_SOG, AIS_F_HDG, AIS_F_ROT, AIS_F_AGE } from '../stores/ais.svelte';
@@ -583,6 +584,11 @@
     map.on('rotate', () => { mapBearing = map?.getBearing() ?? mapBearing; });
     // User dragging the map cancels follow mode.
     map.on('dragstart', () => { if (!rulerDrag) followMode.following = false; });
+    // User rotating the map (gesture) switches to manual rotate mode.
+    // Programmatic camera moves (easeTo/flyTo) also fire rotatestart but without originalEvent.
+    map.on('rotatestart', (e: maplibregl.MapRotateEvent) => {
+      if (e.originalEvent) rotateMode.setManual();
+    });
 
     // AIS vessel click — pick manually to stay consistent with ruler pointer handling.
     map.on('click', (e) => {
@@ -1150,17 +1156,31 @@
     }
   });
 
-  // Follow mode: smoothly track vessel position. Uses flyTo for large distances
-  // (first enable), easeTo for incremental updates.
+  // Follow + rotation mode: combined into one effect so we never issue two competing
+  // easeTo/flyTo calls in the same reactive flush.
   $effect(() => {
-    const pos = $vesselState.position;
-    if (!pos || !map || !followMode.following) return;
-    const center = map.getCenter();
-    const dist = Math.hypot(center.lng - pos.longitude, center.lat - pos.latitude);
-    if (dist > 1) {
-      map.flyTo({ center: [pos.longitude, pos.latitude], speed: 1.5 });
-    } else {
-      map.easeTo({ center: [pos.longitude, pos.latitude], duration: 1000 });
+    if (!map) return;
+    const state = $vesselState;
+    const pos = state.position;
+    const rm = rotateMode.mode;
+
+    // Compute target bearing. 'manual' and 'course' (TBD) produce no constraint.
+    let bearing: number | undefined;
+    if (rm === 'north') bearing = 0;
+    else if (rm === 'cog'     && state.cog     !== null) bearing = (state.cog     * 180 / Math.PI);
+    else if (rm === 'heading' && state.heading  !== null) bearing = (state.heading * 180 / Math.PI);
+
+    if (pos && followMode.following) {
+      const center = map.getCenter();
+      const dist = Math.hypot(center.lng - pos.longitude, center.lat - pos.latitude);
+      const bOpts = bearing !== undefined ? { bearing } : {};
+      if (dist > 1) {
+        map.flyTo({ center: [pos.longitude, pos.latitude], speed: 1.5, ...bOpts });
+      } else {
+        map.easeTo({ center: [pos.longitude, pos.latitude], duration: 1000, ...bOpts });
+      }
+    } else if (bearing !== undefined) {
+      map.easeTo({ bearing, duration: 300 });
     }
   });
 </script>
@@ -1168,6 +1188,12 @@
 <div bind:this={mapContainer} style="width: 100%; height: 100%;"></div>
 
 <div class="projection-picker">
+  <button
+    class="proj-btn"
+    class:proj-btn--manual={rotateMode.mode === 'manual'}
+    title="Rotation mode: {rotateMode.label}"
+    onclick={() => rotateMode.toggle($vesselState.heading !== null, false)}
+  >{rotateMode.label}</button>
   <button
     class="proj-btn"
     title="Switch to {projection === 'mercator' ? 'Globe' : 'Mercator'}"
@@ -1202,6 +1228,7 @@
     transition: background 0.15s;
   }
   .proj-btn:hover { background: rgba(40,40,80,0.9); }
+  .proj-btn--manual { color: #f59e0b; }
 
   :global(.ais-popup) {
     font-family: system-ui, sans-serif;
