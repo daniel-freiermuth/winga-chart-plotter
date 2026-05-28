@@ -111,6 +111,7 @@ function createAisStore() {
         const existing = coldMap.get(id) ?? { id };
         coldMap.set(id, {
           ...existing,
+          name:     info.name     ?? existing.name,
           shipType: info.shipType ?? existing.shipType,
           lengthM:  info.lengthM  ?? existing.lengthM,
           beamM:    info.beamM    ?? existing.beamM,
