@@ -18,7 +18,7 @@
   import { MapboxOverlay } from '@deck.gl/mapbox';
   import { PathLayer, ScatterplotLayer, TextLayer } from '@deck.gl/layers';
   import { PathStyleExtension } from '@deck.gl/extensions';
-  import type { Layer, PickingInfo } from '@deck.gl/core';
+  import type { Layer } from '@deck.gl/core';
   import { rulers, rulerBearingText, rulerDistanceText, type Ruler, type RulerEndpoint } from '../stores/rulers.svelte';
   import { gcLine } from '../lib/geoMath';
   import { AisHullLayer, AisHullDecorationLayer, HULL_ANCHOR_DOT, HULL_MOORING_BARS, HULL_AGROUND_RING, HULL_FISHING_GEAR, HULL_NUC, HULL_RESTRICTED, HULL_DRAUGHT } from '../layers/AisHullLayer';
@@ -635,18 +635,37 @@
       if (e.originalEvent) rotateMode.setManual();
     });
 
-    // AIS vessel click — pick manually to stay consistent with ruler pointer handling.
+    // AIS vessel click — pick all vessels under the cursor and disambiguate if needed.
     map.on('click', (e) => {
       if (!overlay) return;
       const { x, y } = e.point;
-      const aisLayerIds = ['ais-confirmed-icon', 'ais-hull-ghost', 'ais-hull-confirmed', 'ais-ghost-icon'];
-      const picked = overlay.pickObject({ x, y, radius: 5, layerIds: aisLayerIds });
-      if (picked === null) return;
-      const vesselIdx = picked.object as number | undefined | null;
-      if (vesselIdx === undefined || vesselIdx === null) return;
-      const target = ais.getTarget(vesselIdx);
-      if (!target?.position || !picked.coordinate) return;
-      handleAisClick({ ...picked, object: target });
+      const aisLayerIds = ['ais-confirmed-icon', 'ais-hull-ghost', 'ais-hull-confirmed', 'ais-ghost-icon', 'ais-mob-icon'];
+      const allPicked = overlay.pickMultipleObjects({ x, y, radius: 5, layerIds: aisLayerIds });
+
+      // Deduplicate by vessel index — multiple layers can return the same vessel.
+      const seen = new Set<number>();
+      const uniqueHits: { idx: number; coordinate: number[] }[] = [];
+      for (const p of allPicked) {
+        const idx = p.object as number | undefined | null;
+        if (idx === undefined || idx === null) continue;
+        if (seen.has(idx)) continue;
+        seen.add(idx);
+        if (p.coordinate) uniqueHits.push({ idx, coordinate: p.coordinate as number[] });
+      }
+
+      if (uniqueHits.length === 0) return;
+
+      const coordinate = uniqueHits[0].coordinate as [number, number];
+
+      if (uniqueHits.length === 1) {
+        const target = ais.getTarget(uniqueHits[0].idx);
+        if (!target?.position) return;
+        handleAisClick(coordinate, target);
+        return;
+      }
+
+      // Multiple vessels — show a disambiguation list popup.
+      openDisambigPopup(coordinate, uniqueHits.map(h => h.idx));
     });
 
     // style.load fires on initial style ready AND after MapLibre's internal setStyle
@@ -795,9 +814,8 @@
         : `${Math.floor(ageSec / 3600)}h ${Math.floor((ageSec % 3600) / 60)}m ago`;
   }
 
-  function handleAisClick(info: PickingInfo): boolean {
-    const t = info.object as AisTarget | null;
-    if (!t?.position || !info.coordinate) return false;
+  function handleAisClick(coordinate: [number, number], t: AisTarget): boolean {
+    if (!t.position) return false;
 
     if (aisAgeTimer !== null) {
       clearInterval(aisAgeTimer);
@@ -805,7 +823,7 @@
     }
 
     const popup = new maplibregl.Popup({ closeButton: true, maxWidth: '280px' })
-      .setLngLat(info.coordinate as [number, number])
+      .setLngLat(coordinate)
       .setHTML(buildAisPopupHtml(t))
       .addTo(map!);
 
@@ -821,6 +839,44 @@
     });
 
     return true;
+  }
+
+  function openDisambigPopup(coordinate: [number, number], indices: number[]) {
+    const targets = indices.map(i => ({ idx: i, target: ais.getTarget(i) }))
+      .filter(e => e.target?.position != null);
+
+    if (targets.length === 0) return;
+    if (targets.length === 1) {
+      handleAisClick(coordinate, targets[0].target!);
+      return;
+    }
+
+    const items = targets.map(({ idx, target: t }) =>
+      `<li class="ais-disambig-item" data-idx="${idx}">${t!.name ?? t!.mmsi ?? 'Unknown vessel'}</li>`
+    ).join('');
+
+    const html = `
+      <div class="ais-disambig">
+        <div class="ais-popup-title">Multiple vessels</div>
+        <ul class="ais-disambig-list">${items}</ul>
+      </div>`;
+
+    const popup = new maplibregl.Popup({ closeButton: true, maxWidth: '220px' })
+      .setLngLat(coordinate)
+      .setHTML(html)
+      .addTo(map!);
+
+    // Attach click handler after the popup is in the DOM.
+    const el = popup.getElement();
+    el.addEventListener('click', (ev) => {
+      const li = (ev.target as HTMLElement).closest('[data-idx]') as HTMLElement | null;
+      if (!li) return;
+      const idx = Number(li.dataset.idx);
+      const t = ais.getTarget(idx);
+      if (!t?.position) return;
+      popup.remove();
+      handleAisClick(coordinate, t);
+    });
   }
 
   // Add / remove chart tile layers when selection changes
@@ -1658,6 +1714,24 @@
     border-radius: 8px;
     box-shadow: 0 4px 20px rgba(0,0,0,0.6);
     padding: 12px 14px;
+  }
+  :global(.ais-disambig-list) {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+  :global(.ais-disambig-item) {
+    padding: 6px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12px;
+    color: #e0e0f0;
+    transition: background 0.12s;
+    white-space: nowrap;
+  }
+  :global(.ais-disambig-item:hover) {
+    background: rgba(96, 165, 250, 0.18);
+    color: #93c5fd;
   }
   :global(.maplibregl-popup-tip) { border-top-color: #1e1e2e; }
   :global(.maplibregl-popup-close-button) { color: #888; font-size: 16px; }
