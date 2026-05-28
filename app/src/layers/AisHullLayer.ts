@@ -344,3 +344,405 @@ export class AisHullLayer<DataT = number> extends Layer<AisHullLayerProps<DataT>
     });
   }
 }
+
+// ---------------------------------------------------------------------------
+// AisHullDecorationLayer
+//
+// Renders nav-state decoration geometry (anchor dot, mooring bars, aground
+// ring) in hull-local space.  Identical dead-reckoning to AisHullLayer so
+// decorations stay locked to the hull polygon under animation.
+//
+// Design decisions:
+//   • Solid black fill — visible on any vessel color.
+//   • Same cross-fade formula as AisHullLayer — fades in/out with the hull.
+//   • Not pickable — decorations are visual only.
+//   • Hull-local geometry means decorations scale proportionally with
+//     vessel length and beam (anchor dot at bow, bars at hull edge, etc.).
+// ---------------------------------------------------------------------------
+
+const decorationVs = /* glsl */`\
+#version 300 es
+#define SHADER_NAME ais-hull-decoration-vertex-shader
+
+in vec3 positions;
+in vec3 instancePositions;
+in vec3 instancePositions64Low;
+in float instanceSog;
+in float instanceCog;
+in float instanceHeading;
+in float instanceRot;
+in float instanceAgeAtUpload;
+in float instanceLength;
+in float instanceBeam;
+
+out float vOpacity;
+
+void main(void) {
+  float dt = min(instanceAgeAtUpload + aisHull.timeSinceUpload, 180.0);
+
+  float dEast, dNorth;
+  if (abs(instanceRot) > 1e-4) {
+    float cogEnd = instanceCog + instanceRot * dt;
+    float R      = instanceSog / instanceRot;
+    dEast  = R * (cos(instanceCog) - cos(cogEnd));
+    dNorth = R * (sin(cogEnd)      - sin(instanceCog));
+  } else {
+    dEast  = instanceSog * dt * sin(instanceCog);
+    dNorth = instanceSog * dt * cos(instanceCog);
+  }
+
+  float safelen  = max(instanceLength, 1.0);
+  float safebeam = max(instanceBeam,  1.0);
+  float localX = positions.x * safebeam * 0.5;
+  float localY = positions.y * safelen  * 0.5;
+
+  float heading = instanceHeading + instanceRot * dt;
+  float sinH = sin(heading);
+  float cosH = cos(heading);
+  float hullEast  = localY * sinH + localX * cosH;
+  float hullNorth = localY * cosH - localX * sinH;
+
+  geometry.worldPosition = instancePositions;
+  vec3 offset = project_size(vec3(dEast + hullEast, dNorth + hullNorth, 0.0));
+
+  vec4 worldPos;
+  gl_Position = project_position_to_clipspace(instancePositions, instancePositions64Low, offset, worldPos);
+  DECKGL_FILTER_GL_POSITION(gl_Position, geometry);
+
+  if (project.projectionMode == PROJECTION_MODE_GLOBE &&
+      dot(worldPos.xyz, project.cameraPosition) < 0.0) {
+    gl_Position = vec4(0.0, 0.0, -2.0, 1.0);
+  }
+
+  // Same cross-fade as AisHullLayer — decoration fades in with the hull.
+  float lat_rad = instancePositions.y * radians(1.0);
+  float transitionZoom = log2(
+    aisHull.settingsIconSize * 64.0 * 40075016.686 * cos(lat_rad) / (safelen * 256.0)
+  );
+  float t01 = clamp((aisHull.zoom - transitionZoom + 1.0) / 2.0, 0.0, 1.0);
+  vOpacity = t01;
+}
+`;
+
+const decorationFs = /* glsl */`\
+#version 300 es
+precision highp float;
+#define SHADER_NAME ais-hull-decoration-fragment-shader
+
+in float vOpacity;
+out vec4 fragColor;
+
+void main(void) {
+  fragColor = vec4(0.0, 0.0, 0.0, vOpacity);
+  DECKGL_FILTER_COLOR(fragColor, geometry);
+}
+`;
+
+// ---------------------------------------------------------------------------
+// Decoration geometry presets (hull-local unit space, bow=+Y, starboard=+X)
+//
+// X is scaled by beam/2, Y by length/2 in the vertex shader.
+// ---------------------------------------------------------------------------
+
+export interface HullDecorationGeometry {
+  positions:   Float32Array;
+  vertexCount: number;
+}
+
+function buildHullDecorationGeometry(verts: number[]): HullDecorationGeometry {
+  return {
+    positions:   new Float32Array(verts),
+    vertexCount: verts.length / 3,
+  };
+}
+
+function hullCircleVerts(cx: number, cy: number, r: number, sides: number): number[] {
+  const v: number[] = [];
+  for (let i = 0; i < sides; i++) {
+    const a0 = (i       / sides) * 2 * Math.PI;
+    const a1 = ((i + 1) / sides) * 2 * Math.PI;
+    v.push(cx, cy, 0,
+           cx + r * Math.sin(a0), cy + r * Math.cos(a0), 0,
+           cx + r * Math.sin(a1), cy + r * Math.cos(a1), 0);
+  }
+  return v;
+}
+
+function hullRectVerts(x0: number, y0: number, x1: number, y1: number): number[] {
+  return [x0, y0, 0,  x1, y0, 0,  x1, y1, 0,
+          x0, y0, 0,  x1, y1, 0,  x0, y1, 0];
+}
+
+function hullAnnulusVerts(inner: number, outer: number, sides: number): number[] {
+  const v: number[] = [];
+  for (let i = 0; i < sides; i++) {
+    const a0 = (i       / sides) * 2 * Math.PI;
+    const a1 = ((i + 1) / sides) * 2 * Math.PI;
+    v.push(
+      inner * Math.sin(a0), inner * Math.cos(a0), 0,
+      outer * Math.sin(a0), outer * Math.cos(a0), 0,
+      outer * Math.sin(a1), outer * Math.cos(a1), 0,
+
+      inner * Math.sin(a0), inner * Math.cos(a0), 0,
+      outer * Math.sin(a1), outer * Math.cos(a1), 0,
+      inner * Math.sin(a1), inner * Math.cos(a1), 0,
+    );
+  }
+  return v;
+}
+
+function hullDiamondVerts(cx: number, cy: number, w: number, h: number): number[] {
+  return [
+    cx, cy, 0,  cx,   cy+h, 0,  cx+w, cy,   0,
+    cx, cy, 0,  cx+w, cy,   0,  cx,   cy-h, 0,
+    cx, cy, 0,  cx,   cy-h, 0,  cx-w, cy,   0,
+    cx, cy, 0,  cx-w, cy,   0,  cx,   cy+h, 0,
+  ];
+}
+
+/**
+ * Thin rectangular band along a straight line segment, in hull-local space.
+ * Used for boom arms on fishing vessels.
+ * halfWidth is in hull-local units (X scaled by beam/2, Y by length/2).
+ */
+function hullLineSeg(x0: number, y0: number, x1: number, y1: number, halfWidth: number): number[] {
+  const dx = x1 - x0;
+  const dy = y1 - y0;
+  const len = Math.sqrt(dx * dx + dy * dy);
+  const nx = (-dy / len) * halfWidth;
+  const ny = ( dx / len) * halfWidth;
+  return [
+    x0 + nx, y0 + ny, 0,
+    x0 - nx, y0 - ny, 0,
+    x1 - nx, y1 - ny, 0,
+    x0 + nx, y0 + ny, 0,
+    x1 - nx, y1 - ny, 0,
+    x1 + nx, y1 + ny, 0,
+  ];
+}
+
+/**
+ * Annulus arc band in hull-local space (bow=+Y, starboard=+X convention).
+ * Angles in degrees; sweeps from a_start_deg to a_end_deg (can decrease).
+ */
+function hullArcVerts(
+  cx: number, cy: number,
+  inner: number, outer: number,
+  a_start_deg: number, a_end_deg: number,
+  steps: number,
+): number[] {
+  const v: number[] = [];
+  for (let i = 0; i < steps; i++) {
+    const t0 = i       / steps;
+    const t1 = (i + 1) / steps;
+    const a0 = (a_start_deg + (a_end_deg - a_start_deg) * t0) * Math.PI / 180;
+    const a1 = (a_start_deg + (a_end_deg - a_start_deg) * t1) * Math.PI / 180;
+    const s0 = Math.sin(a0), c0 = Math.cos(a0);
+    const s1 = Math.sin(a1), c1 = Math.cos(a1);
+    v.push(
+      cx + inner * s0, cy + inner * c0, 0,
+      cx + outer * s0, cy + outer * c0, 0,
+      cx + outer * s1, cy + outer * c1, 0,
+
+      cx + inner * s0, cy + inner * c0, 0,
+      cx + outer * s1, cy + outer * c1, 0,
+      cx + inner * s1, cy + inner * c1, 0,
+    );
+  }
+  return v;
+}
+
+/**
+ * Anchor ball at bow — circle at Y=0.65 (bow region), radius 0.12.
+ * Scales with vessel length: for a 40 m vessel the dot sits 13 m from centre.
+ */
+export const HULL_ANCHOR_DOT: HullDecorationGeometry = buildHullDecorationGeometry(
+  hullCircleVerts(0, 0.65, 0.12, 8),
+);
+
+/**
+ * Mooring bars — two black bars just outside port and starboard hull edges.
+ * Scales with beam: bars at ±(1.10–1.35) × beam/2 from centreline.
+ */
+export const HULL_MOORING_BARS: HullDecorationGeometry = buildHullDecorationGeometry([
+  ...hullRectVerts(-1.35, -0.55, -1.10, 0.22),  // port side
+  ...hullRectVerts( 1.10, -0.55,  1.35, 0.22),  // starboard side
+]);
+
+/**
+ * Aground ring — annulus surrounding the vessel hull.
+ * In hull-local space the ring is circular, which renders as an ellipse in
+ * world space (proportional to length and beam).  The ellipse still frames
+ * the hull clearly at hull-zoom levels.
+ */
+export const HULL_AGROUND_RING: HullDecorationGeometry = buildHullDecorationGeometry(
+  hullAnnulusVerts(1.30, 1.50, 16),
+);
+
+/**
+ * Fishing gear — two diagonal boom arms to port and starboard, plus a trawl net
+ * arc curving around the stern connecting the boom tips.
+ *
+ * Geometry in hull-local space (X scaled by beam/2, Y scaled by length/2):
+ *   • Booms: diagonal bars from ~midship outward and aft (±0.8→±1.5, 0.0→−0.5)
+ *   • Net arc: annulus arc centered at (0, 0.3), radius 1.7, sweeping from
+ *     port-boom-tip (≈242°) through stern (180°) to starboard-boom-tip (≈118°).
+ *
+ * For a 40 m × 8 m vessel the booms extend ~6 m beyond the hull,
+ * and the net arc reaches ~11 m aft of centre.
+ */
+export const HULL_FISHING_GEAR: HullDecorationGeometry = buildHullDecorationGeometry([
+  // Port boom: from (−0.8, 0.0) out to (−1.5, −0.5)
+  ...hullLineSeg(-0.8,  0.0, -1.5, -0.5, 0.055),
+  // Starboard boom: mirror
+  ...hullLineSeg( 0.8,  0.0,  1.5, -0.5, 0.055),
+  // Trawl net arc: center (0, 0.3), r≈1.7, from 242° down through 180° to 118°
+  // (hull angle convention: x=r·sin(a), y=r·cos(a); 180°=stern, 90°=starboard, 270°=port)
+  ...hullArcVerts(0, 0.3, 1.62, 1.78, 242, 118, 18),
+]);
+
+/**
+ * Not Under Command — two stacked balls in the forward (bow) section of the hull.
+ */
+export const HULL_NUC: HullDecorationGeometry = buildHullDecorationGeometry([
+  ...hullCircleVerts(0, 0.45, 0.10, 10),  // upper ball
+  ...hullCircleVerts(0, 0.12, 0.10, 10),  // lower ball
+]);
+
+/**
+ * Restricted Manoeuvrability — ball / diamond / ball in hull-local space.
+ */
+export const HULL_RESTRICTED: HullDecorationGeometry = buildHullDecorationGeometry([
+  ...hullCircleVerts(0, 0.55, 0.09, 10),       // top ball
+  ...hullDiamondVerts(0, 0.15, 0.13, 0.13),    // middle diamond
+  ...hullCircleVerts(0, -0.25, 0.09, 10),      // bottom ball
+]);
+
+/**
+ * Constrained by Draught — two full-length bars just outside the hull edges
+ * on port and starboard, indicating the vessel fills the navigable channel.
+ */
+export const HULL_DRAUGHT: HullDecorationGeometry = buildHullDecorationGeometry([
+  ...hullRectVerts(-1.35, -0.85, -1.10, 0.85),  // port side full-length bar
+  ...hullRectVerts( 1.10, -0.85,  1.35, 0.85),  // starboard side full-length bar
+]);
+
+// ---------------------------------------------------------------------------
+// Props / defaults
+// ---------------------------------------------------------------------------
+
+export interface AisHullDecorationLayerProps<DataT = number> extends LayerProps {
+  data: DataT[] | { length: number };
+  getPosition?:    Accessor<DataT, [number, number] | [number, number, number]>;
+  getSog?:         Accessor<DataT, number>;
+  getCog?:         Accessor<DataT, number>;
+  getHeading?:     Accessor<DataT, number>;
+  getRot?:         Accessor<DataT, number>;
+  getAgeAtUpload?: Accessor<DataT, number>;
+  getLength?:      Accessor<DataT, number>;
+  getBeam?:        Accessor<DataT, number>;
+  uploadTimestamp?: number;
+  selfAnimate?:    boolean;
+  settingsIconSize?: number;
+  decoration:      HullDecorationGeometry;
+}
+
+const decorationDefaultProps: DefaultProps<AisHullDecorationLayerProps<number>> = {
+  getPosition:    { type: 'accessor', value: [0, 0] },
+  getSog:         { type: 'accessor', value: 0 },
+  getCog:         { type: 'accessor', value: 0 },
+  getHeading:     { type: 'accessor', value: 0 },
+  getRot:         { type: 'accessor', value: 0 },
+  getAgeAtUpload: { type: 'accessor', value: 0 },
+  getLength:      { type: 'accessor', value: 50 },
+  getBeam:        { type: 'accessor', value: 10 },
+  uploadTimestamp: 0,
+  selfAnimate: false,
+  settingsIconSize: 1,
+  decoration: { type: 'object', value: HULL_ANCHOR_DOT } as never,
+};
+
+// ---------------------------------------------------------------------------
+// Layer class
+// ---------------------------------------------------------------------------
+
+export class AisHullDecorationLayer<DataT = number>
+  extends Layer<AisHullDecorationLayerProps<DataT>>
+{
+  static override layerName = 'AisHullDecorationLayer';
+  static override defaultProps = decorationDefaultProps;
+
+  override getShaders() {
+    return super.getShaders({
+      vs: decorationVs,
+      fs: decorationFs,
+      modules: [project32, aisHullUniformModule],
+    });
+  }
+
+  override initializeState() {
+    const attributeManager = this.getAttributeManager()!;
+    attributeManager.addInstanced({
+      instancePositions: {
+        size: 3,
+        type: 'float64',
+        fp64: this.use64bitPositions(),
+        transition: true,
+        accessor: 'getPosition',
+        defaultValue: [0, 0, 0],
+      },
+      instanceSog:         { size: 1, accessor: 'getSog',         defaultValue: 0 },
+      instanceCog:         { size: 1, accessor: 'getCog',         defaultValue: 0 },
+      instanceHeading:     { size: 1, accessor: 'getHeading',     defaultValue: 0 },
+      instanceRot:         { size: 1, accessor: 'getRot',         defaultValue: 0 },
+      instanceAgeAtUpload: { size: 1, accessor: 'getAgeAtUpload', defaultValue: 0 },
+      instanceLength:      { size: 1, accessor: 'getLength',      defaultValue: 50 },
+      instanceBeam:        { size: 1, accessor: 'getBeam',        defaultValue: 10 },
+    });
+  }
+
+  override updateState(params: UpdateParameters<this>) {
+    super.updateState(params);
+    const needsNewModel = params.changeFlags.extensionsChanged
+      || (params.changeFlags.propsChanged
+          && (params.oldProps as AisHullDecorationLayerProps<DataT>).decoration
+             !== (params.props as AisHullDecorationLayerProps<DataT>).decoration);
+    if (needsNewModel) {
+      (this.state['model'] as Model | undefined)?.destroy();
+      this.state['model'] = this._getModel();
+      this.getAttributeManager()!.invalidateAll();
+    }
+    if (params.changeFlags.propsChanged) {
+      this.setNeedsRedraw();
+    }
+  }
+
+  override draw({ uniforms: _uniforms }: { uniforms: Record<string, unknown> }) {
+    const { uploadTimestamp, selfAnimate, settingsIconSize } = this.props;
+    const timeSinceUpload = selfAnimate
+      ? Math.max(0, (Date.now() - (uploadTimestamp ?? 0)) / 1000)
+      : 0;
+    const zoom = this.context.viewport.zoom;
+    const model = this.state['model'] as Model;
+    model.shaderInputs.setProps({
+      aisHull: { timeSinceUpload, zoom, settingsIconSize: settingsIconSize ?? 1, opacity: 1 },
+    });
+    model.draw(this.context.renderPass);
+    if (selfAnimate) this.setNeedsRedraw();
+  }
+
+  _getModel() {
+    const { positions, vertexCount } = this.props.decoration;
+    return new Model(this.context.device, {
+      ...this.getShaders(),
+      id: this.props.id,
+      bufferLayout: this.getAttributeManager()!.getBufferLayouts(),
+      geometry: new Geometry({
+        topology: 'triangle-list',
+        attributes: { positions: { size: 3, value: positions } },
+        vertexCount,
+      }),
+      isInstanced: true,
+    });
+  }
+}

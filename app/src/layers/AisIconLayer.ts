@@ -53,6 +53,8 @@ const vs = /* glsl */`\
 in vec3 positions;
 // 1.0 = outline pass (white, larger), 0.0 = fill pass (vessel color, smaller)
 in float aIsOutline;
+// 1.0 = state indicator vertex (renders black in fill pass; white in outline pass)
+in float aIsIndicator;
 
 // Per-instance vessel data
 in vec3 instancePositions;
@@ -161,8 +163,8 @@ void main(void) {
     iconAlpha *= (1.0 - t01);
   }
 
-  // Outline pass → white; fill pass → vessel color. Both share the same iconAlpha.
-  vec3 rgb = aIsOutline > 0.5 ? vec3(1.0) : instanceColor.rgb;
+  // Outline pass → white; fill pass → black for state indicators, vessel color otherwise.
+  vec3 rgb = aIsOutline > 0.5 ? vec3(1.0) : (aIsIndicator > 0.5 ? vec3(0.0) : instanceColor.rgb);
   vColor = vec4(rgb, iconAlpha);
 
   geometry.pickingColor = instancePickingColors;
@@ -189,12 +191,13 @@ void main(void) {
 `;
 
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
 // Arrow mesh — double-pass: outline vertices first, fill vertices second.
 // Within each instance the GPU renders outline first, then fill on top —
 // giving each vessel its own painter's-algorithm border regardless of clusters.
 //
-// Shape: 6-point arrowhead with stern notch (matches drawVesselArrow() in
-// deadReckoning.ts). Fan-triangulated from bow: 4 triangles × 3 vertices = 12.
+// Shape: 6-point arrowhead with stern notch. Fan-triangulated from bow:
+// 4 triangles × 3 vertices = 12 vertices per pass.
 // Coordinates: bow = +Y, starboard = +X, normalised to [-1, 1].
 // ---------------------------------------------------------------------------
 
@@ -214,14 +217,259 @@ const ARROW_SHAPE = [
   -1.00,  0.333, 0.0,   //    port shoulder
 ];
 
-// Outline pass first (aIsOutline = 1), fill pass second (aIsOutline = 0).
-// Fill always paints on top of its own outline within the same instance.
-const ICON_POSITIONS = new Float32Array([...ARROW_SHAPE, ...ARROW_SHAPE]);
-const VERTEX_COUNT   = 24;
-const IS_OUTLINE     = new Float32Array([
-  1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,   // outline pass
-  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,   // fill pass
-]);
+// ---------------------------------------------------------------------------
+// Icon geometry helpers
+// ---------------------------------------------------------------------------
+
+function circleVerts(cx: number, cy: number, r: number, sides: number): number[] {
+  const v: number[] = [];
+  for (let i = 0; i < sides; i++) {
+    const a0 = (i / sides) * 2 * Math.PI;
+    const a1 = ((i + 1) / sides) * 2 * Math.PI;
+    v.push(cx, cy, 0,
+           cx + r * Math.sin(a0), cy + r * Math.cos(a0), 0,
+           cx + r * Math.sin(a1), cy + r * Math.cos(a1), 0);
+  }
+  return v;
+}
+
+function rectVerts(x0: number, y0: number, x1: number, y1: number): number[] {
+  return [x0, y0, 0,  x1, y0, 0,  x1, y1, 0,
+          x0, y0, 0,  x1, y1, 0,  x0, y1, 0];
+}
+
+function lineSeg(x0: number, y0: number, x1: number, y1: number, halfWidth: number): number[] {
+  const dx = x1 - x0;
+  const dy = y1 - y0;
+  const len = Math.sqrt(dx * dx + dy * dy);
+  const nx = (-dy / len) * halfWidth;
+  const ny = ( dx / len) * halfWidth;
+  return [
+    x0 + nx, y0 + ny, 0,
+    x0 - nx, y0 - ny, 0,
+    x1 - nx, y1 - ny, 0,
+    x0 + nx, y0 + ny, 0,
+    x1 - nx, y1 - ny, 0,
+    x1 + nx, y1 + ny, 0,
+  ];
+}
+
+function diamondVerts(cx: number, cy: number, w: number, h: number): number[] {
+  return [
+    cx, cy, 0,  cx,   cy+h, 0,  cx+w, cy,   0,
+    cx, cy, 0,  cx+w, cy,   0,  cx,   cy-h, 0,
+    cx, cy, 0,  cx,   cy-h, 0,  cx-w, cy,   0,
+    cx, cy, 0,  cx-w, cy,   0,  cx,   cy+h, 0,
+  ];
+}
+
+/** Upper semicircle (bump pointing +Y) fan from center — used for wave crests. */
+function waveBumpVerts(cx: number, cy: number, r: number, sides: number): number[] {
+  const v: number[] = [];
+  for (let i = 0; i < sides; i++) {
+    const a0 = -Math.PI / 2 + (Math.PI * i)       / sides;
+    const a1 = -Math.PI / 2 + (Math.PI * (i + 1)) / sides;
+    v.push(cx, cy, 0,
+           cx + r * Math.sin(a0), cy + r * Math.cos(a0), 0,
+           cx + r * Math.sin(a1), cy + r * Math.cos(a1), 0);
+  }
+  return v;
+}
+
+function arcVerts(
+  cx: number, cy: number,
+  inner: number, outer: number,
+  a_start_deg: number, a_end_deg: number,
+  steps: number,
+): number[] {
+  const v: number[] = [];
+  for (let i = 0; i < steps; i++) {
+    const a0 = (a_start_deg + (a_end_deg - a_start_deg) * (i       / steps)) * Math.PI / 180;
+    const a1 = (a_start_deg + (a_end_deg - a_start_deg) * ((i + 1) / steps)) * Math.PI / 180;
+    const s0 = Math.sin(a0), c0 = Math.cos(a0);
+    const s1 = Math.sin(a1), c1 = Math.cos(a1);
+    v.push(
+      cx + inner * s0, cy + inner * c0, 0,
+      cx + outer * s0, cy + outer * c0, 0,
+      cx + outer * s1, cy + outer * c1, 0,
+      cx + inner * s0, cy + inner * c0, 0,
+      cx + outer * s1, cy + outer * c1, 0,
+      cx + inner * s1, cy + inner * c1, 0,
+    );
+  }
+  return v;
+}
+
+/**
+ * Build an icon geometry with two passes (outline=white, fill=vessel-color) plus
+ * optional indicator triangles that render black in the fill pass.
+ *
+ * Layout of the combined buffer:
+ *   [base outline | indicator outline | base fill | indicator fill]
+ *
+ * aIsOutline:   1 for the first half, 0 for the second half.
+ * aIsIndicator: 1 only for the indicator-fill slice.
+ */
+function buildIconGeometry(baseVerts: number[], indicatorVerts: number[] = []): IconGeometry {
+  const bN    = baseVerts.length / 3;
+  const iN    = indicatorVerts.length / 3;
+  const passN = bN + iN;
+  return {
+    positions:   new Float32Array([...baseVerts, ...indicatorVerts,
+                                   ...baseVerts, ...indicatorVerts]),
+    isOutline:   new Float32Array([...Array<number>(passN).fill(1),
+                                   ...Array<number>(passN).fill(0)]),
+    isIndicator: new Float32Array([...Array<number>(passN).fill(0),   // outline pass: unused
+                                   ...Array<number>(bN   ).fill(0),   // base fill: vessel color
+                                   ...Array<number>(iN   ).fill(1)]), // indicator fill: black
+    vertexCount: passN * 2,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Icon geometry types and presets
+// ---------------------------------------------------------------------------
+
+export interface IconGeometry {
+  positions:   Float32Array;
+  isOutline:   Float32Array;
+  isIndicator: Float32Array;
+  vertexCount: number;
+}
+
+/** Standard arrow — all vessels always get this. */
+export const ARROW_GEOMETRY: IconGeometry = buildIconGeometry(ARROW_SHAPE);
+
+/**
+ * Anchor dot only — overlaid on the arrow for anchored vessels.
+ * Black dot with white ring at bow position (Y=0.65), radius 0.18.
+ * Rendered as a separate layer so motion rendering (ghost, COG) is unaffected.
+ */
+export const ANCHOR_DOT_GEOMETRY: IconGeometry = buildIconGeometry(
+  [],
+  circleVerts(0, 0.65, 0.18, 8),
+);
+
+/**
+ * Circle ring around the vessel — overlaid for aground vessels.
+ * Black 16-gon ring (outer r=1.55, inner r=1.35) surrounding the arrow shape.
+ * Uses two concentric circles as a filled annulus approximation via triangle fans.
+ */
+export const AGROUND_CIRCLE_GEOMETRY: IconGeometry = (() => {
+  const sides = 16;
+  const outer = 1.55;
+  const inner = 1.35;
+  const verts: number[] = [];
+  for (let i = 0; i < sides; i++) {
+    const a0 = (i       / sides) * 2 * Math.PI;
+    const a1 = ((i + 1) / sides) * 2 * Math.PI;
+    // Two triangles per segment forming the annulus band
+    verts.push(
+      inner * Math.sin(a0), inner * Math.cos(a0), 0,
+      outer * Math.sin(a0), outer * Math.cos(a0), 0,
+      outer * Math.sin(a1), outer * Math.cos(a1), 0,
+
+      inner * Math.sin(a0), inner * Math.cos(a0), 0,
+      outer * Math.sin(a1), outer * Math.cos(a1), 0,
+      inner * Math.sin(a1), inner * Math.cos(a1), 0,
+    );
+  }
+  return buildIconGeometry([], verts);
+})();
+
+/**
+ * Mooring bars only — overlaid on the arrow for moored vessels.
+ * Two black bars with white rings on port and starboard alongside the midsection.
+ * Rendered as a separate layer so motion rendering (ghost, COG) is unaffected.
+ */
+export const MOORING_BARS_GEOMETRY: IconGeometry = buildIconGeometry(
+  [],
+  [
+    ...rectVerts(-1.38, -0.55, -1.13, 0.22),  // port side bar
+    ...rectVerts( 1.13, -0.55,  1.38, 0.22),  // starboard side bar
+  ],
+);
+
+/**
+ * Fishing gear — overlaid on the arrow for fishing vessels.
+ * Two diagonal boom arms extending to port/starboard from midship, plus a trawl
+ * net arc curving around the stern between the boom tips.
+ *
+ * Icon-space coordinates: bow=+Y, stern=−Y, starboard=+X, port=−X; scale ≈ 1.
+ * Angles use hull convention: x=r·sin(a), y=r·cos(a); 180°=stern.
+ * Arc center (0, 0.3), r≈1.7 connects boom tips via the stern at Y≈−1.4.
+ */
+export const FISHING_GEAR_GEOMETRY: IconGeometry = buildIconGeometry(
+  [],
+  [
+    // Port boom: from (−0.8, 0.0) to (−1.5, −0.5)
+    ...lineSeg(-0.8,  0.0, -1.5, -0.5, 0.08),
+    // Starboard boom: mirror
+    ...lineSeg( 0.8,  0.0,  1.5, -0.5, 0.08),
+    // Trawl net arc: center (0, 0.3), r=1.7, from 242° to 118° via stern (180°)
+    ...arcVerts(0, 0.3, 1.60, 1.78, 242, 118, 14),
+  ],
+);
+
+/**
+ * Not Under Command — overlaid on the arrow for NUC vessels (nav state 2).
+ * Two black balls stacked vertically in the bow half of the icon.
+ */
+export const NUC_GEOMETRY: IconGeometry = buildIconGeometry(
+  [],
+  [
+    ...circleVerts(0, 0.45, 0.15, 10),  // upper ball
+    ...circleVerts(0, 0.10, 0.15, 10),  // lower ball
+  ],
+);
+
+/**
+ * Restricted Manoeuvrability — overlaid on the arrow for nav state 3.
+ * Maritime dayshape: black ball / diamond / ball arranged vertically.
+ */
+export const RESTRICTED_MANOEUVRING_GEOMETRY: IconGeometry = buildIconGeometry(
+  [],
+  [
+    ...circleVerts(0, 0.57, 0.13, 10),      // top ball
+    ...diamondVerts(0, 0.15, 0.17, 0.17),   // middle diamond
+    ...circleVerts(0, -0.28, 0.13, 10),     // bottom ball
+  ],
+);
+
+/**
+ * Constrained by Draught — overlaid on the arrow for nav state 4.
+ * Two full-length bars along port and starboard, indicating the vessel fills
+ * the navigable channel (cannot safely deviate laterally from its track).
+ */
+export const DRAUGHT_GEOMETRY: IconGeometry = buildIconGeometry(
+  [],
+  [
+    ...rectVerts(-1.00, -0.80, -0.75, 0.85),  // port side full-length bar
+    ...rectVerts( 0.75, -0.80,  1.00, 0.85),  // starboard side full-length bar
+  ],
+);
+
+/**
+ * MOB / AIS-SART — replaces the vessel arrow for nav state 14.
+ * A red disc (base geometry, rendered in instanceColor → set to bright red in the
+ * layer) with a black swimmer silhouette (indicator geometry) on top.
+ *
+ * The swimmer: head circle at bow end, arms spread wide, torso, and a water
+ * band with two wave crests at the stern end of the icon.
+ */
+export const MOB_GEOMETRY: IconGeometry = (() => {
+  const disc = circleVerts(0, 0, 1.10, 16);
+  const swimmer = [
+    ...circleVerts(0, 0.62, 0.20, 12),             // head
+    ...lineSeg(-0.19, 0.32, -0.78, 0.50, 0.08),   // left arm
+    ...lineSeg( 0.19, 0.32,  0.78, 0.50, 0.08),   // right arm
+    ...rectVerts(-0.15, -0.30, 0.15, 0.32),        // torso
+    ...waveBumpVerts(-0.42, -0.55, 0.18, 8),       // left wave crest
+    ...waveBumpVerts( 0.42, -0.55, 0.18, 8),       // right wave crest
+    ...rectVerts(-0.83, -0.80, 0.83, -0.55),       // water band below crests
+  ];
+  return buildIconGeometry(disc, swimmer);
+})();
 
 // ---------------------------------------------------------------------------
 // Props
@@ -238,6 +486,8 @@ export interface AisIconLayerProps<DataT = number> extends LayerProps {
   /** Vessel length in metres. 0 = unknown → icon always visible, no cross-fade. */
   getLength?:      Accessor<DataT, number>;
   getColor?:       Accessor<DataT, [number, number, number, number]>;
+  /** Custom icon geometry. Defaults to the standard arrow. */
+  iconGeometry?: IconGeometry;
   /** Unix ms timestamp of the last data upload. draw() computes elapsed from this. */
   uploadTimestamp?: number;
   /** If true, draw() calls setNeedsRedraw() to keep animating each frame. */
@@ -304,7 +554,9 @@ export class AisIconLayer<DataT = number> extends Layer<AisIconLayerProps<DataT>
 
   override updateState(params: UpdateParameters<this>) {
     super.updateState(params);
-    if (params.changeFlags.extensionsChanged) {
+    const needsModelRebuild = params.changeFlags.extensionsChanged ||
+      params.props.iconGeometry !== params.oldProps.iconGeometry;
+    if (needsModelRebuild) {
       (this.state['model'] as Model | undefined)?.destroy();
       this.state['model'] = this._getModel();
       this.getAttributeManager()!.invalidateAll();
@@ -335,6 +587,7 @@ export class AisIconLayer<DataT = number> extends Layer<AisIconLayerProps<DataT>
   }
 
   _getModel() {
+    const geo = this.props.iconGeometry ?? ARROW_GEOMETRY;
     return new Model(this.context.device, {
       ...this.getShaders(),
       id: this.props.id,
@@ -342,10 +595,11 @@ export class AisIconLayer<DataT = number> extends Layer<AisIconLayerProps<DataT>
       geometry: new Geometry({
         topology: 'triangle-list',
         attributes: {
-          positions:  { size: 3, value: ICON_POSITIONS },
-          aIsOutline: { size: 1, value: IS_OUTLINE },
+          positions:    { size: 3, value: geo.positions },
+          aIsOutline:   { size: 1, value: geo.isOutline },
+          aIsIndicator: { size: 1, value: geo.isIndicator },
         },
-        vertexCount: VERTEX_COUNT,
+        vertexCount: geo.vertexCount,
       }),
       isInstanced: true,
     });
