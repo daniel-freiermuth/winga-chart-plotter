@@ -120,6 +120,14 @@ function createChartsStore() {
       return buildTileUrl(chart, serverBase) ?? '';
     },
 
+    /** Resolve chart.style against the SK server base (handles relative paths). */
+    styleUrl(chart: Chart): string | null {
+      if (!chart.style) return null;
+      return chart.style.startsWith('/')
+        ? `${serverBase}${chart.style}`
+        : chart.style;
+    },
+
     async load(base: string) {
       serverBase = base;
       loading = true;

@@ -6,7 +6,7 @@ export interface Chart {
   /** Base URL for WMS/WMTS, or XYZ tile template for tilelayer */
   url?: string;
   format: string;           // "png" | "jpg" | "pbf" etc.
-  type: string;             // "tilelayer" | "WMS" | "WMTS"
+  type: string;             // "tilelayer" | "WMS" | "WMTS" | "mapstyleJSON"
   minzoom?: number;
   maxzoom?: number;
   scale?: number;
@@ -14,6 +14,12 @@ export interface Chart {
   layers?: string[];
   /** WMS version override, e.g. "1.1.1" or "1.3.0" (default: "1.3.0") */
   wmsVersion?: string;
+  /**
+   * URL to a MapLibre style JSON (set via "Vector Map style" in the SK charts plugin).
+   * When present the style URL is used as the full map base style via setStyle() —
+   * no individual source/layer management needed for this chart.
+   */
+  style?: string;
 }
 
 export type ChartRecord = Record<string, Chart>;

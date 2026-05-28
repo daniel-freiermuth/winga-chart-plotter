@@ -21,11 +21,25 @@
   import type { Layer } from '@deck.gl/core';
   import { rulers, rulerBearingText, rulerDistanceText, type Ruler, type RulerEndpoint } from '../stores/rulers.svelte';
   import { gcLine } from '../lib/geoMath';
+  import { fetchAndResolveStyle } from '../lib/resolveStyle';
   import { AisHullLayer, AisHullDecorationLayer, HULL_ANCHOR_DOT, HULL_MOORING_BARS, HULL_AGROUND_RING, HULL_FISHING_GEAR, HULL_NUC, HULL_RESTRICTED, HULL_DRAUGHT } from '../layers/AisHullLayer';
   import { AisIconLayer, ANCHOR_DOT_GEOMETRY, AGROUND_CIRCLE_GEOMETRY, MOORING_BARS_GEOMETRY, FISHING_GEAR_GEOMETRY, NUC_GEOMETRY, RESTRICTED_MANOEUVRING_GEOMETRY, DRAUGHT_GEOMETRY, MOB_GEOMETRY } from '../layers/AisIconLayer';
   import { makeVesselIconData, extrapolatePos } from '../lib/deadReckoning';
 
   type ProjectionId = 'mercator' | 'globe';
+
+  const DEFAULT_STYLE: maplibregl.StyleSpecification = {
+    version: 8,
+    projection: { type: 'mercator' },
+    sources: {
+      'osm-tiles':  { type: 'raster', tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'], tileSize: 256, attribution: '© OpenStreetMap contributors' },
+      'openseamap': { type: 'raster', tiles: ['https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png'], tileSize: 256 },
+    },
+    layers: [
+      { id: 'osm',      type: 'raster', source: 'osm-tiles' },
+      { id: 'seamarks', type: 'raster', source: 'openseamap' },
+    ],
+  };
 
   let mapContainer: HTMLDivElement;
   let map: maplibregl.Map | undefined;
@@ -132,6 +146,9 @@
   // Track the tile URL each chart source was last created with, so we can
   // detect URL changes (e.g. WMTS layer switch) and recreate the source.
   const chartSourceUrls = new Map<string, string>();
+  // The MapLibre style URL currently loaded as the map base (null = default OSM style).
+  // Not $state — only read inside the $effect, never rendered.
+  let activeStyleUrl: string | null = null;
 
   // Returns null for solid lines — callers must pass null to setPaintProperty / omit from addLayer paint.
   // MapLibre requires all dasharray values to be > 0; [1, 0] is invalid and causes worker errors.
@@ -372,18 +389,7 @@
   onMount(() => {
     map = new maplibregl.Map({
       container: mapContainer,
-      style: {
-        version: 8,
-        projection: { type: 'mercator' },
-        sources: {
-          'osm-tiles':  { type: 'raster', tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'], tileSize: 256, attribution: '© OpenStreetMap contributors' },
-          'openseamap': { type: 'raster', tiles: ['https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png'], tileSize: 256 },
-        },
-        layers: [
-          { id: 'osm',      type: 'raster', source: 'osm-tiles' },
-          { id: 'seamarks', type: 'raster', source: 'openseamap' },
-        ],
-      },
+      style: DEFAULT_STYLE,
       center: [10.75, 59.91],
       zoom: 10,
       maxPitch: 85,
@@ -728,6 +734,7 @@
       console.warn('[map] WebGL context lost');
       mapLoaded = false;
       chartSourceUrls.clear();
+      activeStyleUrl = null;
     });
 
     map.on('webglcontextrestored', () => {
@@ -887,20 +894,39 @@
     const sel = charts.selected;
     const avail = charts.available;
 
-    // Remove deselected chart layers
-    for (const id of Object.keys(avail)) {
-      if (!sel.has(id)) {
-        const layerId  = `chart-layer-${id}`;
-        const sourceId = `chart-${id}`;
-        if (m.getLayer(layerId))   m.removeLayer(layerId);
-        if (m.getSource(sourceId)) m.removeSource(sourceId);
-        chartSourceUrls.delete(id);
+    // Find the first selected chart that provides a full MapLibre style.
+    const styleChart = Object.values(avail).find(c => sel.has(c.identifier) && !!c.style);
+    const newStyleUrl = styleChart ? charts.styleUrl(styleChart) : null;
+
+    // If the base style needs to change, call setStyle() and wait for style.load to retrigger us.
+    if (newStyleUrl !== activeStyleUrl) {
+      mapLoaded = false;
+      chartSourceUrls.clear();
+      activeStyleUrl = newStyleUrl;
+      if (newStyleUrl) {
+        fetchAndResolveStyle(newStyleUrl)
+          .then(resolved => m.setStyle(resolved as maplibregl.StyleSpecification, { diff: false }))
+          .catch(e => console.error('[map] Failed to load style', newStyleUrl, e));
+      } else {
+        m.setStyle(DEFAULT_STYLE);
       }
+      return;
     }
 
-    // Add newly selected chart layers below vessel overlays
+    // Remove deselected tile-based chart layers.
+    // Style-based charts never create a chart-* source/layer, so this is safe for them too.
+    for (const id of Object.keys(avail)) {
+      if (sel.has(id) && !avail[id].style) continue;
+      const layerId  = `chart-layer-${id}`;
+      const sourceId = `chart-${id}`;
+      if (m.getLayer(layerId))   m.removeLayer(layerId);
+      if (m.getSource(sourceId)) m.removeSource(sourceId);
+      chartSourceUrls.delete(id);
+    }
+
+    // Add newly selected tile-based chart layers (style-based charts are handled by setStyle).
     for (const [id, chart] of Object.entries(avail)) {
-      if (!sel.has(id)) continue;
+      if (!sel.has(id) || chart.style) continue;
       const tileUrl  = charts.tileUrl(chart);
       if (!tileUrl) continue;
       const sourceId = `chart-${id}`;
@@ -943,11 +969,13 @@
     }
   });
 
-  // Toggle base layer visibility when store changes
+  // Toggle base layer visibility when store changes.
+  // Guard with getLayer() — a style-based chart may not contain our default layer IDs.
   $effect(() => {
     if (!map || !mapLoaded) return;
     const enabled = baseLayers.enabled;
     for (const layer of BASE_LAYERS) {
+      if (!map.getLayer(layer.id)) continue;
       map.setLayoutProperty(layer.id, 'visibility', enabled.has(layer.id) ? 'visible' : 'none');
     }
   });
