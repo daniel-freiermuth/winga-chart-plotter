@@ -28,6 +28,18 @@
   let connected = $state(false);
   let error = $state<string | null>(null);
   let worker: Worker | null = null;
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  let reconnectDelay = 2000; // ms, doubles on each failure up to 30s
+
+  function scheduleReconnect() {
+    if (reconnectTimer !== null) return;
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      const url = settings.signalkUrl;
+      if (url) worker?.postMessage({ type: 'connect', url });
+    }, reconnectDelay);
+    reconnectDelay = Math.min(reconnectDelay * 2, 30_000);
+  }
 
   onMount(() => {
     worker = new Worker(
@@ -48,7 +60,14 @@
         }
       } else if (msg.type === 'status') {
         connected = msg.status === 1;
-        if (msg.status === 3) error = 'Connection error';
+        if (msg.status === 1) {
+          // Successfully connected — reset backoff.
+          reconnectDelay = 2000;
+        } else if (msg.status === 2 || msg.status === 3) {
+          // Disconnected or error — schedule reconnect.
+          if (msg.status === 3) error = 'Connection error';
+          scheduleReconnect();
+        }
         if (msg.status === 2) error = null;
       } else if (msg.type === 'ais') {
         ais.updateBinary(msg.hot, msg.ids, msg.cold);
@@ -57,7 +76,20 @@
         console.error('[signalk] worker error', msg.message);
       }
     };
+
+    // Reconnect immediately when the user returns to the page after backgrounding.
+    const onVisible = () => {
+      if (document.visibilityState === 'visible' && !connected) {
+        if (reconnectTimer !== null) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+        const url = settings.signalkUrl;
+        if (url) worker?.postMessage({ type: 'connect', url });
+      }
+    };
+    document.addEventListener('visibilitychange', onVisible);
+
     return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      if (reconnectTimer !== null) clearTimeout(reconnectTimer);
       worker?.postMessage({ type: 'disconnect' });
       worker?.terminate();
     };
@@ -89,6 +121,8 @@
     lastUrl = url;
     connected = false;
     error = null;
+    reconnectDelay = 2000;
+    if (reconnectTimer !== null) { clearTimeout(reconnectTimer); reconnectTimer = null; }
     worker?.postMessage({ type: 'connect', url });
   });
 </script>
