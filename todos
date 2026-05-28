@@ -1,24 +1,3 @@
-- [x] ais
-    - [x] draw real size
-    - [x] Double AIS click target because two icons
-    - [x] extrapolate
-    - [x] Bug: NaN rot speed
-    - [x] Bug: 511 Heading
-    - [x] AIS icon Transition should be guided by icon size
-    - [x] length of AIS lines
-    - [x] Vessel names not populated later
-    - [x] Link to vesselfinder and marinetraffic
-    - [-] Get the picture even from there?
-- [x] remember layer
-- [x] lock follow
-- [x] ONE common chart list
-- [x] Heading on graphical level, not on geo layer
-- [x] Measure. Many rulers
-- [x] 3D
-- [x] Bug: many things not drawn on globe
-- [x] Profile
-    - check profiling, 
-- [x] Lizenz
 - [x] Head-Up, by head, cog or course
     - N, H, WPT, COG, MAN
 	  - only pixel length
@@ -26,33 +5,50 @@
 - [x] publish github
 - AIS
   - [x] moored, anchoring, -> state
-  - adapt icon
+  - [x] adapt icon
   - [x] callsign
   - [x] time life-updated
-  - border in same color as fill, but half-way to black/white, depending on what is further
+  - [x] border in same color as fill, but half-way to black/white, depending on what is further
   - different ais vessel types -> different shapes? or colors?
-- aisstream fix
-- patch signalk crate?
-- tiles with -y
-- create s57 crate?
+- [x] aisstream fix
+- [x] Eniro charts
+  - down, now mvt -> S57
+- [x] CMap API
+  - need different URL
+- [x] slower dead reckoning
+  - configurable?
+  - beneficial to even skip deck.gl?
+- [x] tiles with -y
+  - NV charts
+- [x] Check all Charts
+- [x] Flatter 3D
+- [x] SignalK deployment on npm as WebApp
+- [x] Come-back behavior
+  - Tab switch mobile
+  - Reload laptop
+  - App switch mobile
+  - fresh start. remember last position
+- S57
+  - eniro delivers mvt!!
 - PWA
   - not working from webapp
   - name
   - icon
-  - tab name
-- Eniro charts
-- NV charts
-- CMap API
+  - [x] tab name
 - Login
+- draw next leg
+- set course
 - Ad-hoc navigation
 - KIP integration
+- patch signalk crate?
 - Notificatios
 - Sub settings: AIS, Our boat
   -> link from popups on ais and own vessel
-- slower dead reckoning
-  - configurable?
-  - beneficial to even skip deck.gl?
 - Regression Testing! 
+- More vector charts
+  - o-charts
+  - create s57 crate?
+  - from NV charts somehow?
 - GRIB files
 - tracks, routes
     - Draw route
@@ -68,7 +64,6 @@
   - Measurements
 - Change Heading line and style by click on own vessel?
 - Achor watch
-- [x] SignalK deployment on npm as WebApp
 
 # Bugs
 
@@ -81,3 +76,7 @@
 - Winga, Vinga, Båken, Semaphore
 - Trubadur
 - Färd…
+
+
+# Notes
+- old eniro url: https://map.eniro.com/geowebcache/service/tms1.0.0/nautical2x/{z}/{x}/{-y}.png?v=20240523
