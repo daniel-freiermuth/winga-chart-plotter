@@ -16,15 +16,38 @@
 - [x] Measure. Many rulers
 - [x] 3D
 - [x] Bug: many things not drawn on globe
+- [x] Profile
+  - check profiling, 
+- [x] Lizenz
 - Head-Up, by head, cog or course
   - N, H, WPT, COG, MAN
 	- only pixel length
 - Login
+- [x] publish npm
+- [x] publish github
 - Ad-hoc navigation
-- Testing
+- KIP integration
+- Notificatios
+- aisstream fix
+- Sub settings: AIS, Our boat
+  -> link from popups on ais and own vessel
+- AIS
+  - [ ] moored, anchoring, -> state
+  - [ ] callsign
+- slower dead reckoning
+  - configurable?
+  - beneficial to even skip deck.gl?
+- Regression Testing! 
+- GRIB files
 - tracks, routes
     - Draw route
 - MOB button
+- PWA
+  - not working from webapp
+  - name
+  - icon
+  - tab name
+- Android, move between tabs and apps. Should be back at exactly same
 - look-ahead mode
   - cog, course
 - Appearance settings next to the things itself
@@ -32,5 +55,30 @@
 - Windy?
   - https://ims.windy.com/im/v3.0/forecast/ecmwf-hres/2026052400/2026052409/wm_grid_257/5/4/2/wind-surface.jpg
   - https://node.windy.com/citytile/v1.0/ecmwf-hres/9/270/156?hours=362&labelsVersion=v2.0&refTime=2026-05-24T00:00:00Z&step=3&pr=1&sc=6&token2=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJtYWdpYyI6NTUzLCJpYXQiOjE3Nzk2MTIxMTgsImV4cCI6MTc3OTc4NDkxOH0.9ALhlYh8t8ijAdzghEF7mAatsNB9gs-UuRdAymA3Jls&uid=8296cabd-a025-197e-b06b-9c8fea9a2681&v=50.0.3&poc=24
+  - Measurements
 - Change Heading line and style by click on own vessel?
 - Achor watch
+- SignalK deployment on npm as WebApp
+
+# Bugs
+
+2. Reduce load
+2.1. All the way to the bottom. Given that we'd reduce the update frequency to 0.1Hz, would there be any disadvantages of our current approach besides maintainance complexity. Or would we maybe even still use the same approach?
+2.2. Could we have setting to control the animation speed?
+6. WEBGL_debug_renderer_info is deprecated in Firefox and will be removed. Please use RENDERER. webgl-extensions.js:9:31
+WebGL warning: drawElementsInstanced: Drawing to a destination rect smaller than the viewport rect. (This warning will only be given once)
+Firefox can’t establish a connection to the server at ws://192.168.40.73:3000/signalk/v1/stream?subscribe=self. signalk_chart_core.js:276:25
+Ignoring unsupported entryTypes: longtask. content.js:30:34318
+deck: Missing character: ° (176) utils.js:149:85
+deck: Missing character: · (183) utils.js:149:85
+deck: Missing character: ✕ (10005)
+
+3. Fly-to panning, there are interrupts. Better with full CPU and not only 800MHz
+
+# Names
+- Portolan
+- Vägvisare
+- Leidavisir
+- Winga, Vinga, Båken, Semaphore
+- Trubadur
+- Färd…
