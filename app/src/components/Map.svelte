@@ -913,13 +913,19 @@
       }
 
       if (!m.getSource(sourceId)) {
+        // {-y} is a TMS-convention y-flip marker. MapLibre doesn't understand it
+        // literally — replace with {y} and use scheme:'tms' so MapLibre flips it.
+        const isTms = tileUrl.includes('{-y}');
+        const resolvedUrl = isTms ? tileUrl.replace('{-y}', '{y}') : tileUrl;
+
         if (chart.format === 'pbf') {
-          m.addSource(sourceId, { type: 'vector', tiles: [tileUrl] });
+          m.addSource(sourceId, { type: 'vector', tiles: [resolvedUrl] });
         } else {
           m.addSource(sourceId, {
             type: 'raster',
-            tiles: [tileUrl],
+            tiles: [resolvedUrl],
             tileSize: 256,
+            scheme: isTms ? 'tms' : 'xyz',
             minzoom: chart.minzoom ?? 0,
             maxzoom: chart.maxzoom ?? 22,
           });
