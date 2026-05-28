@@ -681,22 +681,28 @@
       const m = map;
       if (!m) return;
       const ap = settings.appearance;
-      m.addImage('vessel-icon', { width: 64, height: 64, data: makeVesselIconData(64, ap.vesselColor).data });
+      // Image manager is not cleared by diff-mode style transitions — guard against duplicates.
+      if (!m.hasImage('vessel-icon')) {
+        m.addImage('vessel-icon', { width: 64, height: 64, data: makeVesselIconData(64, ap.vesselColor).data });
+      }
 
-      m.addSource(VESSEL_SOURCE, { type: 'geojson', data: EMPTY_FC });
-      m.addSource(COG_SOURCE,    { type: 'geojson', data: EMPTY_FC });
-      m.addSource(HDG_SOURCE,    { type: 'geojson', data: EMPTY_FC });
-      m.addSource(GC_SOURCE,     { type: 'geojson', data: EMPTY_FC });
-      m.addSource(AIS_SOURCE,    { type: 'geojson', data: EMPTY_FC }); // for ais-label only
+      if (!m.getSource(VESSEL_SOURCE)) m.addSource(VESSEL_SOURCE, { type: 'geojson', data: EMPTY_FC });
+      if (!m.getSource(COG_SOURCE))    m.addSource(COG_SOURCE,    { type: 'geojson', data: EMPTY_FC });
+      if (!m.getSource(HDG_SOURCE))    m.addSource(HDG_SOURCE,    { type: 'geojson', data: EMPTY_FC });
+      if (!m.getSource(GC_SOURCE))     m.addSource(GC_SOURCE,     { type: 'geojson', data: EMPTY_FC });
+      if (!m.getSource(AIS_SOURCE))    m.addSource(AIS_SOURCE,    { type: 'geojson', data: EMPTY_FC }); // for ais-label only
 
-      m.addLayer({ id: 'vessel-gc-line', type: 'line', source: GC_SOURCE,
+      if (!m.getLayer('vessel-gc-line')) m.addLayer({ id: 'vessel-gc-line', type: 'line', source: GC_SOURCE,
         paint: { 'line-color': ap.gc.color, 'line-width': ap.gc.width, ...(dashArray(ap.gc.style, ap.gc.width) !== null && { 'line-dasharray': dashArray(ap.gc.style, ap.gc.width)! }) } });
 
       // AIS vessel icon, hull, and COG line are rendered by deck.gl (see $effect below).
       // Only the text label stays in MapLibre for quality text rendering + collision detection.
-      m.addLayer({ id: 'ais-label', type: 'symbol', source: AIS_SOURCE,
+      // text-font must be explicit: without it MapLibre requests "Open Sans Regular" (its built-in
+      // default) from whatever glyph server is active (e.g. Skippo's server, which only has Roboto).
+      if (!m.getLayer('ais-label')) m.addLayer({ id: 'ais-label', type: 'symbol', source: AIS_SOURCE,
         layout: {
           'text-field': ['get', 'label'],
+          'text-font': ['Roboto Regular'],
           'text-size': 10,
           'text-anchor': 'top',
           'text-offset': [0, 0.8],
@@ -705,13 +711,13 @@
         paint: { 'text-color': settings.appearance.ais.vesselColor, 'text-halo-color': '#000', 'text-halo-width': 1 },
       });
 
-      m.addLayer({ id: 'vessel-cog-line', type: 'line', source: COG_SOURCE,
+      if (!m.getLayer('vessel-cog-line')) m.addLayer({ id: 'vessel-cog-line', type: 'line', source: COG_SOURCE,
         paint: { 'line-color': ap.cog.color, 'line-width': ap.cog.width, ...(dashArray(ap.cog.style, ap.cog.width) !== null && { 'line-dasharray': dashArray(ap.cog.style, ap.cog.width)! }) } });
 
-      m.addLayer({ id: 'vessel-hdg-line', type: 'line', source: HDG_SOURCE,
+      if (!m.getLayer('vessel-hdg-line')) m.addLayer({ id: 'vessel-hdg-line', type: 'line', source: HDG_SOURCE,
         paint: { 'line-color': ap.heading.color, 'line-width': ap.heading.width } });
 
-      m.addLayer({ id: 'vessel-icon', type: 'symbol', source: VESSEL_SOURCE,
+      if (!m.getLayer('vessel-icon')) m.addLayer({ id: 'vessel-icon', type: 'symbol', source: VESSEL_SOURCE,
         layout: {
           'icon-image': 'vessel-icon',
           'icon-size': ap.vesselSize / 64,
@@ -908,7 +914,7 @@
           .then(resolved => m.setStyle(resolved as maplibregl.StyleSpecification, { diff: false }))
           .catch(e => console.error('[map] Failed to load style', newStyleUrl, e));
       } else {
-        m.setStyle(DEFAULT_STYLE);
+        m.setStyle(DEFAULT_STYLE, { diff: false });
       }
       return;
     }
