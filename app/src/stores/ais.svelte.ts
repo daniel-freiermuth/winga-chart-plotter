@@ -28,6 +28,8 @@ export interface AisColdData {
   // From REST API (fetchVesselInfo):
   shipType?: string | undefined;
   callsign?: string | undefined;
+  callsignHf?: string | undefined;
+  skipperName?: string | undefined;
   port?: string | undefined;
   flag?: string | undefined;
   lengthM?: number | undefined;
@@ -55,6 +57,8 @@ export interface AisTarget {
   lastPositionUpdateMs: number;
   shipType?: string | undefined;
   callsign?: string | undefined;
+  callsignHf?: string | undefined;
+  skipperName?: string | undefined;
   port?: string | undefined;
   flag?: string | undefined;
   lengthM?: number | undefined;
@@ -120,7 +124,9 @@ function createAisStore() {
         coldMap.set(id, {
           ...existing,
           name:       info.name       ?? existing.name,
-          callsign:   info.callsign   ?? existing.callsign,
+          callsign:    info.callsign    ?? existing.callsign,
+          callsignHf:  info.callsignHf  ?? existing.callsignHf,
+          skipperName: info.skipperName ?? existing.skipperName,
           port:       info.port       ?? existing.port,
           flag:       info.flag       ?? existing.flag,
           shipType:   info.shipType   ?? existing.shipType,
@@ -162,7 +168,9 @@ function createAisStore() {
         rot:     isNaN(rot) ? undefined : rot,
         lastPositionUpdateMs: Date.now() - age * 1000,
         shipType:   cold?.shipType,
-        callsign:   cold?.callsign,
+        callsign:    cold?.callsign,
+        callsignHf:  cold?.callsignHf,
+        skipperName: cold?.skipperName,
         port:       cold?.port,
         flag:       cold?.flag,
         lengthM:    cold?.lengthM,

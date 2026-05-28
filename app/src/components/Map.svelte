@@ -728,7 +728,9 @@
         <div class="ais-popup-title">${t.name ?? t.mmsi ?? 'Unknown vessel'}</div>
         <table>
           ${row('MMSI',     t.mmsi     ?? null)}
-          ${row('Callsign', t.callsign ?? null)}
+          ${row('Callsign VHF', t.callsign   ?? null)}
+          ${row('Callsign HF',  t.callsignHf ?? null)}
+          ${row('Skipper',      t.skipperName ?? null)}
           ${row('Type',     t.shipType ?? null)}
           ${row('Flag',     t.flag     ?? null)}
           ${row('Port',     t.port     ?? null)}

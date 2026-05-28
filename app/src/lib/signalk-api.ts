@@ -89,6 +89,8 @@ export async function fetchCharts(serverBase: string): Promise<ChartRecord> {
 export interface VesselInfo {
   name?: string;
   callsign?: string;
+  callsignHf?: string;
+  skipperName?: string;
   port?: string;
   flag?: string;
   shipType?: string;
@@ -106,7 +108,7 @@ export async function fetchVesselInfo(serverBase: string): Promise<Map<string, V
     name?: string;
     port?: string;
     flag?: string;
-    communication?: { callsignVhf?: string };
+    communication?: { callsignVhf?: string; callsignHf?: string; skipperName?: string };
     design?: {
       aisShipType?: { value?: { name?: string } };
       length?:      { value?: { overall?: number } };
@@ -122,7 +124,9 @@ export async function fetchVesselInfo(serverBase: string): Promise<Map<string, V
     if (v.name)                                      info.name       = v.name;
     if (v.port)                                      info.port       = v.port;
     if (v.flag)                                      info.flag       = v.flag;
-    if (v.communication?.callsignVhf)                info.callsign   = v.communication.callsignVhf;
+    if (v.communication?.callsignVhf)                info.callsign    = v.communication.callsignVhf;
+    if (v.communication?.callsignHf)                 info.callsignHf  = v.communication.callsignHf;
+    if (v.communication?.skipperName)                info.skipperName = v.communication.skipperName;
     if (des?.aisShipType?.value?.name)               info.shipType   = des.aisShipType.value.name;
     if (des?.length?.value?.overall !== undefined)   info.lengthM    = des.length.value.overall;
     if (typeof des?.beam?.value === 'number')        info.beamM      = des.beam.value;
