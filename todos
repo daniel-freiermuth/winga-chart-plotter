@@ -17,23 +17,38 @@
 - [x] 3D
 - [x] Bug: many things not drawn on globe
 - [x] Profile
-  - check profiling, 
+    - check profiling, 
 - [x] Lizenz
-- Head-Up, by head, cog or course
-  - N, H, WPT, COG, MAN
-	- only pixel length
-- Login
+- [x] Head-Up, by head, cog or course
+    - N, H, WPT, COG, MAN
+	  - only pixel length
 - [x] publish npm
 - [x] publish github
+- AIS
+  - [x] moored, anchoring, -> state
+  - adapt icon
+  - [x] callsign
+  - [x] time life-updated
+  - border in same color as fill, but half-way to black/white, depending on what is further
+  - different ais vessel types -> different shapes? or colors?
+- aisstream fix
+- patch signalk crate?
+- tiles with -y
+- create s57 crate?
+- PWA
+  - not working from webapp
+  - name
+  - icon
+  - tab name
+- Eniro charts
+- NV charts
+- CMap API
+- Login
 - Ad-hoc navigation
 - KIP integration
 - Notificatios
-- aisstream fix
 - Sub settings: AIS, Our boat
   -> link from popups on ais and own vessel
-- AIS
-  - [ ] moored, anchoring, -> state
-  - [ ] callsign
 - slower dead reckoning
   - configurable?
   - beneficial to even skip deck.gl?
@@ -42,11 +57,6 @@
 - tracks, routes
     - Draw route
 - MOB button
-- PWA
-  - not working from webapp
-  - name
-  - icon
-  - tab name
 - Android, move between tabs and apps. Should be back at exactly same
 - look-ahead mode
   - cog, course
@@ -58,20 +68,9 @@
   - Measurements
 - Change Heading line and style by click on own vessel?
 - Achor watch
-- SignalK deployment on npm as WebApp
+- [x] SignalK deployment on npm as WebApp
 
 # Bugs
-
-2. Reduce load
-2.1. All the way to the bottom. Given that we'd reduce the update frequency to 0.1Hz, would there be any disadvantages of our current approach besides maintainance complexity. Or would we maybe even still use the same approach?
-2.2. Could we have setting to control the animation speed?
-6. WEBGL_debug_renderer_info is deprecated in Firefox and will be removed. Please use RENDERER. webgl-extensions.js:9:31
-WebGL warning: drawElementsInstanced: Drawing to a destination rect smaller than the viewport rect. (This warning will only be given once)
-Firefox can’t establish a connection to the server at ws://192.168.40.73:3000/signalk/v1/stream?subscribe=self. signalk_chart_core.js:276:25
-Ignoring unsupported entryTypes: longtask. content.js:30:34318
-deck: Missing character: ° (176) utils.js:149:85
-deck: Missing character: · (183) utils.js:149:85
-deck: Missing character: ✕ (10005)
 
 3. Fly-to panning, there are interrupts. Better with full CPU and not only 800MHz
 
