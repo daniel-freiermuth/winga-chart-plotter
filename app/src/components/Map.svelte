@@ -732,6 +732,7 @@
           ${row('Callsign HF',  t.callsignHf ?? null)}
           ${row('Skipper',      t.skipperName ?? null)}
           ${row('Type',     t.shipType ?? null)}
+          ${row('Status',   t.navState ?? null)}
           ${row('Flag',     t.flag     ?? null)}
           ${row('Port',     t.port     ?? null)}
           ${row('Position', lon !== undefined && lat !== undefined ? `${lat.toFixed(5)}°N, ${lon.toFixed(5)}°E` : null)}

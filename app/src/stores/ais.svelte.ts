@@ -27,6 +27,7 @@ export interface AisColdData {
   mmsi?: string | undefined;
   // From REST API (fetchVesselInfo):
   shipType?: string | undefined;
+  navState?: string | undefined;
   callsign?: string | undefined;
   callsignHf?: string | undefined;
   skipperName?: string | undefined;
@@ -56,6 +57,7 @@ export interface AisTarget {
   /** Approximate epoch ms of the last position update (reconstructed from ageAtUpload). */
   lastPositionUpdateMs: number;
   shipType?: string | undefined;
+  navState?: string | undefined;
   callsign?: string | undefined;
   callsignHf?: string | undefined;
   skipperName?: string | undefined;
@@ -129,7 +131,8 @@ function createAisStore() {
           skipperName: info.skipperName ?? existing.skipperName,
           port:       info.port       ?? existing.port,
           flag:       info.flag       ?? existing.flag,
-          shipType:   info.shipType   ?? existing.shipType,
+          shipType:    info.shipType    ?? existing.shipType,
+          navState:    info.navState    ?? existing.navState,
           lengthM:    info.lengthM    ?? existing.lengthM,
           beamM:      info.beamM      ?? existing.beamM,
           draftM:     info.draftM     ?? existing.draftM,
@@ -167,7 +170,8 @@ function createAisStore() {
         heading: isNaN(hdg) ? undefined : hdg,
         rot:     isNaN(rot) ? undefined : rot,
         lastPositionUpdateMs: Date.now() - age * 1000,
-        shipType:   cold?.shipType,
+        shipType:    cold?.shipType,
+        navState:    cold?.navState,
         callsign:    cold?.callsign,
         callsignHf:  cold?.callsignHf,
         skipperName: cold?.skipperName,

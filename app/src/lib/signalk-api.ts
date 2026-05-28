@@ -94,6 +94,7 @@ export interface VesselInfo {
   port?: string;
   flag?: string;
   shipType?: string;
+  navState?: string;
   lengthM?: number;
   beamM?: number;
   draftM?: number;
@@ -109,6 +110,7 @@ export async function fetchVesselInfo(serverBase: string): Promise<Map<string, V
     port?: string;
     flag?: string;
     communication?: { callsignVhf?: string; callsignHf?: string; skipperName?: string };
+    navigation?: { state?: { value?: string } };
     design?: {
       aisShipType?: { value?: { name?: string } };
       length?:      { value?: { overall?: number } };
@@ -127,6 +129,7 @@ export async function fetchVesselInfo(serverBase: string): Promise<Map<string, V
     if (v.communication?.callsignVhf)                info.callsign    = v.communication.callsignVhf;
     if (v.communication?.callsignHf)                 info.callsignHf  = v.communication.callsignHf;
     if (v.communication?.skipperName)                info.skipperName = v.communication.skipperName;
+    if (v.navigation?.state?.value)                  info.navState    = v.navigation.state.value;
     if (des?.aisShipType?.value?.name)               info.shipType   = des.aisShipType.value.name;
     if (des?.length?.value?.overall !== undefined)   info.lengthM    = des.length.value.overall;
     if (typeof des?.beam?.value === 'number')        info.beamM      = des.beam.value;
