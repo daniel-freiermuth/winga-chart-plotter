@@ -27,9 +27,13 @@ export interface AisColdData {
   mmsi?: string | undefined;
   // From REST API (fetchVesselInfo):
   shipType?: string | undefined;
+  callsign?: string | undefined;
+  port?: string | undefined;
+  flag?: string | undefined;
   lengthM?: number | undefined;
   beamM?: number | undefined;
   draftM?: number | undefined;
+  airHeightM?: number | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -50,9 +54,13 @@ export interface AisTarget {
   /** Approximate epoch ms of the last position update (reconstructed from ageAtUpload). */
   lastPositionUpdateMs: number;
   shipType?: string | undefined;
+  callsign?: string | undefined;
+  port?: string | undefined;
+  flag?: string | undefined;
   lengthM?: number | undefined;
   beamM?: number | undefined;
   draftM?: number | undefined;
+  airHeightM?: number | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -111,11 +119,15 @@ function createAisStore() {
         const existing = coldMap.get(id) ?? { id };
         coldMap.set(id, {
           ...existing,
-          name:     info.name     ?? existing.name,
-          shipType: info.shipType ?? existing.shipType,
-          lengthM:  info.lengthM  ?? existing.lengthM,
-          beamM:    info.beamM    ?? existing.beamM,
-          draftM:   info.draftM   ?? existing.draftM,
+          name:       info.name       ?? existing.name,
+          callsign:   info.callsign   ?? existing.callsign,
+          port:       info.port       ?? existing.port,
+          flag:       info.flag       ?? existing.flag,
+          shipType:   info.shipType   ?? existing.shipType,
+          lengthM:    info.lengthM    ?? existing.lengthM,
+          beamM:      info.beamM      ?? existing.beamM,
+          draftM:     info.draftM     ?? existing.draftM,
+          airHeightM: info.airHeightM ?? existing.airHeightM,
         });
       }
       coldVersion++;
@@ -149,10 +161,14 @@ function createAisStore() {
         heading: isNaN(hdg) ? undefined : hdg,
         rot:     isNaN(rot) ? undefined : rot,
         lastPositionUpdateMs: Date.now() - age * 1000,
-        shipType: cold?.shipType,
-        lengthM:  cold?.lengthM,
-        beamM:    cold?.beamM,
-        draftM:   cold?.draftM,
+        shipType:   cold?.shipType,
+        callsign:   cold?.callsign,
+        port:       cold?.port,
+        flag:       cold?.flag,
+        lengthM:    cold?.lengthM,
+        beamM:      cold?.beamM,
+        draftM:     cold?.draftM,
+        airHeightM: cold?.airHeightM,
       };
     },
   };

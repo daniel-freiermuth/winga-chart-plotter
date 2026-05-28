@@ -728,7 +728,10 @@
         <div class="ais-popup-title">${t.name ?? t.mmsi ?? 'Unknown vessel'}</div>
         <table>
           ${row('MMSI',     t.mmsi     ?? null)}
+          ${row('Callsign', t.callsign ?? null)}
           ${row('Type',     t.shipType ?? null)}
+          ${row('Flag',     t.flag     ?? null)}
+          ${row('Port',     t.port     ?? null)}
           ${row('Position', lon !== undefined && lat !== undefined ? `${lat.toFixed(5)}°N, ${lon.toFixed(5)}°E` : null)}
           ${row('Updated',  `${lastSeenTime} <span style="opacity:0.6;font-size:0.85em">(${ageStr})</span>`)}
           <tr><td colspan="2" class="ais-section">Navigation</td></tr>
@@ -737,9 +740,10 @@
           ${row('Heading', t.heading !== undefined ? (t.heading * 180 / Math.PI).toFixed(1) : null, '°')}
           ${row('ROT',     rotStr)}
           <tr><td colspan="2" class="ais-section">Dimensions</td></tr>
-          ${row('Length',  t.lengthM ?? null, ' m')}
-          ${row('Beam',    t.beamM   ?? null, ' m')}
-          ${row('Draft',   t.draftM  ?? null, ' m')}
+          ${row('Length',     t.lengthM    ?? null, ' m')}
+          ${row('Beam',       t.beamM      ?? null, ' m')}
+          ${row('Draft',      t.draftM     ?? null, ' m')}
+          ${row('Air height', t.airHeightM ?? null, ' m')}
         </table>
         ${lookupLinks}
       </div>`;

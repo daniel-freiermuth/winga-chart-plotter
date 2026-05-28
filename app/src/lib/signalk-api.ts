@@ -88,10 +88,14 @@ export async function fetchCharts(serverBase: string): Promise<ChartRecord> {
 
 export interface VesselInfo {
   name?: string;
+  callsign?: string;
+  port?: string;
+  flag?: string;
   shipType?: string;
   lengthM?: number;
   beamM?: number;
   draftM?: number;
+  airHeightM?: number;
 }
 
 /** Fetch a map of vessel URN → rich vessel info from the REST API. */
@@ -100,23 +104,31 @@ export async function fetchVesselInfo(serverBase: string): Promise<Map<string, V
   if (!res.ok) return new Map();
   const data = await res.json() as Record<string, {
     name?: string;
+    port?: string;
+    flag?: string;
+    communication?: { callsignVhf?: string };
     design?: {
       aisShipType?: { value?: { name?: string } };
       length?:      { value?: { overall?: number } };
       beam?:        { value?: number };
       draft?:       { value?: { maximum?: number; current?: number } };
+      airHeight?:   { value?: number };
     };
   }>;
   const map = new Map<string, VesselInfo>();
   for (const [urn, v] of Object.entries(data)) {
     const des = v.design;
     const info: VesselInfo = {};
-    if (v.name)                            info.name     = v.name;
-    if (des?.aisShipType?.value?.name)     info.shipType = des.aisShipType.value.name;
-    if (des?.length?.value?.overall !== undefined) info.lengthM = des.length.value.overall;
-    if (typeof des?.beam?.value === 'number')       info.beamM   = des.beam.value;
+    if (v.name)                                      info.name       = v.name;
+    if (v.port)                                      info.port       = v.port;
+    if (v.flag)                                      info.flag       = v.flag;
+    if (v.communication?.callsignVhf)                info.callsign   = v.communication.callsignVhf;
+    if (des?.aisShipType?.value?.name)               info.shipType   = des.aisShipType.value.name;
+    if (des?.length?.value?.overall !== undefined)   info.lengthM    = des.length.value.overall;
+    if (typeof des?.beam?.value === 'number')        info.beamM      = des.beam.value;
     const draft = des?.draft?.value?.current ?? des?.draft?.value?.maximum;
-    if (draft !== undefined)               info.draftM = draft;
+    if (draft !== undefined)                         info.draftM     = draft;
+    if (typeof des?.airHeight?.value === 'number')   info.airHeightM = des.airHeight.value;
     map.set(urn, info);
   }
   return map;
