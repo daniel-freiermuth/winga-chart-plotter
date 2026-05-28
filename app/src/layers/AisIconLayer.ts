@@ -163,8 +163,12 @@ void main(void) {
     iconAlpha *= (1.0 - t01);
   }
 
-  // Outline pass → white; fill pass → black for state indicators, vessel color otherwise.
-  vec3 rgb = aIsOutline > 0.5 ? vec3(1.0) : (aIsIndicator > 0.5 ? vec3(0.0) : instanceColor.rgb);
+  // Outline pass → halfway between vessel color and white (dark vessels) or black (bright vessels).
+  // fill pass → black for state indicators, vessel color otherwise.
+  float luma = dot(instanceColor.rgb, vec3(0.299, 0.587, 0.114));
+  vec3 outlineTarget = luma < 0.5 ? vec3(1.0) : vec3(0.0);
+  vec3 outlineColor  = mix(instanceColor.rgb, outlineTarget, 0.5);
+  vec3 rgb = aIsOutline > 0.5 ? outlineColor : (aIsIndicator > 0.5 ? vec3(0.0) : instanceColor.rgb);
   vColor = vec4(rgb, iconAlpha);
 
   geometry.pickingColor = instancePickingColors;
