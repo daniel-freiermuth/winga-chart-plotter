@@ -716,12 +716,7 @@
     const posMs = t.lastPositionUpdateMs;
     const lastSeenDate = new Date(posMs);
     const lastSeenTime = lastSeenDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-    const ageSec = Math.round((Date.now() - posMs) / 1000);
-    const ageStr = ageSec < 60
-      ? `${ageSec}s ago`
-      : ageSec < 3600
-        ? `${Math.floor(ageSec / 60)}m ${ageSec % 60}s ago`
-        : `${Math.floor(ageSec / 3600)}h ${Math.floor((ageSec % 3600) / 60)}m ago`;
+    const ageStr = formatAge(posMs);
 
     return `
       <div class="ais-popup">
@@ -736,7 +731,7 @@
           ${row('Flag',     t.flag     ?? null)}
           ${row('Port',     t.port     ?? null)}
           ${row('Position', lon !== undefined && lat !== undefined ? `${lat.toFixed(5)}°N, ${lon.toFixed(5)}°E` : null)}
-          ${row('Updated',  `${lastSeenTime} <span style="opacity:0.6;font-size:0.85em">(${ageStr})</span>`)}
+          ${row('Updated',  `${lastSeenTime} <span id="ais-age" data-posms="${posMs}" style="opacity:0.6;font-size:0.85em">(${ageStr})</span>`)}
           <tr><td colspan="2" class="ais-section">Navigation</td></tr>
           ${row('SOG',     t.sog     !== undefined ? (t.sog     * 1.94384).toFixed(1) : null, ' kn')}
           ${row('COG',     t.cog     !== undefined ? (t.cog     * 180 / Math.PI).toFixed(1) : null, '°')}
@@ -752,13 +747,42 @@
       </div>`;
   }
 
+  let aisAgeTimer: ReturnType<typeof setInterval> | null = null;
+
+  function formatAge(posMs: number): string {
+    const ageSec = Math.round((Date.now() - posMs) / 1000);
+    return ageSec < 60
+      ? `${ageSec}s ago`
+      : ageSec < 3600
+        ? `${Math.floor(ageSec / 60)}m ${ageSec % 60}s ago`
+        : `${Math.floor(ageSec / 3600)}h ${Math.floor((ageSec % 3600) / 60)}m ago`;
+  }
+
   function handleAisClick(info: PickingInfo): boolean {
     const t = info.object as AisTarget | null;
     if (!t?.position || !info.coordinate) return false;
-    new maplibregl.Popup({ closeButton: true, maxWidth: '280px' })
+
+    if (aisAgeTimer !== null) {
+      clearInterval(aisAgeTimer);
+      aisAgeTimer = null;
+    }
+
+    const popup = new maplibregl.Popup({ closeButton: true, maxWidth: '280px' })
       .setLngLat(info.coordinate as [number, number])
       .setHTML(buildAisPopupHtml(t))
       .addTo(map!);
+
+    aisAgeTimer = setInterval(() => {
+      const el = document.getElementById('ais-age');
+      if (!el) { clearInterval(aisAgeTimer!); aisAgeTimer = null; return; }
+      const posMs = Number(el.dataset.posms);
+      el.textContent = `(${formatAge(posMs)})`;
+    }, 1000);
+
+    popup.on('close', () => {
+      if (aisAgeTimer !== null) { clearInterval(aisAgeTimer); aisAgeTimer = null; }
+    });
+
     return true;
   }
 
