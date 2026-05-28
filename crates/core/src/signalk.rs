@@ -84,41 +84,6 @@ pub fn extract_vessel_state(storage: &Storage) -> VesselState {
     }
 }
 
-/// Compensates for the `signalk-aisstream` plugin ROT bug.
-///
-/// The plugin incorrectly converts the raw AIS ROT indicator I ∈ [-127, 127]
-/// as if it were a plain angle in degrees (`I × π/180`), skipping the
-/// ITU-R M.1371 square-root formula entirely.
-///
-/// This function:
-/// 1. Inverts the plugin's wrong conversion to recover I ≈ received × 180/π
-/// 2. Applies the correct formula:
-///    - ROT_deg_min = sign(I) × (|I| / 4.733)²
-///    - ROT_rad_s   = ROT_deg_min × π / 10800
-///
-/// Returns `None` for the "not available" sentinel (|I| > 127) or NaN/Inf.
-///
-/// TODO: remove once KEGustafsson/signalk-aisstream is fixed upstream.
-fn compensate_aisstream_rot(received: f64) -> Option<f64> {
-    if !received.is_finite() {
-        return None;
-    }
-    // Recover the raw integer indicator that the plugin received.
-    let abs_indicator = received.abs() * 180.0 / std::f64::consts::PI;
-    // I = -128 (not available) would give abs_indicator ≈ 128; discard.
-    if abs_indicator > 127.5 {
-        return None;
-    }
-    // Apply correct ITU-R M.1371 formula.
-    let rot_deg_per_min = (abs_indicator / 4.733_f64).powi(2);
-    let rot_rad_per_sec = rot_deg_per_min * std::f64::consts::PI / 10800.0;
-    // Sanity clamp: indicator=127 → 720°/min ≈ 0.209 rad/s; 0.5 is generous.
-    if rot_rad_per_sec > 0.5 {
-        return None;
-    }
-    Some(received.signum() * rot_rad_per_sec)
-}
-
 /// Parse a UTC ISO 8601 datetime string to epoch milliseconds.
 ///
 /// Handles the Signal K subset: `YYYY-MM-DDTHH:MM:SS[.frac]Z`.
@@ -231,12 +196,7 @@ pub fn extract_ais_targets(
                 cog,
                 sog: nav.speed_over_ground.as_ref().and_then(|v| v.value).filter(|v| v.is_finite()),
                 heading,
-                // The signalk-aisstream plugin incorrectly converts the raw AIS ROT
-                // indicator I ∈ [-127,127] as a plain angle (× π/180) instead of
-                // applying the correct ITU-R M.1371 sqrt formula. Compensate here
-                // until the upstream plugin is fixed.
-                rot: nav.rate_of_turn.as_ref().and_then(|v| v.value)
-                    .and_then(compensate_aisstream_rot),
+                rot: nav.rate_of_turn.as_ref().and_then(|v| v.value).filter(|v| v.is_finite()),
                 stw: nav.speed_through_water.as_ref().and_then(|v| v.value).filter(|v| v.is_finite()),
                 last_position_update_ms: last_ms,
             })
@@ -349,7 +309,6 @@ pub fn extract_ais_binary(
                 hdg: heading.unwrap_or(f64::NAN),
                 rot: nav.rate_of_turn.as_ref()
                     .and_then(|v| v.value)
-                    .and_then(compensate_aisstream_rot)
                     .unwrap_or(f64::NAN),
                 age: (now_ms - last_ms) / 1000.0,
             })
@@ -616,40 +575,5 @@ mod tests {
         assert!(parse_iso8601_utc_ms("").is_none());
         // non-UTC (no Z suffix) rejected
         assert!(parse_iso8601_utc_ms("2023-11-14T22:13:20+00:00").is_none());
-    }
-
-    #[test]
-    fn compensate_rot_typical_turn() {
-        // Plugin sends indicator I=10 as 10 * π/180 ≈ 0.1745 rad/s (wrong).
-        // Correct decode: (10/4.733)² = 4.467°/min → 0.001299 rad/s.
-        let received = 10.0_f64 * std::f64::consts::PI / 180.0;
-        let result = compensate_aisstream_rot(received).unwrap();
-        let expected = (10.0_f64 / 4.733_f64).powi(2) * std::f64::consts::PI / 10800.0;
-        assert!((result - expected).abs() < 1e-9, "result={result}, expected={expected}");
-    }
-
-    #[test]
-    fn compensate_rot_sign_preserved() {
-        let pos = compensate_aisstream_rot(5.0 * std::f64::consts::PI / 180.0).unwrap();
-        let neg = compensate_aisstream_rot(-5.0 * std::f64::consts::PI / 180.0).unwrap();
-        assert!(pos > 0.0);
-        assert!(neg < 0.0);
-    }
-
-    #[test]
-    fn compensate_rot_zero() {
-        assert_eq!(compensate_aisstream_rot(0.0), Some(0.0));
-    }
-
-    #[test]
-    fn compensate_rot_not_available_sentinel() {
-        // |I| > 127.5 → not available
-        let sentinel = 128.0_f64 * std::f64::consts::PI / 180.0;
-        assert!(compensate_aisstream_rot(sentinel).is_none());
-    }
-
-    #[test]
-    fn compensate_rot_nan_returns_none() {
-        assert!(compensate_aisstream_rot(f64::NAN).is_none());
     }
 }
