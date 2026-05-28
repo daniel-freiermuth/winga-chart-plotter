@@ -41,10 +41,12 @@ export interface SettingsData {
   signalkHost: string;
   signalkPort: number;
   appearance: AppearanceSettings;
+  targetFps: number;
 }
 
 const DEFAULTS: SettingsData = {
   ...detectSignalkOrigin(),
+  targetFps: 60,
   appearance: {
     vesselColor: '#2563eb',
     vesselSize: 24,
@@ -85,6 +87,7 @@ function load(): SettingsData {
         const p = parsed as Partial<SettingsData>;
         return {
           ...DEFAULTS, ...p,
+          targetFps: typeof p.targetFps === 'number' && p.targetFps > 0 ? p.targetFps : DEFAULTS.targetFps,
           appearance: {
             ...DEFAULTS.appearance, ...(p.appearance ?? {}),
             heading: { ...DEFAULTS.appearance.heading, ...(p.appearance?.heading ?? {}) },
@@ -112,6 +115,7 @@ function createSettings() {
     get host(): string            { return data.signalkHost; },
     get port(): number            { return data.signalkPort; },
     get appearance(): AppearanceSettings { return data.appearance; },
+    get targetFps(): number       { return data.targetFps; },
     get signalkUrl(): string {
       return `${data.signalkProtocol}://${data.signalkHost}:${String(data.signalkPort)}${SIGNALK_PATH}`;
     },
@@ -124,6 +128,11 @@ function createSettings() {
       data.signalkHost     = next.signalkHost;
       data.signalkPort     = next.signalkPort;
       data.appearance      = next.appearance;
+      data.targetFps       = next.targetFps;
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    },
+    setTargetFps(fps: number) {
+      data.targetFps = fps;
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
     },
   };

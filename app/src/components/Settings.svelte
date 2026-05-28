@@ -1,5 +1,6 @@
 <script lang="ts">
   import { settings, type AppearanceSettings } from '../stores/settings.svelte';
+  import { fpsStore } from '../stores/fps.svelte';
   import FaIcon from '../lib/FaIcon.svelte';
   import { faGear } from '@fortawesome/free-solid-svg-icons';
 
@@ -8,13 +9,33 @@
 
   // Connection settings use a draft (applied only on Save)
   let connDraft = $state({ protocol: settings.protocol, host: settings.host, port: settings.port });
-  // Appearance is edited directly on the store — instant live preview
-  // Cancel reverts to this snapshot
-  let appearanceSnapshot = '';
+  // Appearance and targetFps are edited directly — instant live preview.
+  // Cancel reverts to this snapshot.
+  type SettingsSnapshot = { appearance: AppearanceSettings; targetFps: number };
+  let settingsSnapshot = '';
+
+  // Logarithmic slider helpers: range [0, 1000] ↔ fps [0.1, 60]
+  function fpsToSlider(fps: number): number {
+    return Math.round((Math.log10(fps) + 1) / (Math.log10(60) + 1) * 1000);
+  }
+  function sliderToFps(v: number): number {
+    const fps = 10 ** (-1 + (v / 1000) * (Math.log10(60) + 1));
+    return fps >= 10 ? Math.round(fps) : Math.round(fps * 10) / 10;
+  }
+  function fpsLabel(fps: number): string {
+    if (fps >= 10) return `${Math.round(fps)} fps`;
+    if (fps >= 1)  return `${fps.toFixed(1)} fps`;
+    return `every ${Math.round(1 / fps)}s`;
+  }
+  function formatActualFps(fps: number): string {
+    if (fps <= 0) return '';
+    if (fps >= 10) return `${Math.round(fps)} fps`;
+    return `${fps.toFixed(1)} fps`;
+  }
 
   function openModal() {
     connDraft = { protocol: settings.protocol, host: settings.host, port: settings.port };
-    appearanceSnapshot = JSON.stringify(settings.appearance);
+    settingsSnapshot = JSON.stringify({ appearance: settings.appearance, targetFps: settings.targetFps });
     tab  = 'connection';
     open = true;
   }
@@ -25,17 +46,20 @@
       signalkHost:     connDraft.host,
       signalkPort:     connDraft.port,
       appearance:      settings.appearance,
+      targetFps:       settings.targetFps,
     });
     open = false;
   }
 
   function cancel() {
-    // Revert appearance to snapshot taken at open
+    // Revert appearance and targetFps to snapshot taken at open
+    const snap = JSON.parse(settingsSnapshot) as SettingsSnapshot;
     settings.apply({
       signalkProtocol: settings.protocol,
       signalkHost:     settings.host,
       signalkPort:     settings.port,
-      appearance:      JSON.parse(appearanceSnapshot) as AppearanceSettings,
+      appearance:      snap.appearance,
+      targetFps:       snap.targetFps,
     });
     open = false;
   }
@@ -49,6 +73,7 @@
       signalkHost:     settings.host,
       signalkPort:     settings.port,
       appearance:      settings.appearance,
+      targetFps:       settings.targetFps,
     });
   }
 </script>
@@ -205,6 +230,22 @@
           <span class="unit">px</span>
         </div>
       </div>
+
+      <p class="section-title">Performance</p>
+      <div class="row">
+        <label>Frame rate</label>
+        <div class="fps-field">
+          <input
+            type="range"
+            class="fps-slider"
+            min="0" max="1000"
+            value={fpsToSlider(settings.targetFps)}
+            oninput={(e) => settings.setTargetFps(sliderToFps(+(e.target as HTMLInputElement).value))}
+          />
+          <span class="fps-target">{fpsLabel(settings.targetFps)}</span>
+          <span class="fps-actual">{formatActualFps(fpsStore.value)}</span>
+        </div>
+      </div>
     {/if}
 
     <div class="actions">
@@ -262,4 +303,8 @@
   .btn { padding: 7px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; }
   .btn-cancel { background: transparent; border: 1px solid #444466; color: #a0a0c0; }
   .btn-save   { background: #4a6cf7; border: none; color: white; }
+  .fps-field { flex: 1; display: flex; align-items: center; gap: 8px; }
+  .fps-slider { flex: 1; min-width: 100px; cursor: pointer; }
+  .fps-target { min-width: 5rem; text-align: right; font-size: 13px; font-variant-numeric: tabular-nums; }
+  .fps-actual { color: #666688; font-size: 11px; min-width: 3.5rem; text-align: right; font-variant-numeric: tabular-nums; }
 </style>

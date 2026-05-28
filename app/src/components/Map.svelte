@@ -8,6 +8,7 @@
   import { get } from 'svelte/store';
   import { vesselState } from '../stores/vessel';
   import { settings, type LineAppearance, type LineStyle } from '../stores/settings.svelte';
+  import { fpsStore } from '../stores/fps.svelte';
   import { followMode } from '../stores/follow.svelte';
   import { rotateMode } from '../stores/rotateMode.svelte';
   import { charts } from '../stores/charts.svelte';
@@ -353,6 +354,20 @@
   }
 
   let rafId = 0;
+  // Ref to scheduleRafTick (defined inside onMount) for use in the reactive effect below.
+  let _scheduleRafTick: (() => void) | null = null;
+  const _fpsSamples: number[] = [];
+
+  // When the target FPS changes: cancel the pending tick, clear measurement history,
+  // and reschedule immediately at the new rate.
+  $effect(() => {
+    const _ = settings.targetFps;
+    cancelAnimationFrame(rafId);
+    clearTimeout(rafId);
+    _fpsSamples.length = 0;
+    fpsStore.set(0);
+    _scheduleRafTick?.();
+  });
 
   onMount(() => {
     map = new maplibregl.Map({
@@ -405,6 +420,16 @@
     // rAF loop: updates ruler layers (need map.project()) and snap targets each frame.
     // AIS layers are self-animating — no setProps() from here for them.
     function rafTick() {
+      // Measure actual FPS using a rolling window of frame timestamps.
+      const now = performance.now();
+      _fpsSamples.push(now);
+      const cutoff = now - 3000;
+      while (_fpsSamples.length > 2 && _fpsSamples[0] < cutoff) _fpsSamples.shift();
+      if (_fpsSamples.length >= 2) {
+        const span = _fpsSamples[_fpsSamples.length - 1] - _fpsSamples[0];
+        fpsStore.set((_fpsSamples.length - 1) / (span / 1000));
+      }
+
       if (overlay !== null) {
         const nowMs = Date.now();
 
@@ -572,9 +597,20 @@
           flushLayers();
         }
       }
-      rafId = requestAnimationFrame(rafTick);
+      scheduleRafTick();
     }
-    rafId = requestAnimationFrame(rafTick);
+
+    function scheduleRafTick() {
+      const intervalMs = 1000 / settings.targetFps;
+      if (intervalMs <= 17) {
+        rafId = requestAnimationFrame(rafTick);
+      } else {
+        rafId = setTimeout(rafTick, intervalMs) as unknown as number;
+      }
+    }
+
+    _scheduleRafTick = scheduleRafTick;
+    scheduleRafTick();
 
     // Native ruler drag — must be capture phase so we intercept before MapLibre.
     mapContainer.addEventListener('pointerdown', handleRulerPointerDown, { capture: true });
@@ -685,6 +721,7 @@
 
   onDestroy(() => {
     cancelAnimationFrame(rafId);
+    clearTimeout(rafId);
     overlay?.finalize();
     document.removeEventListener('fullscreenchange', onFsChange);
     mapContainer.removeEventListener('pointerdown',   handleRulerPointerDown, { capture: true });
