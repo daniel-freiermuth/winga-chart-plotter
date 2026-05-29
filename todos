@@ -23,23 +23,32 @@
 - [x] Check all Charts
 - [x] Flatter 3D
 - [x] SignalK deployment on npm as WebApp
-- [x] Come-back behavior
-  - Tab switch mobile
-  - Reload laptop
-  - App switch mobile
-  - fresh start. remember last position
-- S57
+- [x] S57
   - eniro delivers mvt!!
-- PWA
-  - not working from webapp
-  - name
-  - icon
+- [x] PWA
+  - [x] not working from webapp
+  - [x] name
+  - [x] icon
   - [x] tab name
-- Login
+- Come-back behavior
+  - [x] Tab switch mobile
+  - [x] App switch mobile
+  - [x] lock phone
+  - Reload laptop
+  - fresh start. remember last position
 - draw next leg
+- Login
 - set course
+  - cog, course
 - Ad-hoc navigation
+- tracks, routes
+    - Draw route
+    - History APIv1 & v2
+    - Just set course
+    - Waypoints
+- look-ahead mode
 - KIP integration
+- MOB button
 - patch signalk crate?
 - Notificatios
 - Sub settings: AIS, Our boat
@@ -50,12 +59,7 @@
   - create s57 crate?
   - from NV charts somehow?
 - GRIB files
-- tracks, routes
-    - Draw route
-- MOB button
 - Android, move between tabs and apps. Should be back at exactly same
-- look-ahead mode
-  - cog, course
 - Appearance settings next to the things itself
 - Own vessel -> drop waypoint
 - Windy?
