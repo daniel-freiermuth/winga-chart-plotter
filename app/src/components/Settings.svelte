@@ -45,6 +45,7 @@
       signalkProtocol: connDraft.protocol,
       signalkHost:     connDraft.host,
       signalkPort:     connDraft.port,
+      useGeoLocation:  settings.useGeoLocation,
       appearance:      settings.appearance,
       targetFps:       settings.targetFps,
     });
@@ -58,6 +59,7 @@
       signalkProtocol: settings.protocol,
       signalkHost:     settings.host,
       signalkPort:     settings.port,
+      useGeoLocation:  settings.useGeoLocation,
       appearance:      snap.appearance,
       targetFps:       snap.targetFps,
     });
@@ -72,6 +74,7 @@
       signalkProtocol: settings.protocol,
       signalkHost:     settings.host,
       signalkPort:     settings.port,
+      useGeoLocation:  settings.useGeoLocation,
       appearance:      settings.appearance,
       targetFps:       settings.targetFps,
     });
@@ -116,6 +119,33 @@
         </div>
       </div>
       <p class="hint">→ {connDraft.protocol}://{connDraft.host}:{connDraft.port}/signalk/v1/stream?subscribe=self</p>
+
+      <p class="section-title">Position source</p>
+      <div class="row">
+        <label>Browser GPS</label>
+        <div class="field">
+          <label class="toggle">
+            <input
+              type="checkbox"
+              checked={settings.useGeoLocation}
+              onchange={(e) => {
+                const checked = (e.target as HTMLInputElement).checked;
+                // Request permission while still inside the user-gesture event — some
+                // mobile browsers suppress the prompt when called from an async context.
+                if (checked && 'geolocation' in navigator) {
+                  navigator.geolocation.getCurrentPosition(() => {}, () => {});
+                }
+                settings.apply({ useGeoLocation: checked });
+              }}
+            />
+            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          </label>
+          <span class="toggle-label">Use device GPS instead of Signal K position</span>
+        </div>
+      </div>
+      {#if settings.geoError && !settings.useGeoLocation}
+        <p class="geo-error-note">⚠ {settings.geoError}</p>
+      {/if}
     {/if}
 
     {#if tab === 'appearance'}
@@ -289,6 +319,7 @@
   .field { flex: 1; display: flex; align-items: center; gap: 8px; }
   .unit { font-size: 12px; color: #666688; }
   .hint { font-size: 11px; color: #666688; margin: 2px 0 12px 84px; word-break: break-all; }
+  .geo-error-note { font-size: 11px; color: #f87171; margin: -6px 0 10px 84px; }
   .radio-group { gap: 16px; }
   .radio-group label { display: flex; align-items: center; gap: 6px; color: white; font-size: 13px; cursor: pointer; width: auto; }
   input[type=text], input[type=number], select {
@@ -307,4 +338,19 @@
   .fps-slider { flex: 1; min-width: 100px; cursor: pointer; }
   .fps-target { min-width: 5rem; text-align: right; font-size: 13px; font-variant-numeric: tabular-nums; }
   .fps-actual { color: #666688; font-size: 11px; min-width: 3.5rem; text-align: right; font-variant-numeric: tabular-nums; }
+
+  .toggle { display: inline-flex; align-items: center; cursor: pointer; flex-shrink: 0; }
+  .toggle input { position: absolute; opacity: 0; width: 0; height: 0; }
+  .toggle-track {
+    position: relative; width: 36px; height: 20px;
+    background: #444466; border-radius: 10px; transition: background 0.2s;
+  }
+  .toggle input:checked + .toggle-track { background: #4a6cf7; }
+  .toggle-thumb {
+    position: absolute; top: 2px; left: 2px;
+    width: 16px; height: 16px; border-radius: 50%;
+    background: white; transition: left 0.2s;
+  }
+  .toggle input:checked + .toggle-track .toggle-thumb { left: 18px; }
+  .toggle-label { font-size: 12px; color: #a0a0c0; }
 </style>

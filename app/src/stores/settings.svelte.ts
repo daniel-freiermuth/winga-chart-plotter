@@ -40,12 +40,14 @@ export interface SettingsData {
   signalkProtocol: 'ws' | 'wss';
   signalkHost: string;
   signalkPort: number;
+  useGeoLocation: boolean;
   appearance: AppearanceSettings;
   targetFps: number;
 }
 
 const DEFAULTS: SettingsData = {
   ...detectSignalkOrigin(),
+  useGeoLocation: false,
   targetFps: 60,
   appearance: {
     vesselColor: '#2563eb',
@@ -87,6 +89,7 @@ function load(): SettingsData {
         const p = parsed as Partial<SettingsData>;
         return {
           ...DEFAULTS, ...p,
+          useGeoLocation: typeof p.useGeoLocation === 'boolean' ? p.useGeoLocation : DEFAULTS.useGeoLocation,
           targetFps: typeof p.targetFps === 'number' && p.targetFps > 0 ? p.targetFps : DEFAULTS.targetFps,
           appearance: {
             ...DEFAULTS.appearance, ...(p.appearance ?? {}),
@@ -109,11 +112,14 @@ function load(): SettingsData {
 
 function createSettings() {
   const data = $state<SettingsData>(load());
+  let geoError = $state<string | null>(null);
 
   return {
     get protocol(): 'ws' | 'wss' { return data.signalkProtocol; },
     get host(): string            { return data.signalkHost; },
     get port(): number            { return data.signalkPort; },
+    get useGeoLocation(): boolean { return data.useGeoLocation; },
+    get geoError(): string | null { return geoError; },
     get appearance(): AppearanceSettings { return data.appearance; },
     get targetFps(): number       { return data.targetFps; },
     get signalkUrl(): string {
@@ -123,13 +129,20 @@ function createSettings() {
       const proto = data.signalkProtocol === 'wss' ? 'https' : 'http';
       return `${proto}://${data.signalkHost}:${String(data.signalkPort)}`;
     },
-    apply(next: SettingsData) {
-      data.signalkProtocol = next.signalkProtocol;
-      data.signalkHost     = next.signalkHost;
-      data.signalkPort     = next.signalkPort;
-      data.appearance      = next.appearance;
-      data.targetFps       = next.targetFps;
+    apply(next: Partial<SettingsData>) {
+      if (next.signalkProtocol !== undefined) data.signalkProtocol = next.signalkProtocol;
+      if (next.signalkHost     !== undefined) data.signalkHost     = next.signalkHost;
+      if (next.signalkPort     !== undefined) data.signalkPort     = next.signalkPort;
+      if (next.useGeoLocation  !== undefined) {
+        data.useGeoLocation = next.useGeoLocation;
+        if (next.useGeoLocation) geoError = null; // clear error when user re-enables
+      }
+      if (next.appearance      !== undefined) data.appearance      = next.appearance;
+      if (next.targetFps       !== undefined) data.targetFps       = next.targetFps;
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    },
+    setGeoError(msg: string) {
+      geoError = msg;
     },
     setTargetFps(fps: number) {
       data.targetFps = fps;

@@ -31,6 +31,38 @@
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let reconnectDelay = 2000; // ms, doubles on each failure up to 30s
 
+  $effect(() => {
+    if (!settings.useGeoLocation || !('geolocation' in navigator)) return;
+
+    const id = navigator.geolocation.watchPosition(
+      (pos) => {
+        const { longitude, latitude, speed, heading } = pos.coords;
+        vesselState.set({
+          position: { longitude, latitude },
+          // Geolocation heading is in degrees true [0, 360), undefined when stationary.
+          // Convert to radians, fall back to null so predictors are hidden when still.
+          cog: heading !== null && isFinite(heading) ? heading * (Math.PI / 180) : null,
+          sog: speed !== null && isFinite(speed) ? speed : null,
+          heading: null,
+        });
+      },
+      (err) => {
+        console.warn('[geolocation] error', err.code, err.message);
+        if (err.code === GeolocationPositionError.PERMISSION_DENIED) {
+          settings.setGeoError('Location access denied — check browser/OS permissions');
+          settings.apply({ useGeoLocation: false });
+        } else if (err.code === GeolocationPositionError.POSITION_UNAVAILABLE) {
+          settings.setGeoError('Location unavailable — GPS signal lost');
+        } else {
+          settings.setGeoError(`Location error: ${err.message}`);
+        }
+      },
+      { enableHighAccuracy: true, maximumAge: 2000, timeout: 15000 },
+    );
+
+    return () => navigator.geolocation.clearWatch(id);
+  });
+
   function scheduleReconnect() {
     if (reconnectTimer !== null) return;
     reconnectTimer = setTimeout(() => {
@@ -50,7 +82,9 @@
       const msg = e.data;
       if (msg.type === 'state') {
         const pos = msg.state.position;
-        if (pos) {
+        if (settings.useGeoLocation) {
+          // Geo mode: browser provides everything; SK state is ignored entirely.
+        } else if (pos) {
           vesselState.set({
             position: { longitude: pos.longitude, latitude: pos.latitude },
             cog: msg.state.cog ?? null,
