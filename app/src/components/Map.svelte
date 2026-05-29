@@ -393,6 +393,7 @@
       center: [10.75, 59.91],
       zoom: 10,
       maxPitch: 85,
+      bearingSnap: 0,
     });
 
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
