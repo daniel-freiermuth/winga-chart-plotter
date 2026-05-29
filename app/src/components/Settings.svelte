@@ -5,7 +5,7 @@
   import { faGear } from '@fortawesome/free-solid-svg-icons';
 
   let open = $state(false);
-  let tab  = $state<'connection' | 'appearance'>('connection');
+  let tab  = $state<'connection' | 'vessel' | 'ais' | 'routes'>('connection');
 
   // Connection settings use a draft (applied only on Save)
   let connDraft = $state({ protocol: settings.protocol, host: settings.host, port: settings.port });
@@ -92,7 +92,9 @@
 
     <div class="tabs">
       <button class="tab" class:active={tab === 'connection'} onclick={() => tab = 'connection'}>Connection</button>
-      <button class="tab" class:active={tab === 'appearance'} onclick={() => tab = 'appearance'}>Appearance</button>
+      <button class="tab" class:active={tab === 'vessel'}     onclick={() => tab = 'vessel'}>Own vessel</button>
+      <button class="tab" class:active={tab === 'ais'}        onclick={() => tab = 'ais'}>AIS</button>
+      <button class="tab" class:active={tab === 'routes'}     onclick={() => tab = 'routes'}>Routes</button>
     </div>
 
     {#if tab === 'connection'}
@@ -155,8 +157,8 @@
       {/if}
     {/if}
 
-    {#if tab === 'appearance'}
-      <p class="section-title">Vessel</p>
+    {#if tab === 'vessel'}
+      <p class="section-title">Icon</p>
       <div class="row">
         <label>Color</label>
         <div class="field"><input type="color" bind:value={settings.appearance.vesselColor} oninput={applyAppearance} /></div>
@@ -169,8 +171,12 @@
         </div>
       </div>
 
-      <p class="section-title">Heading line</p>
-      {#each [{ key: 'heading' }, { key: 'cog' }, { key: 'gc' }] as { key } (key)}
+      <p class="section-title">Heading predictor</p>
+      {#each [
+        { key: 'heading', nextTitle: 'Rhumb line (COG) predictor' },
+        { key: 'cog',     nextTitle: 'Great circle (GC) predictor' },
+        { key: 'gc',      nextTitle: null },
+      ] as { key, nextTitle } (key)}
         {@const line = key === 'heading' ? settings.appearance.heading : key === 'cog' ? settings.appearance.cog : settings.appearance.gc}
         <div class="row">
           <label>Color</label>
@@ -205,15 +211,14 @@
             </select>
           </div>
         </div>
-        {#if key === 'heading'}
-          <p class="section-title">Rhumb Line predictor</p>
-        {:else if key === 'cog'}
-          <p class="section-title">Great Circle predictor</p>
-        {:else if key === 'gc'}
-          <p class="section-title">AIS targets</p>
+        {#if nextTitle}
+          <p class="section-title">{nextTitle}</p>
         {/if}
       {/each}
+    {/if}
 
+    {#if tab === 'ais'}
+      <p class="section-title">Icon</p>
       <div class="row">
         <label>Color</label>
         <div class="field"><input type="color" bind:value={settings.appearance.ais.vesselColor} oninput={applyAppearance} /></div>
@@ -225,7 +230,9 @@
           <span class="unit">px</span>
         </div>
       </div>
-      <p class="section-title">AIS COG line</p>      <div class="row">
+
+      <p class="section-title">COG line</p>
+      <div class="row">
         <label>Color</label>
         <div class="field"><input type="color" bind:value={settings.appearance.ais.cog.color} oninput={applyAppearance} /></div>
       </div>
@@ -255,12 +262,30 @@
         </div>
       </div>
 
-      <p class="section-title">Route — bearing to waypoint</p>
+      <p class="section-title">Performance</p>
+      <div class="row">
+        <label>Frame rate</label>
+        <div class="fps-field">
+          <input
+            type="range"
+            class="fps-slider"
+            min="0" max="1000"
+            value={fpsToSlider(settings.targetFps)}
+            oninput={(e) => settings.setTargetFps(sliderToFps(+(e.target as HTMLInputElement).value))}
+          />
+          <span class="fps-target">{fpsLabel(settings.targetFps)}</span>
+          <span class="fps-actual">{formatActualFps(fpsStore.value)}</span>
+        </div>
+      </div>
+    {/if}
+
+    {#if tab === 'routes'}
+      <p class="section-title">Bearing to waypoint</p>
       {#each [
-        { key: 'bearing',   label: 'Route — bearing to waypoint' },
-        { key: 'segment',   label: 'Route — active segment' },
-        { key: 'remaining', label: 'Route — remaining route' },
-      ] as { key, label } (key)}
+        { key: 'bearing',   nextTitle: 'Active segment' },
+        { key: 'segment',   nextTitle: 'Remaining route' },
+        { key: 'remaining', nextTitle: null },
+      ] as { key, nextTitle } (key)}
         {@const rl = key === 'bearing' ? settings.appearance.route.bearing : key === 'segment' ? settings.appearance.route.segment : settings.appearance.route.remaining}
         <div class="row">
           <label>Color</label>
@@ -284,10 +309,8 @@
             </select>
           </div>
         </div>
-        {#if key === 'bearing'}
-          <p class="section-title">Route — active segment</p>
-        {:else if key === 'segment'}
-          <p class="section-title">Route — remaining route</p>
+        {#if nextTitle}
+          <p class="section-title">{nextTitle}</p>
         {/if}
       {/each}
 
@@ -301,22 +324,6 @@
         <div class="field">
           <input type="number" bind:value={settings.appearance.ruler.width} min="1" max="8" step="0.5" oninput={applyAppearance} />
           <span class="unit">px</span>
-        </div>
-      </div>
-
-      <p class="section-title">Performance</p>
-      <div class="row">
-        <label>Frame rate</label>
-        <div class="fps-field">
-          <input
-            type="range"
-            class="fps-slider"
-            min="0" max="1000"
-            value={fpsToSlider(settings.targetFps)}
-            oninput={(e) => settings.setTargetFps(sliderToFps(+(e.target as HTMLInputElement).value))}
-          />
-          <span class="fps-target">{fpsLabel(settings.targetFps)}</span>
-          <span class="fps-actual">{formatActualFps(fpsStore.value)}</span>
         </div>
       </div>
     {/if}
