@@ -2,6 +2,7 @@
   import { settings, type AppearanceSettings } from '../stores/settings.svelte';
   import { fpsStore } from '../stores/fps.svelte';
   import FaIcon from '../lib/FaIcon.svelte';
+  import ColorInput from '../lib/ColorInput.svelte';
   import { faGear } from '@fortawesome/free-solid-svg-icons';
 
   let open = $state(false);
@@ -162,7 +163,7 @@
       <p class="section-title">Icon</p>
       <div class="row">
         <label>Color</label>
-        <div class="field"><input type="color" bind:value={settings.appearance.vesselColor} oninput={applyAppearance} /></div>
+        <div class="field"><ColorInput bind:value={settings.appearance.vesselColor} oninput={applyAppearance} /></div>
       </div>
       <div class="row">
         <label>Size</label>
@@ -181,7 +182,7 @@
         {@const line = key === 'heading' ? settings.appearance.heading : key === 'cog' ? settings.appearance.cog : settings.appearance.gc}
         <div class="row">
           <label>Color</label>
-          <div class="field"><input type="color" bind:value={line.color} oninput={applyAppearance} /></div>
+          <div class="field"><ColorInput bind:value={line.color} oninput={applyAppearance} /></div>
         </div>
         <div class="row">
           <label>Width</label>
@@ -222,7 +223,7 @@
       <p class="section-title">Icon</p>
       <div class="row">
         <label>Color</label>
-        <div class="field"><input type="color" bind:value={settings.appearance.ais.vesselColor} oninput={applyAppearance} /></div>
+        <div class="field"><ColorInput bind:value={settings.appearance.ais.vesselColor} oninput={applyAppearance} /></div>
       </div>
       <div class="row">
         <label>Size</label>
@@ -235,7 +236,7 @@
       <p class="section-title">COG line</p>
       <div class="row">
         <label>Color</label>
-        <div class="field"><input type="color" bind:value={settings.appearance.ais.cog.color} oninput={applyAppearance} /></div>
+        <div class="field"><ColorInput bind:value={settings.appearance.ais.cog.color} oninput={applyAppearance} /></div>
       </div>
       <div class="row">
         <label>Width</label>
@@ -290,7 +291,7 @@
         {@const rl = key === 'bearing' ? settings.appearance.route.bearing : key === 'segment' ? settings.appearance.route.segment : settings.appearance.route.remaining}
         <div class="row">
           <label>Color</label>
-          <div class="field"><input type="color" bind:value={rl.color} oninput={applyAppearance} /></div>
+          <div class="field"><ColorInput bind:value={rl.color} oninput={applyAppearance} /></div>
         </div>
         <div class="row">
           <label>Width</label>
@@ -318,7 +319,7 @@
       <p class="section-title">Ruler</p>
       <div class="row">
         <label>Color</label>
-        <input type="color" bind:value={settings.appearance.ruler.color} oninput={applyAppearance} />
+        <div class="field"><ColorInput bind:value={settings.appearance.ruler.color} oninput={applyAppearance} /></div>
       </div>
       <div class="row">
         <label>Width</label>
@@ -394,7 +395,6 @@
   input[type=text]   { flex: 1; }
   input[type=number] { width: 80px; -moz-appearance: textfield; }
   select { cursor: pointer; }
-  input[type=color]  { width: 40px; height: 30px; border: 1px solid #444466; border-radius: 6px; cursor: pointer; padding: 2px; background: none; }
   .actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 24px; }
   .btn { padding: 7px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; }
   .btn-cancel { background: transparent; border: 1px solid #444466; color: #a0a0c0; }
