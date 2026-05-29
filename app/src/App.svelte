@@ -33,6 +33,9 @@
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let reconnectDelay = 2000; // ms, doubles on each failure up to 30s
 
+  // Latest compass heading from DeviceOrientation API, shared between the two effects below.
+  let latestCompassHeadingRad: number | null = null;
+
   $effect(() => {
     if (!settings.useGeoLocation || !('geolocation' in navigator)) return;
 
@@ -45,7 +48,8 @@
           // Convert to radians, fall back to null so predictors are hidden when still.
           cog: heading !== null && isFinite(heading) ? heading * (Math.PI / 180) : null,
           sog: speed !== null && isFinite(speed) ? speed : null,
-          heading: null,
+          // Include latest compass heading so the vessel icon rotates.
+          heading: latestCompassHeadingRad,
         });
       },
       (err) => {
@@ -62,7 +66,56 @@
       { enableHighAccuracy: true, maximumAge: 2000, timeout: 15000 },
     );
 
-    return () => navigator.geolocation.clearWatch(id);
+    return () => {
+      navigator.geolocation.clearWatch(id);
+      latestCompassHeadingRad = null;
+    };
+  });
+
+  // Subscribe to the device compass (DeviceOrientation API) when browser geo is active.
+  // - Chrome/Android/Firefox: 'deviceorientationabsolute' with alpha (CCW from true north)
+  // - iOS Safari:             'deviceorientation' with webkitCompassHeading (CW from north)
+  $effect(() => {
+    if (!settings.useGeoLocation || !('DeviceOrientationEvent' in window)) return;
+
+    // Once an absolute event fires we ignore the relative fallback.
+    let gotAbsolute = false;
+
+    function headingFromAlpha(alpha: number): number {
+      // alpha is a CCW rotation from geographic north; flip to CW compass bearing.
+      return ((360 - alpha) % 360) * (Math.PI / 180);
+    }
+
+    function onAbsolute(e: DeviceOrientationEvent) {
+      if (e.alpha === null) return;
+      gotAbsolute = true;
+      latestCompassHeadingRad = headingFromAlpha(e.alpha);
+      vesselState.update(s => ({ ...s, heading: latestCompassHeadingRad }));
+    }
+
+    function onRelative(e: DeviceOrientationEvent) {
+      if (gotAbsolute) return; // prefer absolute events when available
+      // iOS: webkitCompassHeading is already a CW bearing from true north.
+      const webkit = (e as unknown as { webkitCompassHeading?: number }).webkitCompassHeading;
+      if (typeof webkit === 'number' && isFinite(webkit)) {
+        latestCompassHeadingRad = webkit * (Math.PI / 180);
+      } else if (e.absolute && e.alpha !== null) {
+        latestCompassHeadingRad = headingFromAlpha(e.alpha);
+      } else {
+        return;
+      }
+      vesselState.update(s => ({ ...s, heading: latestCompassHeadingRad }));
+    }
+
+    window.addEventListener('deviceorientationabsolute', onAbsolute as EventListener);
+    window.addEventListener('deviceorientation', onRelative);
+
+    return () => {
+      window.removeEventListener('deviceorientationabsolute', onAbsolute as EventListener);
+      window.removeEventListener('deviceorientation', onRelative);
+      latestCompassHeadingRad = null;
+      vesselState.update(s => ({ ...s, heading: null }));
+    };
   });
 
   function scheduleReconnect() {

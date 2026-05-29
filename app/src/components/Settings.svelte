@@ -135,6 +135,13 @@
                 if (checked && 'geolocation' in navigator) {
                   navigator.geolocation.getCurrentPosition(() => {}, () => {});
                 }
+                // iOS 13+ requires an explicit user-gesture permission for DeviceOrientationEvent.
+                if (checked && typeof (window.DeviceOrientationEvent as unknown as { requestPermission?: unknown }).requestPermission === 'function') {
+                  (window.DeviceOrientationEvent as unknown as { requestPermission: () => Promise<string> })
+                    .requestPermission()
+                    .then(r => { if (r !== 'granted') settings.setGeoError('Compass access denied — heading unavailable'); })
+                    .catch(() => {});
+                }
                 settings.apply({ useGeoLocation: checked });
               }}
             />
