@@ -11,11 +11,13 @@
   import { charts } from './stores/charts.svelte';
   import { ais } from './stores/ais.svelte';
   import { fetchVesselInfo } from './lib/signalk-api';
+  import { route } from './stores/route.svelte';
 
   // Message types received from the SignalK worker.
   interface WsState {
     position?: { longitude: number; latitude: number };
     cog?: number; sog?: number; heading?: number;
+    course?: { nextPoint?: { longitude: number; latitude: number }; previousPoint?: { longitude: number; latitude: number }; activeRoute?: { href: string; name?: string; pointIndex: number; reverse: boolean } };
   }
   interface AisColdData { id: string; name?: string; mmsi?: string; }
   type WorkerMsg =
@@ -83,15 +85,18 @@
       if (msg.type === 'state') {
         const pos = msg.state.position;
         if (settings.useGeoLocation) {
-          // Geo mode: browser provides everything; SK state is ignored entirely.
+          // Geo mode: browser provides position/heading; SK course data is still used.
         } else if (pos) {
           vesselState.set({
             position: { longitude: pos.longitude, latitude: pos.latitude },
             cog: msg.state.cog ?? null,
             sog: msg.state.sog ?? null,
             heading: msg.state.heading ?? null,
+            course: msg.state.course,
           });
         }
+        // Update course/route regardless of geo mode — route is always from SK.
+        route.update(settings.signalkHttpUrl, msg.state.course);
       } else if (msg.type === 'status') {
         connected = msg.status === 1;
         if (msg.status === 1) {

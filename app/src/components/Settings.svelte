@@ -248,10 +248,46 @@
         </div>
       </div>
 
+      <p class="section-title">Route — bearing to waypoint</p>
+      {#each [
+        { key: 'bearing',   label: 'Route — bearing to waypoint' },
+        { key: 'segment',   label: 'Route — active segment' },
+        { key: 'remaining', label: 'Route — remaining route' },
+      ] as { key, label } (key)}
+        {@const rl = key === 'bearing' ? settings.appearance.route.bearing : key === 'segment' ? settings.appearance.route.segment : settings.appearance.route.remaining}
+        <div class="row">
+          <label>Color</label>
+          <div class="field"><input type="color" bind:value={rl.color} oninput={applyAppearance} /></div>
+        </div>
+        <div class="row">
+          <label>Width</label>
+          <div class="field">
+            <input type="number" bind:value={rl.width} min="1" max="8" step="0.5" oninput={applyAppearance} />
+            <span class="unit">px</span>
+          </div>
+        </div>
+        <div class="row">
+          <label>Style</label>
+          <div class="field">
+            <select bind:value={rl.style} onchange={applyAppearance}>
+              <option value="solid">Solid</option>
+              <option value="dashed">Dashed</option>
+              <option value="dotted">Dotted</option>
+              <option value="dash-dot">Dash-dot</option>
+            </select>
+          </div>
+        </div>
+        {#if key === 'bearing'}
+          <p class="section-title">Route — active segment</p>
+        {:else if key === 'segment'}
+          <p class="section-title">Route — remaining route</p>
+        {/if}
+      {/each}
+
       <p class="section-title">Ruler</p>
       <div class="row">
         <label>Color</label>
-        <div class="field"><input type="color" bind:value={settings.appearance.ruler.color} oninput={applyAppearance} /></div>
+        <input type="color" bind:value={settings.appearance.ruler.color} oninput={applyAppearance} />
       </div>
       <div class="row">
         <label>Width</label>

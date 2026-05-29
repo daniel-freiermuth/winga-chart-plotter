@@ -22,6 +22,34 @@ impl Position {
     }
 }
 
+/// The active route's waypoint being navigated toward.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CoursePoint {
+    pub longitude: f64,
+    pub latitude: f64,
+}
+
+/// Active route metadata (from `navigation.course.activeRoute`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActiveRoute {
+    /// REST href to the route resource, e.g. `/v1/api/resources/routes/{uuid}`.
+    pub href: String,
+    pub name: Option<String>,
+    /// Index of the current target waypoint in the route's coordinate array.
+    pub point_index: i64,
+    pub reverse: bool,
+}
+
+/// Course/route state extracted from `navigation.course`.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CourseState {
+    pub next_point: Option<CoursePoint>,
+    pub previous_point: Option<CoursePoint>,
+    pub active_route: Option<ActiveRoute>,
+}
+
 /// Parsed Signal K self-vessel state relevant for chart display.
 #[wasm_bindgen]
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -30,6 +58,10 @@ pub struct VesselState {
     pub cog: Option<f64>,     // Course over ground, radians
     pub sog: Option<f64>,     // Speed over ground, m/s
     pub heading: Option<f64>, // True heading, radians
+    /// Active course/route state. Non-pub so wasm_bindgen ignores it;
+    /// included in serde serialisation for the JS state callback.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    course: Option<CourseState>,
 }
 
 #[wasm_bindgen]
@@ -76,12 +108,56 @@ pub fn extract_vessel_state(storage: &Storage) -> VesselState {
         altitude: v.altitude,
     });
 
+    let course = extract_course(nav);
+
     VesselState {
         position,
         cog: nav.course_over_ground_true.as_ref().and_then(|v| v.value),
         sog: nav.speed_over_ground.as_ref().and_then(|v| v.value),
         heading: nav.heading_true.as_ref().and_then(|v| v.value),
+        course,
     }
+}
+
+/// Extract course/route state from the navigation branch.
+///
+/// `V1CourseApi` and its nested types are private to the `signalk` crate, so
+/// we access them exclusively through field paths and type inference (Rust
+/// allows accessing pub fields of a value even when the type cannot be named
+/// from outside the crate). String values (V1StringValue) are round-tripped
+/// through JSON to extract their payload without naming the private enum.
+fn extract_course(nav: &signalk::V1Navigation) -> Option<CourseState> {
+    let c = nav.course.as_ref()?;
+
+    // We cannot name V1StringValue directly (private module), so round-trip
+    // through JSON to extract its string payload.
+    fn to_str(v: &impl serde::Serialize) -> Option<String> {
+        let j = serde_json::to_value(v).ok()?;
+        match j {
+            serde_json::Value::String(s) => Some(s),
+            serde_json::Value::Object(ref o) => o.get("value")?.as_str().map(str::to_owned),
+            _ => None,
+        }
+    }
+
+    // Type is inferred from the field — we never name the private module.
+    let next_point = c.next_point.as_ref().map(|np| CoursePoint {
+        longitude: np.position.longitude,
+        latitude:  np.position.latitude,
+    });
+
+    let previous_point = c.previous_point.as_ref().map(|pp| CoursePoint {
+        longitude: pp.position.longitude,
+        latitude:  pp.position.latitude,
+    });
+
+    let active_route = c.active_route.as_ref().and_then(|ar| {
+        let href = to_str(&ar.href)?;
+        let name = ar.name.as_ref().and_then(|n| to_str(n));
+        Some(ActiveRoute { href, name, point_index: ar.point_index, reverse: ar.reverse })
+    });
+
+    Some(CourseState { next_point, previous_point, active_route })
 }
 
 /// Parse a UTC ISO 8601 datetime string to epoch milliseconds.

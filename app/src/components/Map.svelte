@@ -20,6 +20,7 @@
   import { PathStyleExtension } from '@deck.gl/extensions';
   import type { Layer } from '@deck.gl/core';
   import { rulers, rulerBearingText, rulerDistanceText, type Ruler, type RulerEndpoint } from '../stores/rulers.svelte';
+  import { route } from '../stores/route.svelte';
   import { gcLine } from '../lib/geoMath';
   import { fetchAndResolveStyle } from '../lib/resolveStyle';
   import { AisHullLayer, AisHullDecorationLayer, HULL_ANCHOR_DOT, HULL_MOORING_BARS, HULL_AGROUND_RING, HULL_FISHING_GEAR, HULL_NUC, HULL_RESTRICTED, HULL_DRAUGHT } from '../layers/AisHullLayer';
@@ -141,6 +142,8 @@
   const HDG_SOURCE      = 'vessel-hdg';
   const GC_SOURCE       = 'vessel-gc';
   const AIS_SOURCE      = 'ais-targets'; // kept for ais-label text layer
+  const ROUTE_LINE_SRC  = 'route-lines';
+  const ROUTE_WPT_SRC   = 'route-waypoints';
   const EMPTY_FC: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features: [] };
 
   // Track the tile URL each chart source was last created with, so we can
@@ -692,7 +695,10 @@
       if (!m.getSource(HDG_SOURCE))    m.addSource(HDG_SOURCE,    { type: 'geojson', data: EMPTY_FC });
       if (!m.getSource(GC_SOURCE))     m.addSource(GC_SOURCE,     { type: 'geojson', data: EMPTY_FC });
       if (!m.getSource(AIS_SOURCE))    m.addSource(AIS_SOURCE,    { type: 'geojson', data: EMPTY_FC }); // for ais-label only
+      if (!m.getSource(ROUTE_LINE_SRC)) m.addSource(ROUTE_LINE_SRC, { type: 'geojson', data: EMPTY_FC });
+      if (!m.getSource(ROUTE_WPT_SRC))  m.addSource(ROUTE_WPT_SRC,  { type: 'geojson', data: EMPTY_FC });
 
+      // Vessel + AIS layers must be added first because route layers are inserted before them.
       if (!m.getLayer('vessel-gc-line')) m.addLayer({ id: 'vessel-gc-line', type: 'line', source: GC_SOURCE,
         paint: { 'line-color': ap.gc.color, 'line-width': ap.gc.width, ...(dashArray(ap.gc.style, ap.gc.width) !== null && { 'line-dasharray': dashArray(ap.gc.style, ap.gc.width)! }) } });
 
@@ -728,6 +734,40 @@
           'icon-ignore-placement': true,
         },
       });
+
+      // Route layers — inserted before the anchor vessel layers so they render below them.
+      // Full planned route: dashed magenta line.
+      if (!m.getLayer('route-full')) m.addLayer({
+        id: 'route-full', type: 'line', source: ROUTE_LINE_SRC,
+        filter: ['==', ['get', 'kind'], 'full'],
+        paint: { 'line-color': '#e040fb', 'line-width': 2, 'line-dasharray': [6, 4], 'line-opacity': 0.65 },
+      }, 'vessel-gc-line');
+
+      // Active leg: previousPoint → nextPoint (planned segment).
+      if (!m.getLayer('route-leg')) m.addLayer({
+        id: 'route-leg', type: 'line', source: ROUTE_LINE_SRC,
+        filter: ['==', ['get', 'kind'], 'leg'],
+        paint: { 'line-color': '#e040fb', 'line-width': 2.5 },
+      }, 'vessel-gc-line');
+
+      // Bearing line: vessel → nextPoint (where to actually steer), bright solid.
+      if (!m.getLayer('route-bearing')) m.addLayer({
+        id: 'route-bearing', type: 'line', source: ROUTE_LINE_SRC,
+        filter: ['==', ['get', 'kind'], 'bearing'],
+        paint: { 'line-color': '#ff6d00', 'line-width': 2, 'line-dasharray': [4, 3] },
+      }, 'vessel-gc-line');
+
+      // Waypoint markers: above lines but below the own-vessel icon.
+      if (!m.getLayer('route-waypoints')) m.addLayer({
+        id: 'route-waypoints', type: 'circle', source: ROUTE_WPT_SRC,
+        paint: {
+          'circle-radius':       ['match', ['get', 'wtype'], 'next', 7, 5],
+          'circle-color':        ['match', ['get', 'wtype'], 'next', '#e040fb', '#9c27b0'],
+          'circle-opacity':      0.9,
+          'circle-stroke-color': '#fff',
+          'circle-stroke-width': 1.5,
+        },
+      }, 'vessel-icon');
 
       mapZoom    = map.getZoom();
       mapBearing = map.getBearing();
@@ -1636,6 +1676,60 @@
         _pendingVesselSetData = null;
       });
     }
+  });
+
+  // Route/course rendering — updates when route geometry, course points, or appearance changes.
+  $effect(() => {
+    const geo     = route.geometry;
+    const nxtPt   = route.nextPoint;
+    const prevPt  = route.previousPoint;
+    const ownPos  = $vesselState.position;
+    const ra      = settings.appearance.route;
+    if (!map || !mapLoaded) return;
+
+    const lineSrc = map.getSource(ROUTE_LINE_SRC);
+    const wptSrc  = map.getSource(ROUTE_WPT_SRC);
+    if (!(lineSrc instanceof maplibregl.GeoJSONSource)) return;
+    if (!(wptSrc  instanceof maplibregl.GeoJSONSource)) return;
+
+    // Paint properties — applied every time appearance settings change.
+    map.setPaintProperty('route-full',    'line-color',     ra.remaining.color);
+    map.setPaintProperty('route-full',    'line-width',     ra.remaining.width);
+    map.setPaintProperty('route-full',    'line-dasharray', dashArray(ra.remaining.style, ra.remaining.width) ?? undefined);
+    map.setPaintProperty('route-leg',     'line-color',     ra.segment.color);
+    map.setPaintProperty('route-leg',     'line-width',     ra.segment.width);
+    map.setPaintProperty('route-leg',     'line-dasharray', dashArray(ra.segment.style, ra.segment.width) ?? undefined);
+    map.setPaintProperty('route-bearing', 'line-color',     ra.bearing.color);
+    map.setPaintProperty('route-bearing', 'line-width',     ra.bearing.width);
+    map.setPaintProperty('route-bearing', 'line-dasharray', dashArray(ra.bearing.style, ra.bearing.width) ?? undefined);
+
+    const lineFeatures: GeoJSON.Feature[] = [];
+    // Full planned route polyline from the REST resource.
+    if (geo) {
+      lineFeatures.push({ type: 'Feature', geometry: geo.geometry, properties: { kind: 'full' } });
+    }
+    // Active leg: previousPoint → nextPoint (the current planned segment).
+    if (nxtPt && prevPt) {
+      lineFeatures.push({
+        type: 'Feature',
+        geometry: { type: 'LineString', coordinates: [[prevPt.longitude, prevPt.latitude], [nxtPt.longitude, nxtPt.latitude]] },
+        properties: { kind: 'leg' },
+      });
+    }
+    // Bearing line: own vessel → nextPoint (where I need to actually steer).
+    if (nxtPt && ownPos) {
+      lineFeatures.push({
+        type: 'Feature',
+        geometry: { type: 'LineString', coordinates: [[ownPos.longitude, ownPos.latitude], [nxtPt.longitude, nxtPt.latitude]] },
+        properties: { kind: 'bearing' },
+      });
+    }
+    lineSrc.setData({ type: 'FeatureCollection', features: lineFeatures });
+
+    const wptFeatures: GeoJSON.Feature[] = [];
+    if (nxtPt) wptFeatures.push({ type: 'Feature', geometry: { type: 'Point', coordinates: [nxtPt.longitude, nxtPt.latitude] }, properties: { wtype: 'next' } });
+    if (prevPt) wptFeatures.push({ type: 'Feature', geometry: { type: 'Point', coordinates: [prevPt.longitude, prevPt.latitude] }, properties: { wtype: 'prev' } });
+    wptSrc.setData({ type: 'FeatureCollection', features: wptFeatures });
   });
 
   // Follow + rotation mode: combined into one effect so we never issue two competing

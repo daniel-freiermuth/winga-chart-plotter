@@ -26,6 +26,18 @@ export interface RulerAppearance {
   width: number;  // screen pixels
 }
 
+export interface RouteLineAppearance {
+  color: string;
+  width: number;  // screen pixels
+  style: LineStyle;
+}
+
+export interface RouteAppearance {
+  bearing:   RouteLineAppearance;  // vessel → next waypoint
+  segment:   RouteLineAppearance;  // previous → next waypoint (active leg)
+  remaining: RouteLineAppearance;  // full planned route polyline
+}
+
 export interface AppearanceSettings {
   vesselColor: string;
   vesselSize: number;  // screen pixels
@@ -34,6 +46,7 @@ export interface AppearanceSettings {
   gc:          LineAppearance;
   ais:         AisAppearance;
   ruler:       RulerAppearance;
+  route:       RouteAppearance;
 }
 
 export interface SettingsData {
@@ -61,6 +74,11 @@ const DEFAULTS: SettingsData = {
       cog: { color: '#f59e0b', width: 1.5, style: 'dashed', lengthMinutes: 3 },
     },
     ruler: { color: '#ffdc32', width: 2 },
+    route: {
+      bearing:   { color: '#ff6d00', width: 2,   style: 'dashed' },
+      segment:   { color: '#e040fb', width: 2.5, style: 'solid'  },
+      remaining: { color: '#e040fb', width: 2,   style: 'dashed' },
+    },
   },
 };
 
@@ -102,6 +120,11 @@ function load(): SettingsData {
               cog: { ...DEFAULTS.appearance.ais.cog, ...(p.appearance?.ais?.cog ?? {}) },
             },
             ruler: { ...DEFAULTS.appearance.ruler, ...(p.appearance?.ruler ?? {}) },
+            route: {
+              bearing:   { ...DEFAULTS.appearance.route.bearing,   ...(p.appearance?.route?.bearing   ?? {}) },
+              segment:   { ...DEFAULTS.appearance.route.segment,   ...(p.appearance?.route?.segment   ?? {}) },
+              remaining: { ...DEFAULTS.appearance.route.remaining, ...(p.appearance?.route?.remaining ?? {}) },
+            },
           },
         };
       }

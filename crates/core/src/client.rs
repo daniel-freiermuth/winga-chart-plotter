@@ -63,7 +63,8 @@ impl SignalKClient {
                     {"path": "navigation.position",             "period": 500},
                     {"path": "navigation.courseOverGroundTrue", "period": 500},
                     {"path": "navigation.speedOverGround",      "period": 500},
-                    {"path": "navigation.headingTrue",          "period": 500}
+                    {"path": "navigation.headingTrue",          "period": 500},
+                    {"path": "navigation.course",               "period": 1000}
                 ]
             }"#;
             let _ = ws_clone.send_with_str(subscribe_msg);
