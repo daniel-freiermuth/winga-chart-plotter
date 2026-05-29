@@ -1724,7 +1724,7 @@
 
   .north-indicator {
     position: absolute;
-    top: 10px;
+    top: 80px;
     right: 10px;
     z-index: 10;
     background: none;
