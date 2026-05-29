@@ -913,7 +913,14 @@
       if (newStyleUrl) {
         fetchAndResolveStyle(newStyleUrl)
           .then(resolved => m.setStyle(resolved as maplibregl.StyleSpecification, { diff: false }))
-          .catch(e => console.error('[map] Failed to load style', newStyleUrl, e));
+          .catch(e => {
+            console.error('[map] Failed to load style', newStyleUrl, e);
+            // setStyle() was never called, so the map's previous style is still intact.
+            // Reset both flags so the effect can retry on next trigger (e.g. chart still
+            // selected → effect re-runs because mapLoaded flipped back to true).
+            activeStyleUrl = null;
+            mapLoaded = true;
+          });
       } else {
         m.setStyle(DEFAULT_STYLE, { diff: false });
       }

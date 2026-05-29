@@ -97,6 +97,11 @@
         if (msg.status === 1) {
           // Successfully connected — reset backoff.
           reconnectDelay = 2000;
+          // Retry chart list if it failed to load initially (server may not have been
+          // ready when we first tried, but the WS connection succeeding means it's up now).
+          if (charts.error || Object.keys(charts.available).length === 0) {
+            void charts.load(settings.signalkHttpUrl);
+          }
         } else if (msg.status === 2 || msg.status === 3) {
           // Disconnected or error — schedule reconnect.
           if (msg.status === 3) error = 'Connection error';
