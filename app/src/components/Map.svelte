@@ -1608,13 +1608,11 @@
     flushLayers();
   });
 
+  // Appearance-only effect: paint/layout properties that change only when settings change.
+  // Deliberately does NOT read $vesselState so 60 Hz orientation updates don't trigger it.
   $effect(() => {
-    const ap    = settings.appearance;
-    const state = $vesselState;
-    const zoom  = mapZoom;
+    const ap = settings.appearance;
     if (!map || !mapLoaded) return;
-
-    // Paint properties fire immediately — they're cheap and only change when appearance settings change.
     map.setPaintProperty('vessel-gc-line',  'line-color',     ap.gc.color);
     map.setPaintProperty('vessel-gc-line',  'line-width',     ap.gc.width);
     map.setPaintProperty('vessel-gc-line',  'line-dasharray', dashArray(ap.gc.style, ap.gc.width) ?? undefined);
@@ -1625,8 +1623,17 @@
     map.setPaintProperty('vessel-hdg-line', 'line-width',     ap.heading.width);
     map.setPaintProperty('vessel-hdg-line', 'line-dasharray', dashArray(ap.heading.style, ap.heading.width) ?? undefined);
     map.setLayoutProperty('vessel-icon',    'icon-size',       ap.vesselSize / 64);
+  });
 
-    if (!state.position) return;
+  // Position effect: GeoJSON sources updated whenever vessel state or zoom changes.
+  // rAF-coalesced so MapLibre only gets one setData call per rendered frame even if
+  // $vesselState changes at 60 Hz (orientation events).
+  $effect(() => {
+    const ap    = settings.appearance;
+    const state = $vesselState;
+    const zoom  = mapZoom;
+    if (!map || !mapLoaded || !state.position) return;
+
     const { longitude, latitude } = state.position;
 
     function lineDistM(line: LineAppearance, sogMs: number | null): number {
@@ -1663,9 +1670,8 @@
 
     const m = map; // stable reference for the rAF closure
 
-    // Coalesce: multiple Signal K field updates (lat, lon, COG, SOG, heading) fire this effect
-    // separately in the same epoch. We only call setData once per animation frame so MapLibre
-    // only queues one repaint per epoch instead of ~5–8.
+    // Coalesce: multiple store updates (lat, lon, COG, SOG, heading) can fire this effect
+    // in rapid succession. Only call setData once per animation frame.
     _pendingVesselSetData = () => {
       const vesselSrc = m.getSource(VESSEL_SOURCE);
       const cogSrc    = m.getSource(COG_SOURCE);
