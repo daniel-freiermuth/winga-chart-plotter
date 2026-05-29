@@ -41,6 +41,13 @@
     open = true;
   }
 
+  export function openTo(t: typeof tab) {
+    connDraft = { protocol: settings.protocol, host: settings.host, port: settings.port };
+    settingsSnapshot = JSON.stringify({ appearance: settings.appearance, targetFps: settings.targetFps });
+    tab  = t;
+    open = true;
+  }
+
   function saveConnection() {
     settings.apply({
       signalkProtocol: connDraft.protocol,

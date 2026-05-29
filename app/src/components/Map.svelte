@@ -29,6 +29,8 @@
 
   type ProjectionId = 'mercator' | 'globe';
 
+  const { openSettings = (_tab: string) => {} }: { openSettings?: (tab: string) => void } = $props();
+
   const DEFAULT_STYLE: maplibregl.StyleSpecification = {
     version: 8,
     projection: { type: 'mercator' },
@@ -622,8 +624,55 @@
       if (e.originalEvent) rotateMode.setManual();
     });
 
-    // AIS vessel click — pick all vessels under the cursor and disambiguate if needed.
+    // Own vessel click — show a small popup with a link to vessel settings.
+    map.on('click', 'vessel-icon', (e) => {
+      e.preventDefault();
+      const coord = e.lngLat;
+      const popup = new maplibregl.Popup({ closeButton: false, offset: 14, className: 'vessel-self-popup' })
+        .setLngLat(coord)
+        .setHTML('<button class="vessel-self-settings-btn">Own vessel settings</button>')
+        .addTo(map!);
+      popup.getElement().addEventListener('click', (ev) => {
+        const btn = (ev.target as HTMLElement).closest('.vessel-self-settings-btn');
+        if (!btn) return;
+        popup.remove();
+        openSettings('vessel');
+      });
+    });
+    map.on('mouseenter', 'vessel-icon', () => { if (map) map.getCanvas().style.cursor = 'pointer'; });
+    map.on('mouseleave', 'vessel-icon', () => { if (map) map.getCanvas().style.cursor = ''; });
+
+    // Route click — show popup with route name and link to route settings.
+    const routeClickLayers = ['route-full', 'route-leg', 'route-bearing', 'route-waypoints'];
+    map.on('click', routeClickLayers, (e) => {
+      if (map?.queryRenderedFeatures(e.point, { layers: ['vessel-icon'] }).length) return;
+      const name = route.routeName;
+      const html = `
+        <div class="ais-popup">
+          ${name ? `<div class="ais-popup-title">${name}</div>` : ''}
+          <div class="ais-links" style="margin-top:0">
+            <button class="popup-settings-btn" data-settings="routes">Route settings</button>
+          </div>
+        </div>`;
+      const popup = new maplibregl.Popup({ closeButton: false, offset: 10, maxWidth: '220px' })
+        .setLngLat(e.lngLat)
+        .setHTML(html)
+        .addTo(map!);
+      popup.getElement().addEventListener('click', (ev) => {
+        const btn = (ev.target as HTMLElement).closest<HTMLElement>('[data-settings]');
+        if (!btn) return;
+        popup.remove();
+        openSettings(btn.dataset.settings!);
+      });
+    });
+    for (const id of routeClickLayers) {
+      map.on('mouseenter', id, () => { if (map) map.getCanvas().style.cursor = 'pointer'; });
+      map.on('mouseleave', id, () => { if (map) map.getCanvas().style.cursor = ''; });
+    }
+
     map.on('click', (e) => {
+      // Don't open AIS popup if the own-vessel icon was clicked (handled above).
+      if (map?.queryRenderedFeatures(e.point, { layers: ['vessel-icon'] }).length) return;
       if (!overlay) return;
       const { x, y } = e.point;
       const aisLayerIds = ['ais-confirmed-icon', 'ais-hull-ghost', 'ais-hull-confirmed', 'ais-ghost-icon', 'ais-mob-icon'];
@@ -831,6 +880,9 @@
           ${row('Air height', t.airHeightM ?? null, ' m')}
         </table>
         ${lookupLinks}
+        <div class="ais-links" style="margin-top:6px">
+          <button class="popup-settings-btn" data-settings="ais">AIS settings</button>
+        </div>
       </div>`;
   }
 
@@ -867,6 +919,13 @@
 
     popup.on('close', () => {
       if (aisAgeTimer !== null) { clearInterval(aisAgeTimer); aisAgeTimer = null; }
+    });
+
+    popup.getElement().addEventListener('click', (ev) => {
+      const btn = (ev.target as HTMLElement).closest<HTMLElement>('[data-settings]');
+      if (!btn) return;
+      popup.remove();
+      openSettings(btn.dataset.settings!);
     });
 
     return true;
@@ -1987,4 +2046,22 @@
   :global(.maplibregl-popup-close-button) { color: #888; font-size: 16px; }
   /* Ensure MapLibre popups (DOM elements) always render above the deck.gl WebGL canvas */
   :global(.maplibregl-popup) { z-index: 10; }
+  :global(.vessel-self-settings-btn),
+  :global(.popup-settings-btn) {
+    display: block;
+    width: 100%;
+    padding: 7px 14px;
+    background: rgba(96,165,250,0.15);
+    color: #60a5fa;
+    border: 1px solid rgba(96,165,250,0.3);
+    border-radius: 6px;
+    font-size: 13px;
+    cursor: pointer;
+    white-space: nowrap;
+    text-align: center;
+  }
+  :global(.vessel-self-settings-btn:hover),
+  :global(.popup-settings-btn:hover) {
+    background: rgba(96,165,250,0.28);
+  }
 </style>

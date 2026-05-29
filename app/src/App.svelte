@@ -27,6 +27,7 @@
     | { type: 'error';  message: string };
 
   let mapComp = $state<ReturnType<typeof Map> | null>(null);
+  let settingsComp = $state<ReturnType<typeof Settings> | null>(null);
   let connected = $state(false);
   let error = $state<string | null>(null);
   let worker: Worker | null = null;
@@ -236,8 +237,8 @@
 </script>
 
 <div style="position: relative; width: 100%; height: 100%;">
-  <Map bind:this={mapComp} />
-  <Settings />
+  <Map bind:this={mapComp} openSettings={(tab) => settingsComp?.openTo(tab as Parameters<typeof settingsComp.openTo>[0])} />
+  <Settings bind:this={settingsComp} />
   <ChartPicker />
 
   <div style="
