@@ -80,17 +80,28 @@
 
     // Once an absolute event fires we ignore the relative fallback.
     let gotAbsolute = false;
+    // rAF coalescing: only flush one store update per animation frame.
+    let rafPending = false;
 
     function headingFromAlpha(alpha: number): number {
       // alpha is a CCW rotation from geographic north; flip to CW compass bearing.
       return ((360 - alpha) % 360) * (Math.PI / 180);
     }
 
+    function scheduleFlush() {
+      if (rafPending) return;
+      rafPending = true;
+      requestAnimationFrame(() => {
+        rafPending = false;
+        vesselState.update(s => ({ ...s, heading: latestCompassHeadingRad }));
+      });
+    }
+
     function onAbsolute(e: DeviceOrientationEvent) {
       if (e.alpha === null) return;
       gotAbsolute = true;
       latestCompassHeadingRad = headingFromAlpha(e.alpha);
-      vesselState.update(s => ({ ...s, heading: latestCompassHeadingRad }));
+      scheduleFlush();
     }
 
     function onRelative(e: DeviceOrientationEvent) {
@@ -104,7 +115,7 @@
       } else {
         return;
       }
-      vesselState.update(s => ({ ...s, heading: latestCompassHeadingRad }));
+      scheduleFlush();
     }
 
     window.addEventListener('deviceorientationabsolute', onAbsolute as EventListener);
