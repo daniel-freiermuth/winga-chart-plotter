@@ -5,7 +5,7 @@
   import { faGear } from '@fortawesome/free-solid-svg-icons';
 
   let open = $state(false);
-  let tab  = $state<'connection' | 'vessel' | 'ais' | 'routes'>('connection');
+  let tab  = $state<'connection' | 'vessel' | 'ais' | 'routes' | 'about'>('connection');
 
   // Connection settings use a draft (applied only on Save)
   let connDraft = $state({ protocol: settings.protocol, host: settings.host, port: settings.port });
@@ -95,6 +95,7 @@
       <button class="tab" class:active={tab === 'vessel'}     onclick={() => tab = 'vessel'}>Own vessel</button>
       <button class="tab" class:active={tab === 'ais'}        onclick={() => tab = 'ais'}>AIS</button>
       <button class="tab" class:active={tab === 'routes'}     onclick={() => tab = 'routes'}>Routes</button>
+      <button class="tab" class:active={tab === 'about'}      onclick={() => tab = 'about'}>About</button>
     </div>
 
     {#if tab === 'connection'}
@@ -328,10 +329,24 @@
       </div>
     {/if}
 
+    {#if tab === 'about'}
+      <div class="about">
+        <img src="./icon-192.png" alt="Winga logo" class="about-logo" />
+        <p class="about-name">Winga Chart Plotter</p>
+        <p class="about-version">v{__APP_VERSION__} <span class="about-commit">#{__APP_COMMIT__}</span></p>
+        <p class="about-desc">A sea chart plotting application for Signal K.</p>
+        <div class="about-links">
+          <a href="https://github.com/daniel-freiermuth/winga-chart-plotter" target="_blank" rel="noopener">GitHub</a>
+        </div>
+      </div>
+    {/if}
+
     <div class="actions">
       {#if tab === 'connection'}
         <button onclick={cancel} class="btn btn-cancel">Cancel</button>
         <button onclick={saveConnection} class="btn btn-save">Save &amp; reconnect</button>
+      {:else if tab === 'about'}
+        <button onclick={close} class="btn btn-save">Close</button>
       {:else}
         <button onclick={cancel} class="btn btn-cancel">Cancel</button>
         <button onclick={close}  class="btn btn-save">Close</button>
@@ -388,6 +403,16 @@
   .fps-slider { flex: 1; min-width: 100px; cursor: pointer; }
   .fps-target { min-width: 5rem; text-align: right; font-size: 13px; font-variant-numeric: tabular-nums; }
   .fps-actual { color: #666688; font-size: 11px; min-width: 3.5rem; text-align: right; font-variant-numeric: tabular-nums; }
+
+  .about { padding: 16px 0 8px; text-align: center; }
+  .about-logo { width: 80px; height: 80px; border-radius: 16px; margin-bottom: 14px; }
+  .about-name { font-size: 20px; font-weight: 700; margin: 0 0 6px; color: white; }
+  .about-version { font-size: 13px; color: #a0a0c0; margin: 0 0 16px; font-variant-numeric: tabular-nums; }
+  .about-commit { color: #666688; font-family: monospace; }
+  .about-desc { font-size: 13px; color: #a0a0c0; margin: 0 0 20px; }
+  .about-links { display: flex; gap: 16px; justify-content: center; }
+  .about-links a { color: #4a6cf7; font-size: 13px; text-decoration: none; }
+  .about-links a:hover { text-decoration: underline; }
 
   .toggle { display: inline-flex; align-items: center; cursor: pointer; flex-shrink: 0; }
   .toggle input { position: absolute; opacity: 0; width: 0; height: 0; }

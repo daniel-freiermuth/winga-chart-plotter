@@ -2,12 +2,24 @@ import { defineConfig } from 'vite';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 import wasm from 'vite-plugin-wasm';
 import { VitePWA } from 'vite-plugin-pwa';
+import { execSync } from 'child_process';
+import { readFileSync } from 'fs';
+
+const pkg = JSON.parse(readFileSync('../package.json', 'utf-8')) as { version: string };
+const commitHash = (() => {
+  try { return execSync('git rev-parse --short HEAD').toString().trim(); }
+  catch { return 'unknown'; }
+})();
 
 export default defineConfig(({ command }) => ({
   // Relative base for production so the app works when Signal K mounts it
   // under a subpath (e.g. /winga-chart-plotter-signalk/). Dev server keeps
   // the default '/' so Vite HMR and module resolution work correctly.
   base: command === 'build' ? './' : '/',
+  define: {
+    __APP_VERSION__: JSON.stringify(pkg.version),
+    __APP_COMMIT__:  JSON.stringify(commitHash),
+  },
   plugins: [
     wasm(),
     svelte(),
