@@ -346,6 +346,37 @@ export class AisHullLayer<DataT = number> extends Layer<AisHullLayerProps<DataT>
 }
 
 // ---------------------------------------------------------------------------
+// Hull outline geometry — 5 triangulated quads, one per hull edge.
+// Used by AisHullBorderLayer for a configurable-colour outline stroke.
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a triangle-list mesh that traces the hull outline.
+ * Each of the 5 hull edges becomes a thin rectangular quad centred on the
+ * edge line.  `halfWidth` is in hull-local units (X scaled by beam/2, Y by
+ * length/2 in the vertex shader).
+ */
+function buildHullOutlineGeometry(halfWidth: number): HullDecorationGeometry {
+  const outline: Array<[number, number]> = [
+    [0, 1],    // bow
+    [1, 0.6],  // sb-shoulder
+    [1, -1],   // sb-aft
+    [-1, -1],  // port-aft
+    [-1, 0.6], // port-shoulder
+  ];
+  const v: number[] = [];
+  for (let i = 0; i < outline.length; i++) {
+    const [x0, y0] = outline[i];
+    const [x1, y1] = outline[(i + 1) % outline.length];
+    v.push(...hullLineSeg(x0, y0, x1, y1, halfWidth));
+  }
+  return buildHullDecorationGeometry(v);
+}
+
+/** Pre-built hull outline geometry with a half-width of 0.05 local units. */
+export const HULL_BORDER_OUTLINE: HullDecorationGeometry = buildHullOutlineGeometry(0.05);
+
+// ---------------------------------------------------------------------------
 // AisHullDecorationLayer
 //
 // Renders nav-state decoration geometry (anchor dot, mooring bars, aground
@@ -733,6 +764,215 @@ export class AisHullDecorationLayer<DataT = number>
 
   _getModel() {
     const { positions, vertexCount } = this.props.decoration;
+    return new Model(this.context.device, {
+      ...this.getShaders(),
+      id: this.props.id,
+      bufferLayout: this.getAttributeManager()!.getBufferLayouts(),
+      geometry: new Geometry({
+        topology: 'triangle-list',
+        attributes: { positions: { size: 3, value: positions } },
+        vertexCount,
+      }),
+      isInstanced: true,
+    });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// AisHullBorderLayer
+//
+// Renders the hull polygon outline as a triangulated stroke with a
+// configurable per-vessel RGBA colour.  Uses the same dead-reckoning maths
+// as AisHullDecorationLayer so the border tracks the animated ghost hull.
+// ---------------------------------------------------------------------------
+
+const borderVs = /* glsl */`\
+#version 300 es
+#define SHADER_NAME ais-hull-border-vertex-shader
+
+in vec3 positions;
+in vec3 instancePositions;
+in vec3 instancePositions64Low;
+in float instanceSog;
+in float instanceCog;
+in float instanceHeading;
+in float instanceRot;
+in float instanceAgeAtUpload;
+in float instanceLength;
+in float instanceBeam;
+in vec4 instanceBorderColor;   // unorm8 RGBA
+
+out vec4 vColor;
+
+void main(void) {
+  float dt = min(instanceAgeAtUpload + aisHull.timeSinceUpload, 180.0);
+
+  float dEast, dNorth;
+  if (abs(instanceRot) > 1e-4) {
+    float cogEnd = instanceCog + instanceRot * dt;
+    float R      = instanceSog / instanceRot;
+    dEast  = R * (cos(instanceCog) - cos(cogEnd));
+    dNorth = R * (sin(cogEnd)      - sin(instanceCog));
+  } else {
+    dEast  = instanceSog * dt * sin(instanceCog);
+    dNorth = instanceSog * dt * cos(instanceCog);
+  }
+
+  float safelen  = max(instanceLength, 1.0);
+  float safebeam = max(instanceBeam,  1.0);
+  float localX = positions.x * safebeam * 0.5;
+  float localY = positions.y * safelen  * 0.5;
+
+  float heading = instanceHeading + instanceRot * dt;
+  float sinH = sin(heading);
+  float cosH = cos(heading);
+  float hullEast  = localY * sinH + localX * cosH;
+  float hullNorth = localY * cosH - localX * sinH;
+
+  geometry.worldPosition = instancePositions;
+  vec3 offset = project_size(vec3(dEast + hullEast, dNorth + hullNorth, 0.0));
+
+  vec4 worldPos;
+  gl_Position = project_position_to_clipspace(instancePositions, instancePositions64Low, offset, worldPos);
+  DECKGL_FILTER_GL_POSITION(gl_Position, geometry);
+
+  if (project.projectionMode == PROJECTION_MODE_GLOBE &&
+      dot(worldPos.xyz, project.cameraPosition) < 0.0) {
+    gl_Position = vec4(0.0, 0.0, -2.0, 1.0);
+  }
+
+  // Same cross-fade as AisHullLayer — border fades in with the hull.
+  float lat_rad = instancePositions.y * radians(1.0);
+  float transitionZoom = log2(
+    aisHull.settingsIconSize * 64.0 * 40075016.686 * cos(lat_rad) / (safelen * 256.0)
+  );
+  float t01 = clamp((aisHull.zoom - transitionZoom + 1.0) / 2.0, 0.0, 1.0);
+
+  vColor = vec4(instanceBorderColor.rgb, instanceBorderColor.a * t01 * aisHull.opacity);
+}
+`;
+
+const borderFs = /* glsl */`\
+#version 300 es
+precision highp float;
+#define SHADER_NAME ais-hull-border-fragment-shader
+
+in vec4 vColor;
+out vec4 fragColor;
+
+void main(void) {
+  fragColor = vColor;
+  DECKGL_FILTER_COLOR(fragColor, geometry);
+}
+`;
+
+export interface AisHullBorderLayerProps<DataT = number> extends LayerProps {
+  data: DataT[] | { length: number };
+  getPosition?:     Accessor<DataT, [number, number] | [number, number, number]>;
+  getSog?:          Accessor<DataT, number>;
+  getCog?:          Accessor<DataT, number>;
+  getHeading?:      Accessor<DataT, number>;
+  getRot?:          Accessor<DataT, number>;
+  getAgeAtUpload?:  Accessor<DataT, number>;
+  getLength?:       Accessor<DataT, number>;
+  getBeam?:         Accessor<DataT, number>;
+  getBorderColor?:  Accessor<DataT, [number, number, number, number]>;
+  uploadTimestamp?: number;
+  selfAnimate?:     boolean;
+  settingsIconSize?: number;
+  opacity?:         number;
+}
+
+const borderDefaultProps: DefaultProps<AisHullBorderLayerProps<number>> = {
+  getPosition:    { type: 'accessor', value: [0, 0] },
+  getSog:         { type: 'accessor', value: 0 },
+  getCog:         { type: 'accessor', value: 0 },
+  getHeading:     { type: 'accessor', value: 0 },
+  getRot:         { type: 'accessor', value: 0 },
+  getAgeAtUpload: { type: 'accessor', value: 0 },
+  getLength:      { type: 'accessor', value: 50 },
+  getBeam:        { type: 'accessor', value: 10 },
+  getBorderColor: { type: 'accessor', value: [0, 0, 0, 200] },
+  uploadTimestamp: 0,
+  selfAnimate: false,
+  settingsIconSize: 1,
+  opacity: 1,
+};
+
+export class AisHullBorderLayer<DataT = number>
+  extends Layer<AisHullBorderLayerProps<DataT>>
+{
+  static override layerName = 'AisHullBorderLayer';
+  static override defaultProps = borderDefaultProps;
+
+  override getShaders() {
+    return super.getShaders({
+      vs: borderVs,
+      fs: borderFs,
+      modules: [project32, aisHullUniformModule],
+    });
+  }
+
+  override initializeState() {
+    const attributeManager = this.getAttributeManager()!;
+    attributeManager.addInstanced({
+      instancePositions: {
+        size: 3,
+        type: 'float64',
+        fp64: this.use64bitPositions(),
+        transition: true,
+        accessor: 'getPosition',
+        defaultValue: [0, 0, 0],
+      },
+      instanceSog:         { size: 1, accessor: 'getSog',         defaultValue: 0 },
+      instanceCog:         { size: 1, accessor: 'getCog',         defaultValue: 0 },
+      instanceHeading:     { size: 1, accessor: 'getHeading',     defaultValue: 0 },
+      instanceRot:         { size: 1, accessor: 'getRot',         defaultValue: 0 },
+      instanceAgeAtUpload: { size: 1, accessor: 'getAgeAtUpload', defaultValue: 0 },
+      instanceLength:      { size: 1, accessor: 'getLength',      defaultValue: 50 },
+      instanceBeam:        { size: 1, accessor: 'getBeam',        defaultValue: 10 },
+      instanceBorderColor: {
+        size: 4,
+        type: 'unorm8',
+        accessor: 'getBorderColor',
+        defaultValue: [0, 0, 0, 200],
+      },
+    });
+  }
+
+  override updateState(params: UpdateParameters<this>) {
+    super.updateState(params);
+    if (params.changeFlags.extensionsChanged) {
+      (this.state['model'] as Model | undefined)?.destroy();
+      this.state['model'] = this._getModel();
+      this.getAttributeManager()!.invalidateAll();
+    }
+    if (params.changeFlags.propsChanged) {
+      this.setNeedsRedraw();
+    }
+  }
+
+  override draw({ uniforms: _uniforms }: { uniforms: Record<string, unknown> }) {
+    const { uploadTimestamp, selfAnimate, settingsIconSize, opacity } = this.props;
+    const timeSinceUpload = selfAnimate
+      ? Math.max(0, (Date.now() - (uploadTimestamp ?? 0)) / 1000)
+      : 0;
+    const zoom = this.context.viewport.zoom;
+    const model = this.state['model'] as Model;
+    model.shaderInputs.setProps({
+      aisHull: {
+        timeSinceUpload,
+        zoom,
+        settingsIconSize: settingsIconSize ?? 1,
+        opacity: opacity ?? 1,
+      },
+    });
+    model.draw(this.context.renderPass);
+    if (selfAnimate) this.setNeedsRedraw();
+  }
+
+  _getModel() {
+    const { positions, vertexCount } = HULL_BORDER_OUTLINE;
     return new Model(this.context.device, {
       ...this.getShaders(),
       id: this.props.id,

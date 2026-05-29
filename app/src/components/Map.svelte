@@ -23,7 +23,7 @@
   import { route } from '../stores/route.svelte';
   import { gcLine } from '../lib/geoMath';
   import { fetchAndResolveStyle } from '../lib/resolveStyle';
-  import { AisHullLayer, AisHullDecorationLayer, HULL_ANCHOR_DOT, HULL_MOORING_BARS, HULL_AGROUND_RING, HULL_FISHING_GEAR, HULL_NUC, HULL_RESTRICTED, HULL_DRAUGHT } from '../layers/AisHullLayer';
+  import { AisHullLayer, AisHullDecorationLayer, AisHullBorderLayer, HULL_ANCHOR_DOT, HULL_MOORING_BARS, HULL_AGROUND_RING, HULL_FISHING_GEAR, HULL_NUC, HULL_RESTRICTED, HULL_DRAUGHT } from '../layers/AisHullLayer';
   import { AisIconLayer, ANCHOR_DOT_GEOMETRY, AGROUND_CIRCLE_GEOMETRY, MOORING_BARS_GEOMETRY, FISHING_GEAR_GEOMETRY, NUC_GEOMETRY, RESTRICTED_MANOEUVRING_GEOMETRY, DRAUGHT_GEOMETRY, MOB_GEOMETRY } from '../layers/AisIconLayer';
   import { makeVesselIconData, extrapolatePos } from '../lib/deadReckoning';
 
@@ -1189,6 +1189,15 @@
 
     const vesselColor      = hexToRgba(ap.vesselColor, 220);
     const ghostVesselColor = hexToRgba(ap.vesselColor, 130);
+    // Adaptive border: mix vessel color toward white (dark vessel) or black (bright vessel),
+    // mirroring the icon outline shader logic.
+    const [vr, vg, vb] = vesselColor;
+    const luma = (vr * 0.299 + vg * 0.587 + vb * 0.114) / 255;
+    const mix  = (a: number, b: number, t: number) => Math.round(a + (b - a) * t);
+    const target = luma < 0.5 ? 255 : 0;
+    const br = mix(vr, target, 0.5), bg = mix(vg, target, 0.5), bb = mix(vb, target, 0.5);
+    const borderColor:      [number,number,number,number] = [br, bg, bb, 220];
+    const ghostBorderColor: [number,number,number,number] = [br, bg, bb, 160];
 
     // Accessor lambdas — close over hotData, coldMap, ids. Zero allocations per frame.
     const getPos  = (i: number): [number, number, number] => [hotData[i * S + AIS_F_LON], hotData[i * S + AIS_F_LAT], 0];
@@ -1475,6 +1484,30 @@
           })
         : null;
 
+    const makeBorderLayer = (id: string, animate: boolean, color: [number,number,number,number], opacity: number) =>
+      hullIndices.length > 0
+        ? new AisHullBorderLayer({
+            id,
+            data: hullIndices,
+            getPosition:    getPos,
+            getSog:         animate ? getSog : () => 0,
+            getCog:         animate ? getCog : () => 0,
+            getHeading:     getHdgStrict,
+            getRot:         animate ? getRot : () => 0,
+            getAgeAtUpload: animate ? getAge : () => 0,
+            getLength:      (i) => getLen(i, 50),
+            getBeam:        (i) => getBeam(i, 10),
+            getBorderColor: () => color,
+            uploadTimestamp: now,
+            selfAnimate: animate,
+            settingsIconSize,
+            opacity,
+          })
+        : null;
+
+    const confirmedHullBorderLayer = makeBorderLayer('ais-hull-border-confirmed', false, borderColor, 1.0);
+    const ghostHullBorderLayer     = makeBorderLayer('ais-hull-border-ghost',     true,  ghostBorderColor, 0.75);
+
     const anchoredHullDecoration = makeHullDecoration('ais-anchored-hull', anchoredHullIndices, HULL_ANCHOR_DOT, false);
     const mooredHullDecoration   = makeHullDecoration('ais-moored-hull',   mooredHullIndices,   HULL_MOORING_BARS, false);
     const agroundHullDecoration  = makeHullDecoration('ais-aground-hull',  agroundHullIndices,  HULL_AGROUND_RING, false);
@@ -1494,6 +1527,8 @@
     aisLayerGroup = [
       // bottom: confirmed hull at last-known position (full opacity, static)
       ...(confirmedHullLayer ? [confirmedHullLayer] : []),
+      // border outline on confirmed hull (above fill, below decorations)
+      ...(confirmedHullBorderLayer ? [confirmedHullBorderLayer] : []),
       // hull-space decorations at confirmed position (static)
       ...(anchoredHullDecoration    ? [anchoredHullDecoration]    : []),
       ...(mooredHullDecoration      ? [mooredHullDecoration]      : []),
@@ -1504,6 +1539,8 @@
       ...(draughtHullDecoration     ? [draughtHullDecoration]     : []),
       // ghost hull polygon (GPU animated, 75% opacity)
       ...(ghostHullLayer ? [ghostHullLayer] : []),
+      // border outline on ghost hull (tracks dead-reckoned position)
+      ...(ghostHullBorderLayer ? [ghostHullBorderLayer] : []),
       // hull-space decorations on ghost (animated, tracks DR hull)
       ...(anchoredGhostDecoration   ? [anchoredGhostDecoration]   : []),
       ...(mooredGhostDecoration     ? [mooredGhostDecoration]     : []),
