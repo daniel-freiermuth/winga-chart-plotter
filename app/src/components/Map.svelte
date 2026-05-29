@@ -1177,6 +1177,10 @@
     const getAge  = (i: number) => hotData[i * S + AIS_F_AGE];
     const getLen  = (i: number, fallback: number) => coldMap.get(ids[i])?.lengthM ?? fallback;
     const getBeam = (i: number, fallback: number) => coldMap.get(ids[i])?.beamM ?? fallback;
+    // Icon cross-fade only fires when a hull polygon is actually drawn for this vessel.
+    // A vessel with length but no heading has no hull → icon must stay at full opacity.
+    const hullSet = new Set(hullIndices);
+    const getLenForIcon = (i: number) => hullSet.has(i) ? getLen(i, 0) : 0;
 
     const ghostIconLayer = ghostIndices.length > 0
       ? new AisIconLayer({
@@ -1188,7 +1192,7 @@
           getHeading:     getHdg,
           getRot:         getRot,
           getAgeAtUpload: getAge,
-          getLength:      (i) => getLen(i, 0),
+          getLength:      getLenForIcon,
           getColor:       ghostVesselColor,
           uploadTimestamp: now,
           selfAnimate: true,
@@ -1207,7 +1211,7 @@
       getHeading:     getHdg,
       getRot:         () => 0,
       getAgeAtUpload: () => 0,
-      getLength:      (i) => getLen(i, 0),
+      getLength:      getLenForIcon,
       getColor:       vesselColor,
       uploadTimestamp: now,
       selfAnimate: false,
@@ -1226,7 +1230,7 @@
           getHeading:     getHdg,
           getRot:         () => 0,
           getAgeAtUpload: () => 0,
-          getLength:      (i) => getLen(i, 0),
+          getLength:      getLenForIcon,
           getColor:       vesselColor,
           uploadTimestamp: now,
           selfAnimate: false,
@@ -1247,7 +1251,7 @@
           getHeading:     getHdg,
           getRot:         () => 0,
           getAgeAtUpload: () => 0,
-          getLength:      (i) => getLen(i, 0),
+          getLength:      getLenForIcon,
           getColor:       vesselColor,
           uploadTimestamp: now,
           selfAnimate: false,
@@ -1268,7 +1272,7 @@
           getHeading:     getHdg,
           getRot:         () => 0,
           getAgeAtUpload: () => 0,
-          getLength:      (i) => getLen(i, 0),
+          getLength:      getLenForIcon,
           getColor:       vesselColor,
           uploadTimestamp: now,
           selfAnimate: false,
@@ -1289,7 +1293,7 @@
           getHeading:     getHdg,
           getRot:         () => 0,
           getAgeAtUpload: () => 0,
-          getLength:      (i) => getLen(i, 0),
+          getLength:      getLenForIcon,
           getColor:       vesselColor,
           uploadTimestamp: now,
           selfAnimate: false,
@@ -1310,7 +1314,7 @@
           getHeading:     getHdg,
           getRot:         () => 0,
           getAgeAtUpload: () => 0,
-          getLength:      (i) => getLen(i, 0),
+          getLength:      getLenForIcon,
           getColor:       vesselColor,
           uploadTimestamp: now,
           selfAnimate: false,
@@ -1331,7 +1335,7 @@
           getHeading:     getHdg,
           getRot:         () => 0,
           getAgeAtUpload: () => 0,
-          getLength:      (i) => getLen(i, 0),
+          getLength:      getLenForIcon,
           getColor:       vesselColor,
           uploadTimestamp: now,
           selfAnimate: false,
@@ -1352,7 +1356,7 @@
           getHeading:     getHdg,
           getRot:         () => 0,
           getAgeAtUpload: () => 0,
-          getLength:      (i) => getLen(i, 0),
+          getLength:      getLenForIcon,
           getColor:       vesselColor,
           uploadTimestamp: now,
           selfAnimate: false,
