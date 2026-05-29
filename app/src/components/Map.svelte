@@ -1501,8 +1501,13 @@
             return [[lon, lat], [endLon, endLat]];
           }
           const N = 24;
+          // Cap the drawn arc to one full circle (2π / |rotRad| = seconds per revolution).
+          // All N segments are distributed evenly over that capped duration, so fast-turning
+          // vessels use their full segment budget for a single loop rather than spiral beyond it.
+          const fullCircleSec = (2 * Math.PI) / Math.abs(rotRad);
+          const clampedSec = Math.min(totalSec, fullCircleSec);
           return Array.from({ length: N + 1 }, (_, k) => {
-            const [pLon, pLat] = extrapolatePos(lon, lat, c, isNaN(s) ? 0 : s, rotRad, 0, totalSec * k / N * 1000);
+            const [pLon, pLat] = extrapolatePos(lon, lat, c, isNaN(s) ? 0 : s, rotRad, 0, clampedSec * k / N * 1000);
             return [pLon, pLat] as [number, number];
           });
         },
