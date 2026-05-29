@@ -1,4 +1,39 @@
 /**
+ * Skippo's glyph server only hosts Roboto variants. Any other font name that
+ * appears in a style's text-font property will 404.  This map remaps the most
+ * common alternatives to their closest Roboto equivalent so MapLibre never
+ * requests a font the server can't serve.
+ */
+const GLYPH_FONT_MAP: Record<string, string> = {
+  'Open Sans Regular':        'Roboto Regular',
+  'Open Sans Bold':           'Roboto Bold',
+  'Open Sans SemiBold':       'Roboto Medium',
+  'Open Sans Italic':         'Roboto Italic',
+  'Open Sans Bold Italic':    'Roboto Bold',
+  'Arial Unicode MS Regular': 'Roboto Regular',
+  'Arial Unicode MS Bold':    'Roboto Bold',
+  'Arial Unicode MS':         'Roboto Regular',
+};
+
+/**
+ * Recursively walk a style JSON tree and substitute any font name strings that
+ * are not served by the active glyph server.  Only exact string matches are
+ * replaced, so other string values (layer IDs, source names, URLs …) are safe.
+ */
+function remapGlyphFonts(node: unknown): unknown {
+  if (typeof node === 'string') return GLYPH_FONT_MAP[node] ?? node;
+  if (Array.isArray(node)) return node.map(remapGlyphFonts);
+  if (node !== null && typeof node === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(node as Record<string, unknown>)) {
+      out[k] = remapGlyphFonts(v);
+    }
+    return out;
+  }
+  return node;
+}
+
+/**
  * Fetch a MapLibre style JSON URL and resolve any ["config", key] expressions
  * using the style's schema defaults, and substitute unsupported camera expressions
  * with safe literal fallbacks.
@@ -24,7 +59,11 @@
 export async function fetchAndResolveStyle(url: string): Promise<object> {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Failed to fetch style ${url}: ${res.status} ${res.statusText}`);
-  const style = await res.json() as Record<string, unknown>;
+  const raw = await res.json() as Record<string, unknown>;
+
+  // Remap unsupported font names before any expression resolution so that
+  // the substituted names propagate correctly through step/match outputs.
+  const style = remapGlyphFonts(raw) as Record<string, unknown>;
 
   // Build a defaults map from schema (e.g. { symbolScale: 1, hidePlaces: false, … })
   const schema = style['schema'] as Record<string, { default?: unknown }> | undefined;

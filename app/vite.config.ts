@@ -28,6 +28,12 @@ export default defineConfig(({ command }) => ({
           /^\/signalk\//,
           /^\/v1\//,
         ],
+        // Activate the new service worker immediately without waiting for all
+        // existing tabs to close.  Combined with autoUpdate this means a fresh
+        // deployment is served on the next page load rather than requiring the
+        // user to close every tab and reopen the app.
+        skipWaiting: true,
+        clientsClaim: true,
       },
       manifest: false, // we maintain public/manifest.json ourselves
     }),
