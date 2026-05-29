@@ -1676,6 +1676,28 @@
   ><FaIcon icon={isFullscreen ? faCompress : faExpand} /></button>
 </div>
 
+<!-- North indicator: visible whenever map bearing is non-zero.
+     The needle always points toward true North.  Clicking snaps back to North-Up. -->
+<button
+  class="north-indicator"
+  class:north-indicator--visible={Math.abs(mapBearing) > 0.5}
+  title="Tap to reset to North-Up (bearing {mapBearing.toFixed(1)}°)"
+  onclick={() => map?.easeTo({ bearing: 0, duration: 300 })}
+  aria-label="Reset to North-Up"
+>
+  <svg width="44" height="44" viewBox="0 0 44 44" aria-hidden="true">
+    <circle cx="22" cy="22" r="21" fill="rgba(0,0,0,0.72)" stroke="rgba(255,255,255,0.18)" stroke-width="1"/>
+    <g transform="rotate({-mapBearing}, 22, 22)">
+      <!-- north half: red -->
+      <polygon points="22,5 17,23 22,20 27,23" fill="#e53e3e"/>
+      <!-- south half: light grey -->
+      <polygon points="22,39 17,21 22,24 27,21" fill="rgba(200,200,200,0.75)"/>
+    </g>
+    <text x="22" y="15.5" text-anchor="middle" font-size="7" font-family="system-ui,sans-serif"
+      fill="rgba(255,255,255,0.55)" transform="rotate({-mapBearing}, 22, 22)">N</text>
+  </svg>
+</button>
+
 <style>
   .projection-picker {
     position: absolute;
@@ -1699,6 +1721,26 @@
   }
   .proj-btn:hover { background: rgba(40,40,80,0.9); }
   .proj-btn--manual { color: #f59e0b; }
+
+  .north-indicator {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    z-index: 10;
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s ease;
+    border-radius: 50%;
+  }
+  .north-indicator--visible {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .north-indicator:hover circle { fill: rgba(30,30,70,0.85); }
 
   :global(.ais-popup) {
     font-family: system-ui, sans-serif;
