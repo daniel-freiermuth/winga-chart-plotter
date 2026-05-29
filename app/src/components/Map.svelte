@@ -268,6 +268,8 @@
   let rulerDrag: DragState = null;
   // True while the cursor is over a ruler handle — dragPan disabled proactively on hover.
   let isHoveringHandle = false;
+  // Ruler label popup: shown when user clicks a label; holds screen position and ruler id.
+  let rulerPopup = $state<{ rulerId: string; x: number; y: number } | null>(null);
 
   function setHandleHover(hovering: boolean) {
     if (hovering === isHoveringHandle) return;
@@ -288,15 +290,17 @@
     const rect = mapContainer.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
-    // Check delete button first — small ✕ offset from B endpoint.
-    const deletePick = overlay.pickObject({ x, y, radius: 12, layerIds: ['ruler-delete'] });
-    if (deletePick?.object) {
-      type HandleDatum = { rulerId: string };
-      const d = deletePick.object as HandleDatum;
-      rulers.remove(d.rulerId);
+    // Check label click — opens the remove popup.
+    const labelPick = overlay.pickObject({ x, y, radius: 14, layerIds: ['ruler-labels'] });
+    if (labelPick?.object) {
+      type LabelDatum = { ruler: { id: string } };
+      const d = labelPick.object as LabelDatum;
+      rulerPopup = { rulerId: d.ruler.id, x: e.clientX, y: e.clientY };
       e.stopPropagation();
       return;
     }
+    // Dismiss popup on any other tap on the map.
+    if (rulerPopup) { rulerPopup = null; return; }
     const picked = overlay.pickObject({ x, y, radius: 10, layerIds: ['ruler-handles'] });
     if (!picked?.object) return;
     type HandleDatum = { rulerId: string; endpoint: 'a' | 'b' };
@@ -519,16 +523,6 @@
             { rulerId: r.id, endpoint: 'b', lon: r.b.lon, lat: r.b.lat, snapId: r.b.snapId },
           ]);
 
-          // Delete handle at the B end — hidden when handles are too close (same threshold as label)
-          const deleteData: HandleDatum[] = currentRulers.flatMap(r => {
-            if (map) {
-              const pA = map.project([r.a.lon, r.a.lat]);
-              const pB = map.project([r.b.lon, r.b.lat]);
-              if (Math.hypot(pB.x - pA.x, pB.y - pA.y) < LABEL_MIN_PX) return [];
-            }
-            return [{ rulerId: r.id, endpoint: 'b' as const, lon: r.b.lon, lat: r.b.lat }];
-          });
-
           rulerLayerGroup = [
             new PathLayer<LineDatum>({
               id: 'ruler-line',
@@ -563,7 +557,7 @@
               },
             }),
 
-            // Single annotation label at GC midpoint, sitting on the line
+            // Label at GC midpoint — pickable so the user can click to open the remove popup.
             new TextLayer<MidDatum>({
               id: 'ruler-labels',
               data: midData,
@@ -578,33 +572,15 @@
               getAlignmentBaseline: 'center' as const,
               fontFamily: 'monospace',
               characterSet: [...'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 °·.,\'-/T'],
-              pickable: false,
-              updateTriggers: { getText: [currentRulers], getPosition: [currentRulers] },
-            }),
-
-            // Delete handle (✕) at B endpoint
-            new TextLayer<HandleDatum>({
-              id: 'ruler-delete',
-              data: deleteData,
-              getText: () => '✕',
-              getPosition: (d: HandleDatum) => [d.lon, d.lat, 0],
-              getPixelOffset: [14, -14] as [number, number],
-              getSize: 11,
-              getColor: [255, 100, 100, 220] as [number, number, number, number],
-              getBackgroundColor: [30, 10, 10, 180] as [number, number, number, number],
-              background: true,
-              backgroundPadding: [3, 1, 3, 1] as [number, number, number, number],
-              getTextAnchor: 'middle' as const,
-              getAlignmentBaseline: 'center' as const,
-              characterSet: ['✕'],
               pickable: true,
-              updateTriggers: { getPosition: [currentRulers] },
+              updateTriggers: { getText: [currentRulers], getPosition: [currentRulers] },
             }),
           ];
           flushLayers();
         } else if (rulerLayerGroup.length > 0) {
-          // Rulers were just removed — clear and flush once.
+          // Rulers were just removed — clear popup and flush once.
           rulerLayerGroup = [];
+          rulerPopup = null;
           flushLayers();
         }
       }
@@ -1804,7 +1780,44 @@
   </svg>
 </button>
 
+{#if rulerPopup}
+<div
+  class="ruler-popup"
+  style="left: {rulerPopup.x}px; top: {rulerPopup.y}px;"
+  onpointerdown={(e) => e.stopPropagation()}
+>
+  <button
+    class="ruler-popup-remove"
+    onclick={() => { if (rulerPopup) { rulers.remove(rulerPopup.rulerId); rulerPopup = null; } }}
+  >Remove</button>
+</div>
+{/if}
+
 <style>
+  .ruler-popup {
+    position: fixed;
+    z-index: 20;
+    transform: translate(-50%, calc(-100% - 8px));
+    background: #1e1e2e;
+    border: 1px solid #444466;
+    border-radius: 8px;
+    padding: 6px 8px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+    pointer-events: all;
+  }
+  .ruler-popup-remove {
+    background: #e53e3e;
+    color: white;
+    border: none;
+    border-radius: 5px;
+    padding: 6px 16px;
+    font-size: 14px;
+    cursor: pointer;
+    font-weight: 600;
+    transition: background 0.15s;
+  }
+  .ruler-popup-remove:hover { background: #c53030; }
+
   .projection-picker {
     position: absolute;
     top: 200px;
