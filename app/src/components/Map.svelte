@@ -24,6 +24,7 @@
   import { track } from '../stores/track.svelte';
   import { gcLine } from '../lib/geoMath';
   import { fetchAndResolveStyle } from '../lib/resolveStyle';
+  import { fetchAisVesselTrack } from '../lib/signalk-api';
   import { AisHullLayer, AisHullDecorationLayer, AisHullBorderLayer, HULL_ANCHOR_DOT, HULL_MOORING_BARS, HULL_AGROUND_RING, HULL_FISHING_GEAR, HULL_NUC, HULL_RESTRICTED, HULL_DRAUGHT } from '../layers/AisHullLayer';
   import { AisIconLayer, ANCHOR_DOT_GEOMETRY, AGROUND_CIRCLE_GEOMETRY, MOORING_BARS_GEOMETRY, FISHING_GEAR_GEOMETRY, NUC_GEOMETRY, RESTRICTED_MANOEUVRING_GEOMETRY, DRAUGHT_GEOMETRY, MOB_GEOMETRY } from '../layers/AisIconLayer';
   import { makeVesselIconData, extrapolatePos } from '../lib/deadReckoning';
@@ -70,6 +71,10 @@
   let mapZoom       = $state(10);
   // Fraction [0..1] of total track length over which the start fades from transparent to opaque.
   let trackFadeStop = $state(0);
+  // Raw [lon, lat] coords of the currently-displayed AIS vessel track (empty = none shown).
+  let aisTrackRaw      = $state<[number, number][]>([]);
+  let aisTrackFadeStop = $state(0);
+  let _aisTrackGen     = 0; // incremented to cancel in-flight fetches on popup close
   let mapBearing  = $state(0);
   let projection  = $state<ProjectionId>('mercator');
 
@@ -151,6 +156,8 @@
   const ROUTE_WPT_SRC   = 'route-waypoints';
   const TRACK_SOURCE          = 'vessel-track';
   const TRACK_OVERFLOW_SOURCE = 'vessel-track-overflow';
+  const AIS_TRACK_SOURCE          = 'ais-track';
+  const AIS_TRACK_OVERFLOW_SOURCE = 'ais-track-overflow';
   const EMPTY_FC: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features: [] };
 
   // Track the tile URL each chart source was last created with, so we can
@@ -903,6 +910,8 @@
       if (!m.getSource(ROUTE_WPT_SRC))  m.addSource(ROUTE_WPT_SRC,  { type: 'geojson', data: EMPTY_FC });
       if (!m.getSource(TRACK_SOURCE))          m.addSource(TRACK_SOURCE,          { type: 'geojson', data: EMPTY_FC, lineMetrics: true });
       if (!m.getSource(TRACK_OVERFLOW_SOURCE)) m.addSource(TRACK_OVERFLOW_SOURCE, { type: 'geojson', data: EMPTY_FC });
+      if (!m.getSource(AIS_TRACK_SOURCE))          m.addSource(AIS_TRACK_SOURCE,          { type: 'geojson', data: EMPTY_FC, lineMetrics: true });
+      if (!m.getSource(AIS_TRACK_OVERFLOW_SOURCE)) m.addSource(AIS_TRACK_OVERFLOW_SOURCE, { type: 'geojson', data: EMPTY_FC });
 
       // Vessel + AIS layers must be added first because route layers are inserted before them.
       if (!m.getLayer('vessel-gc-line')) m.addLayer({ id: 'vessel-gc-line', type: 'line', source: GC_SOURCE,
@@ -943,6 +952,25 @@
 
       // Track layer — below all vessel/route layers, above chart tiles.
       // Inserted before 'vessel-gc-line' first so subsequent route insertions land above it.
+      // AIS track is below the own-vessel track so own vessel always reads clearly on top.
+      if (!m.getLayer('ais-track-overflow-line')) m.addLayer({
+        id: 'ais-track-overflow-line', type: 'line', source: AIS_TRACK_OVERFLOW_SOURCE,
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: {
+          'line-color':   ap.ais.track.color,
+          'line-width':   ap.ais.track.width,
+          'line-opacity': ap.ais.track.show ? 1 : 0,
+        },
+      }, 'vessel-gc-line');
+      if (!m.getLayer('ais-track-line')) m.addLayer({
+        id: 'ais-track-line', type: 'line', source: AIS_TRACK_SOURCE,
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: {
+          'line-gradient': buildTrackGradient(ap.ais.track.color, 0) as never,
+          'line-width':    ap.ais.track.width,
+          'line-opacity':  ap.ais.track.show ? 1 : 0,
+        },
+      }, 'vessel-gc-line');
       // Overflow track: older segments that fall outside MapLibre's ±540° rendering window,
       // shifted by 720° multiples back into view. Rendered below the main track (no gradient).
       if (!m.getLayer('vessel-track-overflow-line')) m.addLayer({
@@ -1124,8 +1152,21 @@
       el.textContent = `(${formatAge(posMs)})`;
     }, 1000);
 
+    // Fetch and display this vessel's position history.
+    aisTrackRaw = [];
+    const gen = ++_aisTrackGen;
+    const historyHours = settings.appearance.track.historyHours;
+    const startTime = new Date(Date.now() - historyHours * 3_600_000).toISOString();
+    const serverBase = `${settings.signalkProtocol}://${settings.signalkHost}:${settings.signalkPort}`;
+    fetchAisVesselTrack(serverBase, t.id, startTime).then(coords => {
+      if (gen === _aisTrackGen) aisTrackRaw = coords;
+    }).catch(() => { /* server may not have history for this vessel — silently skip */ });
+
     popup.on('close', () => {
       if (aisAgeTimer !== null) { clearInterval(aisAgeTimer); aisAgeTimer = null; }
+      // Cancel any in-flight fetch and clear the track display.
+      _aisTrackGen++;
+      aisTrackRaw = [];
     });
 
     popup.getElement().addEventListener('click', (ev) => {
@@ -2011,6 +2052,58 @@
         })),
       });
     }
+  });
+
+  // AIS track data effect: updates when aisTrackRaw changes (vessel clicked / popup closed).
+  $effect(() => {
+    const raw = aisTrackRaw;
+    if (!map || !mapLoaded) return;
+    const src = map.getSource(AIS_TRACK_SOURCE);
+    const overflowSrc = map.getSource(AIS_TRACK_OVERFLOW_SOURCE);
+    if (!(src instanceof maplibregl.GeoJSONSource)) return;
+    if (!(overflowSrc instanceof maplibregl.GeoJSONSource)) return;
+    if (raw.length < 2) {
+      src.setData(EMPTY_FC);
+      overflowSrc.setData(EMPTY_FC);
+      aisTrackFadeStop = 0;
+      return;
+    }
+    const { coords, overflowSegments, fadeStop } = processTrack(raw);
+    aisTrackFadeStop = fadeStop;
+    src.setData({
+      type: 'FeatureCollection',
+      features: [{ type: 'Feature', geometry: { type: 'LineString', coordinates: coords }, properties: {} }],
+    });
+    overflowSrc.setData({
+      type: 'FeatureCollection',
+      features: overflowSegments.map(seg => ({
+        type: 'Feature' as const,
+        geometry: { type: 'LineString' as const, coordinates: seg },
+        properties: {},
+      })),
+    });
+  });
+
+  // AIS track style effect: syncs appearance settings and fade gradient to the AIS track layers.
+  $effect(() => {
+    if (!map || !mapLoaded) return;
+    const ta       = settings.appearance.ais.track;
+    const fadeStop = aisTrackFadeStop;
+    if (ta.style === 'solid') {
+      map.setPaintProperty('ais-track-line', 'line-gradient',  buildTrackGradient(ta.color, fadeStop) as never);
+      map.setPaintProperty('ais-track-line', 'line-dasharray', undefined);
+    } else {
+      map.setPaintProperty('ais-track-line', 'line-gradient',  null);
+      map.setPaintProperty('ais-track-line', 'line-color',     ta.color);
+      map.setPaintProperty('ais-track-line', 'line-dasharray', dashArray(ta.style, ta.width) ?? undefined);
+    }
+    map.setPaintProperty('ais-track-line',          'line-width',   ta.width);
+    map.setPaintProperty('ais-track-line',          'line-opacity', ta.show && aisTrackRaw.length >= 2 ? 1 : 0);
+    map.setPaintProperty('ais-track-overflow-line', 'line-color',   ta.color);
+    map.setPaintProperty('ais-track-overflow-line', 'line-width',   ta.width);
+    map.setPaintProperty('ais-track-overflow-line', 'line-opacity', ta.show && aisTrackRaw.length >= 2 ? 1 : 0);
+    map.setPaintProperty('ais-track-overflow-line', 'line-dasharray',
+      ta.style !== 'solid' ? dashArray(ta.style, ta.width) ?? undefined : undefined);
   });
 
   // Route/course rendering — updates when route geometry, course points, or appearance changes.

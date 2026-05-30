@@ -19,6 +19,12 @@ export interface AisAppearance {
     style: LineStyle;
     lengthMinutes: number;
   };
+  track: {
+    show:  boolean;
+    color: string;
+    width: number;
+    style: LineStyle;
+  };
 }
 
 export interface RulerAppearance {
@@ -81,6 +87,7 @@ const DEFAULTS: SettingsData = {
       vesselColor: '#f59e0b',
       vesselSize: 16,
       cog: { color: '#f59e0b', width: 1.5, style: 'dashed', lengthMinutes: 3 },
+      track: { show: true, color: '#f59e0b', width: 2, style: 'solid' },
     },
     ruler: { color: '#ffdc32', width: 2 },
     route: {
@@ -127,7 +134,8 @@ function load(): SettingsData {
             ais: {
               ...DEFAULTS.appearance.ais,
               ...(p.appearance?.ais ?? {}),
-              cog: { ...DEFAULTS.appearance.ais.cog, ...(p.appearance?.ais?.cog ?? {}) },
+              cog:   { ...DEFAULTS.appearance.ais.cog,   ...(p.appearance?.ais?.cog   ?? {}) },
+              track: { ...DEFAULTS.appearance.ais.track, ...(p.appearance?.ais?.track ?? {}) },
             },
             ruler: { ...DEFAULTS.appearance.ruler, ...(p.appearance?.ruler ?? {}) },
             route: {

@@ -258,3 +258,57 @@ export async function fetchTrack(serverBase: string, startTime?: string): Promis
   // not yet flushed to the persistent store. Deduplicate overlapping points.
   return dedupCoords([...v2Coords, ...v1Coords]);
 }
+
+/**
+ * Fetch position history for an AIS vessel.
+ *
+ * Queries both sources in parallel (same strategy as fetchTrack for own vessel):
+ *  - v2 History API with `context=vessels.{vesselId}`
+ *  - v1 in-memory track `/vessels/{vesselId}/track`
+ *
+ * Returns a flat array of [lon, lat] pairs in chronological order.
+ * Returns [] if neither source has data or the vessel ID is unknown.
+ * @param vesselId Signal K vessel key, e.g. `urn:mrn:imo:mmsi:123456789`
+ * @param startTime ISO 8601 start of history window (optional, defaults to 24 h)
+ */
+export async function fetchAisVesselTrack(
+  serverBase: string,
+  vesselId: string,
+  startTime?: string,
+): Promise<[number, number][]> {
+  const encodedId = encodeURIComponent(vesselId);
+  const context   = `vessels.${vesselId}`;
+  const v2Params  = new URLSearchParams({ context, paths: 'navigation.position' });
+  if (startTime) {
+    v2Params.set('from', startTime);
+  } else {
+    v2Params.set('duration', 'PT24H');
+  }
+  const v1Params = startTime ? `?startTime=${encodeURIComponent(startTime)}` : '';
+
+  const [v2Result, v1Result] = await Promise.allSettled([
+    fetch(`${serverBase}/signalk/v2/api/history/values?${v2Params.toString()}`).then(async res => {
+      if (!res.ok) return [] as [number, number][];
+      const body = await res.json() as {
+        data?: Array<[string, { longitude?: number; latitude?: number } | null]>;
+      };
+      const coords: [number, number][] = [];
+      for (const [, pos] of body.data ?? []) {
+        if (pos && typeof pos.longitude === 'number' && typeof pos.latitude === 'number') {
+          coords.push([pos.longitude, pos.latitude]);
+        }
+      }
+      return coords;
+    }),
+    fetch(`${serverBase}/signalk/v1/api/vessels/${encodedId}/track${v1Params}`).then(async res => {
+      if (!res.ok) return [] as [number, number][];
+      return extractTrackCoords(await res.json() as unknown);
+    }),
+  ]);
+
+  const v2Coords = v2Result.status === 'fulfilled' ? v2Result.value : [];
+  const v1Coords = v1Result.status === 'fulfilled' ? v1Result.value : [];
+  if (v2Coords.length === 0) return v1Coords;
+  if (v1Coords.length === 0) return v2Coords;
+  return dedupCoords([...v2Coords, ...v1Coords]);
+}

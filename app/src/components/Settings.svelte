@@ -339,6 +339,39 @@
         </div>
       </div>
 
+      <p class="section-title">Track (on click)</p>
+      <div class="row">
+        <label>Show</label>
+        <div class="field">
+          <label class="toggle">
+            <input type="checkbox" bind:checked={settings.appearance.ais.track.show} onchange={applyAppearance} />
+            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          </label>
+        </div>
+      </div>
+      <div class="row">
+        <label>Color</label>
+        <div class="field"><ColorInput bind:value={settings.appearance.ais.track.color} oninput={applyAppearance} /></div>
+      </div>
+      <div class="row">
+        <label>Width</label>
+        <div class="field">
+          <input type="number" bind:value={settings.appearance.ais.track.width} min="1" max="8" step="0.5" oninput={applyAppearance} />
+          <span class="unit">px</span>
+        </div>
+      </div>
+      <div class="row">
+        <label>Style</label>
+        <div class="field">
+          <select bind:value={settings.appearance.ais.track.style} onchange={applyAppearance}>
+            <option value="solid">Solid</option>
+            <option value="dashed">Dashed</option>
+            <option value="dotted">Dotted</option>
+            <option value="dash-dot">Dash-dot</option>
+          </select>
+        </div>
+      </div>
+
       <p class="section-title">Performance</p>
       <div class="row">
         <label>Frame rate</label>
