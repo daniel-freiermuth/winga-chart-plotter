@@ -7,7 +7,7 @@ A fast and reliable sea chart plotting application for [Signal K](https://signal
 ## Why another chart plotter for SignalK
 Winga Chart Plotter is an experiment playing with WebGL technologies with the intention of building a snappy and solid chart plotter. I owe much inspiration to [Freeboard-sk](https://github.com/SignalK/freeboard-sk).
 
-Unfortunately, my sailing tablet gets laggy as soon as Freeboard has more than 30 AIS target, chart layers, waypoints or routes to show. Thus, Winga Chart Plotter is written with speed in mind, uses WASM for heavy computation and WebGL for rendering. It is projection-agnostic. Currently, there are two projection modes: mercator and globe and as soon as support for more projections lands in MapLibre, those will be integrated here as well. I'd like Winga Chart Plotter not only to be a SignalK webapp, but also a mobile app with native speed.
+Unfortunately, my sailing tablet gets laggy as soon as Freeboard has more than 30 AIS target, chart layers, waypoints or routes to show. Thus, Winga Chart Plotter is written with speed in mind, uses WASM for heavy computation and WebGL for rendering. It is projection-agnostic. Currently, there are two projection modes: mercator and globe and as soon as support for more projections lands in MapLibre, those will be integrated here as well. Eventually, I'd like Winga Chart Plotter not only to be a SignalK webapp, but also a mobile app with native speed.
 
 ## Getting started
 Install via SignalK's app store.
@@ -70,7 +70,7 @@ cargo test
 ```
 
 ## Design
-Do one task, do it good. This means that some features might be left to other layers. E.g. notification and alarm management as well as instrument might be left to KIP. Being a tool for marine navigation, Winga Chart Plotter will prioritize correctness and stability over features.
+Do one job, do it good. This means that some features might be left to other layers. E.g. notification and alarm management as well as instrument might be left to KIP. Being a tool for marine navigation, Winga Chart Plotter will prioritize correctness and stability over features.
 
 
 See [`KNOWLEDGE_BASE.md`](./KNOWLEDGE_BASE.md) for full architecture decisions, user stories, and open questions.
@@ -79,16 +79,14 @@ See [`KNOWLEDGE_BASE.md`](./KNOWLEDGE_BASE.md) for full architecture decisions, 
 - Globe projection
 - WebGL rendering
 - WMTS layer discovery
-- AIS target to scale
+- AIS: targets to scale, dead reckoning (honoring rate-of-turn and at 60fps, whoever needs this)
 - Great-circle lines for measurements, tracks and routes
 - Highly customizable appearance
 - 3D mode
 - Process SignalK deltas as they arrive
 - Multiple, permanent and sticky rulers
-- AIS dead reckoning (honoring rate-of-turn and at 30fps, whoever this needs)
 
 ## Missing features compared to Freeboard
-- S57 support (planned)
 - Alarm management
 - Anchor (planned)
 - Many many more
@@ -99,4 +97,3 @@ See [`KNOWLEDGE_BASE.md`](./KNOWLEDGE_BASE.md) for full architecture decisions, 
 - [ ] Tauri packaging (Android)
 - [ ] Wind particle overlay
 - [ ] Maybe Grib support
-- [ ] S-57 vector chart support
