@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import Map from './components/Map.svelte';
   import FaIcon from './lib/FaIcon.svelte';
   import { faLocationCrosshairs, faRuler } from '@fortawesome/free-solid-svg-icons';
@@ -11,6 +11,7 @@
   import { charts } from './stores/charts.svelte';
   import { ais } from './stores/ais.svelte';
   import { fetchVesselInfo } from './lib/signalk-api';
+  import { acquireWakeLock, releaseWakeLock } from './lib/wakeLock';
   import { route } from './stores/route.svelte';
   import { track } from './stores/track.svelte';
 
@@ -142,6 +143,7 @@
   }
 
   onMount(() => {
+    acquireWakeLock();
     worker = new Worker(
       new URL('./workers/signalk.worker.ts', import.meta.url),
       { type: 'module' },
@@ -204,6 +206,8 @@
       worker?.terminate();
     };
   });
+
+  onDestroy(() => releaseWakeLock());
 
   // Charts and vessel info only depend on the HTTP URL — no WASM needed on main thread.
   // Vessel info is re-fetched periodically: AIS static data (name, type, dimensions)
