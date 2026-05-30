@@ -38,6 +38,14 @@ export interface RouteAppearance {
   remaining: RouteLineAppearance;  // full planned route polyline
 }
 
+export interface TrackAppearance {
+  show:         boolean;
+  color:        string;
+  width:        number;    // screen pixels
+  style:        LineStyle;
+  historyHours: number;   // how far back to fetch (logarithmic slider, 5min–5yr)
+}
+
 export interface AppearanceSettings {
   vesselColor: string;
   vesselSize: number;  // screen pixels
@@ -47,6 +55,7 @@ export interface AppearanceSettings {
   ais:         AisAppearance;
   ruler:       RulerAppearance;
   route:       RouteAppearance;
+  track:       TrackAppearance;
 }
 
 export interface SettingsData {
@@ -79,6 +88,7 @@ const DEFAULTS: SettingsData = {
       segment:   { color: '#e040fb', width: 2.5, style: 'solid'  },
       remaining: { color: '#e040fb', width: 2,   style: 'dashed' },
     },
+    track: { show: true, color: '#3b82f6', width: 2, style: 'solid', historyHours: 24 },
   },
 };
 
@@ -125,6 +135,7 @@ function load(): SettingsData {
               segment:   { ...DEFAULTS.appearance.route.segment,   ...(p.appearance?.route?.segment   ?? {}) },
               remaining: { ...DEFAULTS.appearance.route.remaining, ...(p.appearance?.route?.remaining ?? {}) },
             },
+            track: { ...DEFAULTS.appearance.track, ...(p.appearance?.track ?? {}) },
           },
         };
       }

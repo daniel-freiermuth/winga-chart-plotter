@@ -148,3 +148,113 @@ export async function fetchVesselInfo(serverBase: string): Promise<Map<string, V
 }
 
 
+
+type GeoJsonLike = { type?: string; coordinates?: unknown; features?: unknown[]; geometry?: unknown };
+
+function extractTrackCoords(geojson: unknown): [number, number][] {
+  if (!geojson || typeof geojson !== 'object') return [];
+  const g = geojson as GeoJsonLike;
+
+  switch (g.type) {
+    case 'FeatureCollection':
+      return Array.isArray(g.features) ? g.features.flatMap(f => extractTrackCoords(f)) : [];
+    case 'Feature':
+      return extractTrackCoords(g.geometry);
+    case 'LineString': {
+      if (!Array.isArray(g.coordinates)) return [];
+      return (g.coordinates as unknown[])
+        .filter((c): c is number[] => Array.isArray(c) && c.length >= 2 && typeof c[0] === 'number' && typeof c[1] === 'number')
+        .map(c => [c[0], c[1]] as [number, number]);
+    }
+    case 'MultiLineString': {
+      if (!Array.isArray(g.coordinates)) return [];
+      return (g.coordinates as unknown[][]).flatMap(line =>
+        (Array.isArray(line) ? line : [] as unknown[])
+          .filter((c): c is number[] => Array.isArray(c) && c.length >= 2 && typeof c[0] === 'number' && typeof c[1] === 'number')
+          .map(c => [c[0], c[1]] as [number, number])
+      );
+    }
+    default:
+      return [];
+  }
+}
+
+// ~5 metres in degrees² — fast planar deduplication approximation
+const TRACK_DEDUP_SQ_DEG = (5 / 111_320) ** 2;
+
+/**
+ * Deduplicate a coordinate array by dropping points within ~5 m of the previous kept point.
+ * Used when merging track sources that may have overlapping coverage.
+ */
+function dedupCoords(coords: [number, number][]): [number, number][] {
+  const out: [number, number][] = [];
+  let prevLon = NaN;
+  let prevLat = NaN;
+  for (const [lon, lat] of coords) {
+    const dLon = lon - prevLon;
+    const dLat = lat - prevLat;
+    if (out.length === 0 || dLon * dLon + dLat * dLat >= TRACK_DEDUP_SQ_DEG) {
+      out.push([lon, lat]);
+      prevLon = lon;
+      prevLat = lat;
+    }
+  }
+  return out;
+}
+
+/**
+ * Fetch the own-vessel track from Signal K.
+ *
+ * Queries both sources in parallel and merges results:
+ *  - v2 History API (`/signalk/v2/api/history/values?paths=navigation.position`)
+ *    — backed by a persistent plugin (signalk-parquet, signalk-to-influxdb2, etc.).
+ *    Survives server restarts. May not be installed on all servers.
+ *  - v1 in-memory track (`/signalk/v1/api/vessels/self/track`)
+ *    — always available, but lost on restart. May contain very recent points not
+ *    yet flushed to the persistent store.
+ *
+ * The two sources are concatenated (v2 first, v1 second) and deduplicated by
+ * proximity so overlapping points are collapsed into one.
+ *
+ * Returns a flat array of [lon, lat] pairs in chronological order.
+ * @param startTime ISO 8601 timestamp for the start of the history window (optional)
+ */
+export async function fetchTrack(serverBase: string, startTime?: string): Promise<[number, number][]> {
+  const v2Params = new URLSearchParams({ paths: 'navigation.position' });
+  if (startTime) {
+    v2Params.set('from', startTime);
+  } else {
+    v2Params.set('duration', 'PT24H');
+  }
+  const v1Params = startTime ? `?startTime=${encodeURIComponent(startTime)}` : '';
+
+  const [v2Result, v1Result] = await Promise.allSettled([
+    fetch(`${serverBase}/signalk/v2/api/history/values?${v2Params.toString()}`).then(async res => {
+      if (!res.ok) return [] as [number, number][];
+      const body = await res.json() as {
+        data?: Array<[string, { longitude?: number; latitude?: number } | null]>;
+      };
+      const coords: [number, number][] = [];
+      for (const [, pos] of body.data ?? []) {
+        if (pos && typeof pos.longitude === 'number' && typeof pos.latitude === 'number') {
+          coords.push([pos.longitude, pos.latitude]);
+        }
+      }
+      return coords;
+    }),
+    fetch(`${serverBase}/signalk/v1/api/vessels/self/track${v1Params}`).then(async res => {
+      if (!res.ok) return [] as [number, number][];
+      return extractTrackCoords(await res.json() as unknown);
+    }),
+  ]);
+
+  const v2Coords = v2Result.status === 'fulfilled' ? v2Result.value : [];
+  const v1Coords = v1Result.status === 'fulfilled' ? v1Result.value : [];
+
+  if (v2Coords.length === 0) return v1Coords;
+  if (v1Coords.length === 0) return v2Coords;
+
+  // Merge: v2 provides the historical base; v1 may add very recent points
+  // not yet flushed to the persistent store. Deduplicate overlapping points.
+  return dedupCoords([...v2Coords, ...v1Coords]);
+}

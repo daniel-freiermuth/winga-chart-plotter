@@ -12,6 +12,7 @@
   import { ais } from './stores/ais.svelte';
   import { fetchVesselInfo } from './lib/signalk-api';
   import { route } from './stores/route.svelte';
+  import { track } from './stores/track.svelte';
 
   // Message types received from the SignalK worker.
   interface WsState {
@@ -221,6 +222,20 @@
     refresh();
     vesselInfoTimer = setInterval(refresh, VESSEL_INFO_INTERVAL_MS);
     return () => { if (vesselInfoTimer !== null) clearInterval(vesselInfoTimer); };
+  });
+
+  // Track history: re-init whenever the server URL or the history duration changes.
+  // Debounced so dragging the logarithmic slider doesn't fire a fetch on every tick.
+  let trackReinitTimer: ReturnType<typeof setTimeout> | null = null;
+  $effect(() => {
+    const httpUrl = settings.signalkHttpUrl;
+    const hours   = settings.appearance.track.historyHours;
+    if (trackReinitTimer !== null) clearTimeout(trackReinitTimer);
+    trackReinitTimer = setTimeout(() => {
+      void track.init(httpUrl, hours);
+      trackReinitTimer = null;
+    }, 400);
+    return () => { if (trackReinitTimer !== null) { clearTimeout(trackReinitTimer); trackReinitTimer = null; } };
   });
 
   let lastUrl = '';

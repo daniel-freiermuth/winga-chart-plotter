@@ -28,6 +28,27 @@
     if (fps >= 1)  return `${fps.toFixed(1)} fps`;
     return `every ${Math.round(1 / fps)}s`;
   }
+
+  // Logarithmic slider helpers: range [0, 1000] ↔ track history hours [5min, 5yr]
+  const TRACK_LOG_MIN = Math.log(5 / 60);               // 5 minutes in hours
+  const TRACK_LOG_MAX = Math.log(5 * 365.25 * 24);      // 5 years in hours
+  function hoursToSlider(h: number): number {
+    return Math.round(((Math.log(Math.max(h, 5 / 60)) - TRACK_LOG_MIN) / (TRACK_LOG_MAX - TRACK_LOG_MIN)) * 1000);
+  }
+  function sliderToHours(v: number): number {
+    return Math.exp(TRACK_LOG_MIN + (v / 1000) * (TRACK_LOG_MAX - TRACK_LOG_MIN));
+  }
+  function trackDurationLabel(hours: number): string {
+    if (hours < 1)           return `${Math.round(hours * 60)} min`;
+    if (hours < 24)          return `${Math.round(hours)} h`;
+    const days = hours / 24;
+    if (days < 14)           return `${Math.round(days)} days`;
+    const weeks = days / 7;
+    if (weeks < 10)          return `${Math.round(weeks)} weeks`;
+    const months = days / 30.44;
+    if (months < 18)         return `${Math.round(months)} months`;
+    return `${(hours / (365.25 * 24)).toFixed(1)} years`;
+  }
   function formatActualFps(fps: number): string {
     if (fps <= 0) return '';
     if (fps >= 10) return `${Math.round(fps)} fps`;
@@ -177,6 +198,53 @@
         <div class="field">
           <input type="number" bind:value={settings.appearance.vesselSize} min="8" max="64" step="2" oninput={applyAppearance} />
           <span class="unit">px</span>
+        </div>
+      </div>
+
+      <p class="section-title">Track</p>
+      <div class="row">
+        <label>Show</label>
+        <div class="field">
+          <label class="toggle">
+            <input type="checkbox" bind:checked={settings.appearance.track.show} onchange={applyAppearance} />
+            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          </label>
+        </div>
+      </div>
+      <div class="row">
+        <label>Color</label>
+        <div class="field"><ColorInput bind:value={settings.appearance.track.color} oninput={applyAppearance} /></div>
+      </div>
+      <div class="row">
+        <label>Width</label>
+        <div class="field">
+          <input type="number" bind:value={settings.appearance.track.width} min="1" max="8" step="0.5" oninput={applyAppearance} />
+          <span class="unit">px</span>
+        </div>
+      </div>
+      <div class="row">
+        <label>Style</label>
+        <div class="field">
+          <select bind:value={settings.appearance.track.style} onchange={applyAppearance}>
+            <option value="solid">Solid</option>
+            <option value="dashed">Dashed</option>
+            <option value="dotted">Dotted</option>
+            <option value="dash-dot">Dash-dot</option>
+          </select>
+        </div>
+      </div>
+      <div class="row">
+        <label>History</label>
+        <div class="field" style="flex-direction: column; align-items: flex-start; gap: 4px;">
+          <input type="range" min="0" max="1000" step="1"
+            value={hoursToSlider(settings.appearance.track.historyHours)}
+            oninput={(e) => {
+              settings.appearance.track.historyHours = sliderToHours(parseInt(e.currentTarget.value));
+              applyAppearance();
+            }}
+            style="width: 100%;"
+          />
+          <span class="unit">{trackDurationLabel(settings.appearance.track.historyHours)}</span>
         </div>
       </div>
 
@@ -410,6 +478,41 @@
   .fps-slider { flex: 1; min-width: 100px; cursor: pointer; }
   .fps-target { min-width: 5rem; text-align: right; font-size: 13px; font-variant-numeric: tabular-nums; }
   .fps-actual { color: #666688; font-size: 11px; min-width: 3.5rem; text-align: right; font-variant-numeric: tabular-nums; }
+
+  input[type=range] {
+    -webkit-appearance: none;
+    appearance: none;
+    height: 4px;
+    border-radius: 2px;
+    background: #444466;
+    outline: none;
+    cursor: pointer;
+  }
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: #4a6cf7;
+    cursor: pointer;
+    border: 2px solid #fff;
+    box-shadow: 0 0 4px rgba(0,0,0,0.4);
+  }
+  input[type=range]::-moz-range-thumb {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: #4a6cf7;
+    cursor: pointer;
+    border: 2px solid #fff;
+    box-shadow: 0 0 4px rgba(0,0,0,0.4);
+  }
+  input[type=range]::-moz-range-track {
+    height: 4px;
+    border-radius: 2px;
+    background: #444466;
+  }
 
   .about { padding: 16px 0 8px; text-align: center; }
   .about-logo { width: 80px; height: 80px; border-radius: 16px; margin-bottom: 14px; }
