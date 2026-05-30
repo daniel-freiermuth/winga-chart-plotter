@@ -167,7 +167,7 @@
           });
         }
         // Update course/route regardless of geo mode — route is always from SK.
-        route.update(settings.signalkHttpUrl, msg.state.course);
+        route.update(settings.signalkHttpUrl, settings.useGeoLocation ? undefined : msg.state.course);
       } else if (msg.type === 'status') {
         connected = msg.status === 1;
         if (msg.status === 1) {
