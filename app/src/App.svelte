@@ -44,7 +44,8 @@
 
     const id = navigator.geolocation.watchPosition(
       (pos) => {
-        const { longitude, latitude, speed, heading } = pos.coords;
+        const { longitude, latitude, speed, heading, accuracy } = pos.coords;
+        settings.setGeoAccuracy(accuracy);
         vesselState.set({
           position: { longitude, latitude },
           // Geolocation heading is in degrees true [0, 360), undefined when stationary.
@@ -57,6 +58,7 @@
       },
       (err) => {
         console.warn('[geolocation] error', err.code, err.message);
+        settings.setGeoAccuracy(null);
         if (err.code === GeolocationPositionError.PERMISSION_DENIED) {
           settings.setGeoError('Location access denied — check browser/OS permissions');
           settings.apply({ useGeoLocation: false });
@@ -66,11 +68,12 @@
           settings.setGeoError(`Location error: ${err.message}`);
         }
       },
-      { enableHighAccuracy: true, maximumAge: 2000, timeout: 15000 },
+      { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 },
     );
 
     return () => {
       navigator.geolocation.clearWatch(id);
+      settings.setGeoAccuracy(null);
       latestCompassHeadingRad = null;
     };
   });

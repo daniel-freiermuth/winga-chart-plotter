@@ -182,6 +182,26 @@
           <span class="toggle-label">Use device GPS instead of Signal K position</span>
         </div>
       </div>
+      {#if settings.useGeoLocation}
+        {@const acc = settings.geoAccuracy}
+        {@const quality = acc === null ? 'waiting'
+                        : acc < 20    ? 'gps'
+                        : acc < 150   ? 'marginal'
+                        :               'poor'}
+        <div class="geo-accuracy-row">
+          <span class="geo-accuracy-dot geo-accuracy-dot--{quality}"></span>
+          {#if acc === null}
+            <span class="geo-accuracy-label">Waiting for fix…</span>
+          {:else}
+            <span class="geo-accuracy-label">
+              {acc < 20 ? 'GPS' : acc < 150 ? 'WiFi / marginal GPS' : 'Cell tower'} — ±{acc < 1000 ? acc.toFixed(0) + ' m' : (acc / 1000).toFixed(1) + ' km'}
+            </span>
+          {/if}
+        </div>
+        {#if acc !== null && acc > 150}
+          <p class="geo-error-note">⚠ Accuracy is poor — GPS may not be active. On Android 12+, check that you granted <em>precise</em> (not approximate) location permission.</p>
+        {/if}
+      {/if}
       {#if settings.geoError && !settings.useGeoLocation}
         <p class="geo-error-note">⚠ {settings.geoError}</p>
       {/if}
@@ -494,6 +514,17 @@
   .unit { font-size: 12px; color: #666688; }
   .hint { font-size: 11px; color: #666688; margin: 2px 0 12px 84px; word-break: break-all; }
   .geo-error-note { font-size: 11px; color: #f87171; margin: -6px 0 10px 84px; }
+  .geo-accuracy-row {
+    display: flex; align-items: center; gap: 7px;
+    margin: -4px 0 8px 84px; font-size: 12px; color: #a0a0c0;
+  }
+  .geo-accuracy-dot {
+    width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0;
+  }
+  .geo-accuracy-dot--waiting  { background: #666688; }
+  .geo-accuracy-dot--gps      { background: #22c55e; }
+  .geo-accuracy-dot--marginal { background: #f59e0b; }
+  .geo-accuracy-dot--poor     { background: #f87171; }
   .radio-group { gap: 16px; }
   .radio-group label { display: flex; align-items: center; gap: 6px; color: white; font-size: 13px; cursor: pointer; width: auto; }
   input[type=text], input[type=number], select {

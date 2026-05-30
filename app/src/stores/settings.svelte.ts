@@ -154,7 +154,8 @@ function load(): SettingsData {
 
 function createSettings() {
   const data = $state<SettingsData>(load());
-  let geoError = $state<string | null>(null);
+  let geoError    = $state<string | null>(null);
+  let geoAccuracy = $state<number | null>(null); // metres, null = no fix yet
 
   return {
     get protocol(): 'ws' | 'wss' { return data.signalkProtocol; },
@@ -162,6 +163,8 @@ function createSettings() {
     get port(): number            { return data.signalkPort; },
     get useGeoLocation(): boolean { return data.useGeoLocation; },
     get geoError(): string | null { return geoError; },
+    /** Current position accuracy in metres. null = no fix yet. */
+    get geoAccuracy(): number | null { return geoAccuracy; },
     get appearance(): AppearanceSettings { return data.appearance; },
     get targetFps(): number       { return data.targetFps; },
     get signalkUrl(): string {
@@ -177,7 +180,7 @@ function createSettings() {
       if (next.signalkPort     !== undefined) data.signalkPort     = next.signalkPort;
       if (next.useGeoLocation  !== undefined) {
         data.useGeoLocation = next.useGeoLocation;
-        if (next.useGeoLocation) geoError = null; // clear error when user re-enables
+        if (next.useGeoLocation) { geoError = null; geoAccuracy = null; }
       }
       if (next.appearance      !== undefined) data.appearance      = next.appearance;
       if (next.targetFps       !== undefined) data.targetFps       = next.targetFps;
@@ -185,6 +188,9 @@ function createSettings() {
     },
     setGeoError(msg: string) {
       geoError = msg;
+    },
+    setGeoAccuracy(metres: number | null) {
+      geoAccuracy = metres;
     },
     setTargetFps(fps: number) {
       data.targetFps = fps;
