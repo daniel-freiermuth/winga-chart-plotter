@@ -22,7 +22,7 @@
   import { rulers, rulerBearingText, rulerDistanceText, type Ruler, type RulerEndpoint } from '../stores/rulers.svelte';
   import { route } from '../stores/route.svelte';
   import { track } from '../stores/track.svelte';
-  import { gcLine } from '../lib/geoMath';
+  import { gcLine, gcBearingDeg } from '../lib/geoMath';
   import { fetchAndResolveStyle } from '../lib/resolveStyle';
   import { fetchAisVesselTrack } from '../lib/signalk-api';
   import { AisHullLayer, AisHullDecorationLayer, AisHullBorderLayer, HULL_ANCHOR_DOT, HULL_MOORING_BARS, HULL_AGROUND_RING, HULL_FISHING_GEAR, HULL_NUC, HULL_RESTRICTED, HULL_DRAUGHT } from '../layers/AisHullLayer';
@@ -2168,6 +2168,16 @@
     wptSrc.setData({ type: 'FeatureCollection', features: wptFeatures });
   });
 
+  // Auto-fallback: if the current rotation mode becomes unavailable (e.g. route cleared),
+  // drop back to COG → north.
+  $effect(() => {
+    rotateMode.ensureAvailable(
+      $vesselState.cog     !== null,
+      $vesselState.heading !== null,
+      route.nextPoint      !== null,
+    );
+  });
+
   // Follow + rotation mode: combined into one effect so we never issue two competing
   // easeTo/flyTo calls in the same reactive flush.
   $effect(() => {
@@ -2176,11 +2186,14 @@
     const pos = state.position;
     const rm = rotateMode.mode;
 
-    // Compute target bearing. 'manual' and 'course' (TBD) produce no constraint.
+    // Compute target bearing.
     let bearing: number | undefined;
     if (rm === 'north') bearing = 0;
     else if (rm === 'cog'     && state.cog     !== null) bearing = (state.cog     * 180 / Math.PI);
     else if (rm === 'heading' && state.heading  !== null) bearing = (state.heading * 180 / Math.PI);
+    else if (rm === 'bearing' && pos !== null && route.nextPoint !== null) {
+      bearing = gcBearingDeg(pos.longitude, pos.latitude, route.nextPoint.longitude, route.nextPoint.latitude);
+    }
 
     if (pos && followMode.following) {
       const center = map.getCenter();
@@ -2204,7 +2217,7 @@
     class="proj-btn"
     class:proj-btn--manual={rotateMode.mode === 'manual'}
     title="Rotation mode: {rotateMode.label}"
-    onclick={() => rotateMode.toggle($vesselState.heading !== null, false)}
+    onclick={() => rotateMode.toggle($vesselState.cog !== null, $vesselState.heading !== null, route.nextPoint !== null)}
   >{rotateMode.label}</button>
   <button
     class="proj-btn"
