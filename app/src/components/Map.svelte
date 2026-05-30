@@ -91,6 +91,13 @@
   // present for gestures. moveend always fires, resetting the flag.
   let _isInteracting = false;
 
+  // Camera deduplication state: used to avoid redundant easeTo/flyTo calls.
+  let _easedLon = NaN;
+  let _easedLat = NaN;
+  let _lastRm = '';
+  let _lastFollowing = false;
+  let _lastNonFollowBearing: number | undefined = undefined;
+
   // Own-vessel setData coalescing: multiple Signal K field updates (lat, lon, COG, SOG, heading)
   // arrive per epoch and each triggers the $effect. We batch them into one setData per rAF frame.
   let _vesselRafId: number | null = null;
@@ -2184,11 +2191,16 @@
   //
   // Follow + rotation mode: combined into one effect so we never issue two competing
   // easeTo/flyTo calls in the same reactive flush.
+  //
+  // HDG follow: jumpTo at 60fps (compass rate) — instant, smooth, never blocks touch.
+  // Other follow modes: easeTo/flyTo only when position or mode changes (~1Hz GPS rate).
+  // Non-follow: jumpTo for bearing-only — instant, no animation lifecycle, touch-safe.
   $effect(() => {
     if (!map) return;
     const state = $vesselState;
     const pos = state.position;
     const rm = rotateMode.mode;
+    const following = followMode.following;
 
     // Compute target bearing.
     let bearing: number | undefined;
@@ -2199,17 +2211,37 @@
       bearing = gcBearingDeg(pos.longitude, pos.latitude, route.nextPoint.longitude, route.nextPoint.latitude);
     }
 
-    if (pos && followMode.following) {
-      const center = map.getCenter();
-      const dist = Math.hypot(center.lng - pos.longitude, center.lat - pos.latitude);
-      const bOpts = bearing !== undefined ? { bearing } : {};
-      if (dist > 1) {
-        map.flyTo({ center: [pos.longitude, pos.latitude], speed: 1.5, ...bOpts });
-      } else {
-        map.easeTo({ center: [pos.longitude, pos.latitude], duration: 1000, ...bOpts });
+    // Reset position cache when follow is re-enabled so the map re-centres immediately.
+    if (following && !_lastFollowing) { _easedLon = NaN; _easedLat = NaN; }
+    _lastFollowing = following;
+
+    const posChanged = pos !== null && (pos.longitude !== _easedLon || pos.latitude !== _easedLat);
+    const rmChanged  = rm !== _lastRm;
+    if (posChanged) { _easedLon = pos!.longitude; _easedLat = pos!.latitude; }
+    _lastRm = rm;
+
+    if (pos && following) {
+      if (rm === 'heading' && bearing !== undefined) {
+        // HDG follow: rotate and re-centre at compass rate (60fps).
+        // jumpTo is synchronous — no animation lifecycle, no touch interference.
+        map.jumpTo({ center: [pos.longitude, pos.latitude], bearing });
+      } else if (posChanged || rmChanged) {
+        // Other modes: move camera only when position or rotation mode changes.
+        const center = map.getCenter();
+        const dist = Math.hypot(center.lng - pos.longitude, center.lat - pos.latitude);
+        const bOpts = bearing !== undefined ? { bearing } : {};
+        if (dist > 1) {
+          map.flyTo({ center: [pos.longitude, pos.latitude], speed: 1.5, ...bOpts });
+        } else {
+          map.easeTo({ center: [pos.longitude, pos.latitude], duration: 1000, ...bOpts });
+        }
       }
     } else if (bearing !== undefined && !_isInteracting) {
-      map.easeTo({ bearing, duration: 300 });
+      // Not following: instant bearing update — no animation, no touch interference.
+      if (bearing !== _lastNonFollowBearing || rmChanged) {
+        map.jumpTo({ bearing });
+        _lastNonFollowBearing = bearing;
+      }
     }
   });
 </script>
