@@ -1,4 +1,4 @@
-import { writable } from 'svelte/store';
+import { writable, derived } from 'svelte/store';
 
 export interface VesselPosition {
   longitude: number;
@@ -37,3 +37,9 @@ export const vesselState = writable<VesselState>({
   sog: null,
   heading: null,
 });
+
+// Derived store that only notifies when position actually changes (not on 60 Hz heading ticks).
+// vesselState.update spreads the old object, so position keeps the same reference when only
+// heading/COG/SOG change — derived's === check prevents spurious re-runs of effects that
+// only care about position (route rendering, camera follow, etc.).
+export const vesselPosition = derived(vesselState, $vs => $vs.position);

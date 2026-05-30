@@ -6,7 +6,7 @@
   import 'maplibre-gl/dist/maplibre-gl.css';
   import type * as GeoJSON from 'geojson';
   import { get } from 'svelte/store';
-  import { vesselState } from '../stores/vessel';
+  import { vesselState, vesselPosition } from '../stores/vessel';
   import { settings, type LineAppearance, type LineStyle } from '../stores/settings.svelte';
   import { fpsStore } from '../stores/fps.svelte';
   import { followMode } from '../stores/follow.svelte';
@@ -1919,6 +1919,7 @@
   // Deliberately does NOT read $vesselState so 60 Hz orientation updates don't trigger it.
   $effect(() => {
     const ap = settings.appearance;
+    const ra = ap.route;
     if (!map || !mapLoaded) return;
     map.setPaintProperty('vessel-gc-line',     'line-color',     ap.gc.color);
     map.setPaintProperty('vessel-gc-line',     'line-width',     ap.gc.width);
@@ -1948,6 +1949,16 @@
     map.setPaintProperty('vessel-track-overflow-line', 'line-opacity', ap.track.show ? 1 : 0);
     map.setPaintProperty('vessel-track-overflow-line', 'line-dasharray',
       ap.track.style !== 'solid' ? dashArray(ap.track.style, ap.track.width) ?? undefined : undefined);
+    // Route appearance — kept here so it never fires on 60 Hz heading ticks.
+    map.setPaintProperty('route-full',    'line-color',     ra.remaining.color);
+    map.setPaintProperty('route-full',    'line-width',     ra.remaining.width);
+    map.setPaintProperty('route-full',    'line-dasharray', dashArray(ra.remaining.style, ra.remaining.width) ?? undefined);
+    map.setPaintProperty('route-leg',     'line-color',     ra.segment.color);
+    map.setPaintProperty('route-leg',     'line-width',     ra.segment.width);
+    map.setPaintProperty('route-leg',     'line-dasharray', dashArray(ra.segment.style, ra.segment.width) ?? undefined);
+    map.setPaintProperty('route-bearing', 'line-color',     ra.bearing.color);
+    map.setPaintProperty('route-bearing', 'line-width',     ra.bearing.width);
+    map.setPaintProperty('route-bearing', 'line-dasharray', dashArray(ra.bearing.style, ra.bearing.width) ?? undefined);
   });
 
   // Position effect: GeoJSON sources updated whenever vessel state or zoom changes.
@@ -2106,30 +2117,20 @@
       ta.style !== 'solid' ? dashArray(ta.style, ta.width) ?? undefined : undefined);
   });
 
-  // Route/course rendering — updates when route geometry, course points, or appearance changes.
+  // Route/course rendering — updates when route geometry, course points, or own position changes.
+  // Reads $vesselPosition (not $vesselState) so compass ticks at 60 Hz don't trigger this:
+  // heading updates leave the position reference unchanged, so the derived store stays quiet.
   $effect(() => {
     const geo     = route.geometry;
     const nxtPt   = route.nextPoint;
     const prevPt  = route.previousPoint;
-    const ownPos  = $vesselState.position;
-    const ra      = settings.appearance.route;
+    const ownPos  = $vesselPosition;
     if (!map || !mapLoaded) return;
 
     const lineSrc = map.getSource(ROUTE_LINE_SRC);
     const wptSrc  = map.getSource(ROUTE_WPT_SRC);
     if (!(lineSrc instanceof maplibregl.GeoJSONSource)) return;
     if (!(wptSrc  instanceof maplibregl.GeoJSONSource)) return;
-
-    // Paint properties — applied every time appearance settings change.
-    map.setPaintProperty('route-full',    'line-color',     ra.remaining.color);
-    map.setPaintProperty('route-full',    'line-width',     ra.remaining.width);
-    map.setPaintProperty('route-full',    'line-dasharray', dashArray(ra.remaining.style, ra.remaining.width) ?? undefined);
-    map.setPaintProperty('route-leg',     'line-color',     ra.segment.color);
-    map.setPaintProperty('route-leg',     'line-width',     ra.segment.width);
-    map.setPaintProperty('route-leg',     'line-dasharray', dashArray(ra.segment.style, ra.segment.width) ?? undefined);
-    map.setPaintProperty('route-bearing', 'line-color',     ra.bearing.color);
-    map.setPaintProperty('route-bearing', 'line-width',     ra.bearing.width);
-    map.setPaintProperty('route-bearing', 'line-dasharray', dashArray(ra.bearing.style, ra.bearing.width) ?? undefined);
 
     const lineFeatures: GeoJSON.Feature[] = [];
     // Full planned route polyline from the REST resource — GC-densified, antimeridian-unwrapped,
@@ -2178,6 +2179,9 @@
     );
   });
 
+  // Follow + rotation mode: combined into one effect so we never issue two competing
+  // easeTo/flyTo calls in the same reactive flush.
+  //
   // Follow + rotation mode: combined into one effect so we never issue two competing
   // easeTo/flyTo calls in the same reactive flush.
   $effect(() => {
