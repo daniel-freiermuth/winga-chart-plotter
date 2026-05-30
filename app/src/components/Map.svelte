@@ -249,6 +249,8 @@
   // MapLibre's ±540° rendering range. Points outside the range are shifted eastward by
   // 720° (two world copies) so they appear in an adjacent but renderable world copy.
   // Returns segments ordered oldest-first; each is guaranteed to have pts[0][0] >= -540.
+  // NOTE: only handles western overflow (pts[0] < −540). Tracks always accumulate westward
+  // so this is sufficient for own-vessel/AIS tracks.
   function splitToFit(pts: [number, number][]): [number, number][][] {
     if (pts.length === 0 || pts[0][0] >= -540) return pts.length > 0 ? [pts] : [];
     let si = 0;
@@ -256,6 +258,29 @@
     const recent = pts.slice(si);
     const overflow = pts.slice(0, si + 1).map(pt => [pt[0] + 720, pt[1]] as [number, number]);
     return [...splitToFit(overflow), recent];
+  }
+
+  /**
+   * Bidirectional split for routes (and any arbitrary line that may circle the globe).
+   * Handles both western overflow (< −540°) and eastern overflow (> +540°) by recursively
+   * shifting overflow segments by ∓720° into the nearest renderable world copy.
+   * Returns an array of segments all within ±540° longitude.
+   */
+  function splitRouteSegments(pts: [number, number][]): [number, number][][] {
+    if (pts.length === 0) return [];
+    if (pts[0][0] < -540) {
+      let si = 0;
+      while (si < pts.length - 1 && pts[si][0] < -540) si++;
+      const west = pts.slice(0, si + 1).map(p => [p[0] + 720, p[1]] as [number, number]);
+      return [...splitRouteSegments(west), ...splitRouteSegments(pts.slice(si))];
+    }
+    if (pts[pts.length - 1][0] > 540) {
+      let si = pts.length - 1;
+      while (si > 0 && pts[si][0] > 540) si--;
+      const east = pts.slice(si).map(p => [p[0] - 720, p[1]] as [number, number]);
+      return [...splitRouteSegments(pts.slice(0, si + 1)), ...splitRouteSegments(east)];
+    }
+    return [pts];
   }
 
   function processTrack(raw: [number, number][]): { coords: [number, number][]; overflowSegments: [number, number][][]; fadeStop: number } {
@@ -281,6 +306,25 @@
     for (let i = 1; i < coords.length; i++) total += haversineMeters(coords[i - 1], coords[i]);
     const fadeStop = total > 0 ? Math.min(Math.min(0.5 * 1852, total * 0.1) / total, 1) : 0;
     return { coords, overflowSegments, fadeStop };
+  }
+
+  /**
+   * Unwraps longitudes, GC-densifies, and anchors a route or two-point line for
+   * antimeridian-safe rendering. Anchors by the midpoint of first and last point so
+   * both ends of the route stay near [-180, 180].
+   */
+  function processRouteCoords(raw: [number, number][]): [number, number][] {
+    if (raw.length < 2) return raw;
+    const out: [number, number][] = [[raw[0][0], raw[0][1]]];
+    for (let i = 1; i < raw.length; i++) {
+      const prev = out[out.length - 1];
+      const lon = unwrapLon(raw[i][0], prev[0]);
+      for (const pt of gcDensifySegment(prev[0], prev[1], lon, raw[i][1])) out.push(pt);
+    }
+    const mid = (out[0][0] + out[out.length - 1][0]) / 2;
+    const shift = Math.round(mid / 360) * 360;
+    if (shift !== 0) for (const pt of out) pt[0] -= shift;
+    return out;
   }
 
   /**
@@ -1995,23 +2039,31 @@
     map.setPaintProperty('route-bearing', 'line-dasharray', dashArray(ra.bearing.style, ra.bearing.width) ?? undefined);
 
     const lineFeatures: GeoJSON.Feature[] = [];
-    // Full planned route polyline from the REST resource.
+    // Full planned route polyline from the REST resource — GC-densified, antimeridian-unwrapped,
+    // and split bidirectionally so globe-circling routes render across all world copies.
     if (geo) {
-      lineFeatures.push({ type: 'Feature', geometry: geo.geometry, properties: { kind: 'full' } });
+      const processed = processRouteCoords(geo.geometry.coordinates as [number, number][]);
+      for (const seg of splitRouteSegments(processed)) {
+        lineFeatures.push({
+          type: 'Feature',
+          geometry: { type: 'LineString', coordinates: seg },
+          properties: { kind: 'full' },
+        });
+      }
     }
-    // Active leg: previousPoint → nextPoint (the current planned segment).
+    // Active leg: previousPoint → nextPoint (the current planned segment) — GC path.
     if (nxtPt && prevPt) {
       lineFeatures.push({
         type: 'Feature',
-        geometry: { type: 'LineString', coordinates: [[prevPt.longitude, prevPt.latitude], [nxtPt.longitude, nxtPt.latitude]] },
+        geometry: { type: 'LineString', coordinates: processRouteCoords([[prevPt.longitude, prevPt.latitude], [nxtPt.longitude, nxtPt.latitude]]) },
         properties: { kind: 'leg' },
       });
     }
-    // Bearing line: own vessel → nextPoint (where I need to actually steer).
+    // Bearing line: own vessel → nextPoint (where I need to actually steer) — GC path.
     if (nxtPt && ownPos) {
       lineFeatures.push({
         type: 'Feature',
-        geometry: { type: 'LineString', coordinates: [[ownPos.longitude, ownPos.latitude], [nxtPt.longitude, nxtPt.latitude]] },
+        geometry: { type: 'LineString', coordinates: processRouteCoords([[ownPos.longitude, ownPos.latitude], [nxtPt.longitude, nxtPt.latitude]]) },
         properties: { kind: 'bearing' },
       });
     }
