@@ -36,8 +36,37 @@
   - [x] lock phone
   - Reload laptop
   - fresh start. remember last position
-- draw next leg
+- [x] draw next leg
+- [x] version info
+- [x] Close ruler with popup
+- [x] more color choices mobile
+- [x] Also border around polygons
+- [x] deep links into settings
+- [x] Sub settings: AIS, Our boat
+  -> link from popups on ais and own vessel
+- [x] route
+  - many world copies
+- [x] Tracks
+  - Vessel
+    - antimeridian
+    - GC
+    - phade out
+  - AIS
+- [x] Course chart rotation mode
+
+- Browser compass, performance
+- all routes
+- SHOM proxy
+- No route effect when using browser GPS
+- Keep screen on
+- No or only one real GPS request?
+- Browser GPS heading kills performance?
+- Introduce abstraction layer for data source?
 - Login
+- Performance a bit weird
+  - Sometimes taking interactions
+  - Sometime very slow fly
+  - … or zoom or just little zoom on button-press
 - set course
   - cog, course
 - Ad-hoc navigation
@@ -51,8 +80,6 @@
 - MOB button
 - patch signalk crate?
 - Notificatios
-- Sub settings: AIS, Our boat
-  -> link from popups on ais and own vessel
 - Regression Testing! 
 - More vector charts
   - o-charts
