@@ -4,7 +4,7 @@
   import FaIcon from './lib/FaIcon.svelte';
   import {
     faGear, faLayerGroup, faLocationCrosshairs, faRuler, faPencil,
-    faGlobe, faMap, faExpand, faCompress,
+    faGlobe, faMap, faExpand, faCompress, faPersonFallingBurst,
   } from '@fortawesome/free-solid-svg-icons';
   import { routePlanner } from './stores/routePlanner.svelte';
   import { waypoints } from './stores/waypoints.svelte';
@@ -346,29 +346,12 @@
     mapComp?.toggleFullscreen();
   }
 
-  // MOB (Man Overboard) — three-state: idle → confirming → active
-  type MobState = 'idle' | 'confirming' | 'active';
+  // MOB (Man Overboard) — two states: idle and active
+  type MobState = 'idle' | 'active';
   let mobState = $state<MobState>('idle');
-  let mobCountdown = $state(4);
   let mobError = $state<string | null>(null);
-  let mobConfirmTimer: ReturnType<typeof setInterval> | null = null;
-
-  function mobStartConfirm() {
-    mobState = 'confirming';
-    mobCountdown = 4;
-    mobError = null;
-    mobConfirmTimer = setInterval(() => {
-      mobCountdown -= 1;
-      if (mobCountdown <= 0) {
-        if (mobConfirmTimer !== null) clearInterval(mobConfirmTimer);
-        mobConfirmTimer = null;
-        mobState = 'idle';
-      }
-    }, 1000);
-  }
 
   async function mobActivate() {
-    if (mobConfirmTimer !== null) { clearInterval(mobConfirmTimer); mobConfirmTimer = null; }
     mobState = 'active';
     mobError = null;
     try {
@@ -380,16 +363,12 @@
   }
 
   async function mobCancel() {
-    if (mobConfirmTimer !== null) { clearInterval(mobConfirmTimer); mobConfirmTimer = null; }
-    const wasActive = mobState === 'active';
     mobState = 'idle';
     mobError = null;
-    if (wasActive) {
-      try {
-        await clearMob(settings.signalkHttpUrl, auth.authHeaders);
-      } catch (e) {
-        console.error('[mob] clear failed', e);
-      }
+    try {
+      await clearMob(settings.signalkHttpUrl, auth.authHeaders);
+    } catch (e) {
+      console.error('[mob] clear failed', e);
     }
   }
 </script>
@@ -540,20 +519,15 @@
     </div>
   {/if}
 
-  <!-- MOB (Man Overboard) button — bottom-right, two-step confirm -->
+  <!-- MOB (Man Overboard) button — bottom-right -->
   <div class="mob-container">
     {#if mobState === 'idle'}
-      <button class="mob-btn" onclick={mobStartConfirm} title="Man Overboard alarm">
-        ⚠ MOB
+      <button class="mob-btn" onclick={() => void mobActivate()} title="Man Overboard — raise alarm">
+        <FaIcon icon={faPersonFallingBurst} />
       </button>
-    {:else if mobState === 'confirming'}
-      <button class="mob-btn mob-btn--confirm" onclick={() => void mobActivate()} title="Confirm Man Overboard">
-        CONFIRM ({mobCountdown})
-      </button>
-      <button class="mob-cancel-btn" onclick={() => void mobCancel()}>Cancel</button>
     {:else}
       <button class="mob-btn mob-btn--active" onclick={() => void mobCancel()} title="MOB active — tap to cancel">
-        ⚠ MOB ACTIVE
+        <FaIcon icon={faPersonFallingBurst} />
       </button>
       {#if mobError}
         <div class="mob-error">{mobError}</div>
@@ -643,14 +617,6 @@
   .mob-btn:hover { background: #991b1b; transform: scale(1.04); }
   .mob-btn:active { transform: scale(0.97); }
 
-  /* Confirming: orange — intentional second tap required */
-  .mob-btn--confirm {
-    background: #c2410c;
-    border-color: #fdba74;
-    box-shadow: 0 2px 12px rgba(194,65,12,0.6);
-    animation: mob-pulse 0.6s ease-in-out infinite alternate;
-  }
-
   /* Active: bright flashing red */
   .mob-btn--active {
     background: #dc2626;
@@ -660,25 +626,10 @@
   }
   .mob-btn--active:hover { background: #b91c1c; }
 
-  @keyframes mob-pulse {
-    from { box-shadow: 0 2px 8px rgba(194,65,12,0.5); }
-    to   { box-shadow: 0 2px 20px rgba(194,65,12,0.9); }
-  }
   @keyframes mob-flash {
     from { box-shadow: 0 0 12px rgba(220,38,38,0.7); opacity: 0.9; }
     to   { box-shadow: 0 0 28px rgba(220,38,38,1.0); opacity: 1.0; }
   }
-
-  .mob-cancel-btn {
-    background: rgba(0,0,0,0.65);
-    border: 1px solid rgba(255,255,255,0.3);
-    color: #ccc;
-    font-size: 12px;
-    padding: 4px 12px;
-    border-radius: 6px;
-    cursor: pointer;
-  }
-  .mob-cancel-btn:hover { background: rgba(60,60,60,0.8); color: white; }
 
   .mob-error {
     background: rgba(185,28,28,0.85);
