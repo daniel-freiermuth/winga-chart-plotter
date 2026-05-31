@@ -25,7 +25,8 @@
   import { track } from '../stores/track.svelte';
   import { gcLine, gcBearingDeg } from '../lib/geoMath';
   import { fetchAndResolveStyle } from '../lib/resolveStyle';
-  import { fetchAisVesselTrack } from '../lib/signalk-api';
+  import { auth } from '../stores/auth.svelte';
+  import { fetchAisVesselTrack, navigateToPoint } from '../lib/signalk-api';
   import { AisHullLayer, AisHullDecorationLayer, AisHullBorderLayer, HULL_ANCHOR_DOT, HULL_MOORING_BARS, HULL_AGROUND_RING, HULL_FISHING_GEAR, HULL_NUC, HULL_RESTRICTED, HULL_DRAUGHT } from '../layers/AisHullLayer';
   import { VesselIconLayer, ANCHOR_DOT_GEOMETRY, AGROUND_CIRCLE_GEOMETRY, MOORING_BARS_GEOMETRY, FISHING_GEAR_GEOMETRY, NUC_GEOMETRY, RESTRICTED_MANOEUVRING_GEOMETRY, DRAUGHT_GEOMETRY, MOB_GEOMETRY } from '../layers/VesselIconLayer';
   import { extrapolatePos } from '../lib/deadReckoning';
@@ -929,6 +930,50 @@
       openDisambigPopup(coordinate, uniqueHits.map(h => h.idx));
     });
 
+    // Right-click (desktop) → navigate popup.
+    map.on('contextmenu', (e) => {
+      showNavigatePopup(e.lngLat);
+    });
+
+    // Long-press (touch) → navigate popup.
+    // MapLibre does not synthesise contextmenu on long-press reliably, so handle it manually.
+    {
+      let longPressTimer: ReturnType<typeof setTimeout> | null = null;
+      let longPressLngLat: maplibregl.LngLat | null = null;
+      const LONG_PRESS_MS = 500;
+      const MOVE_THRESHOLD_PX = 10;
+      let startX = 0;
+      let startY = 0;
+
+      const cancelLongPress = () => {
+        if (longPressTimer !== null) { clearTimeout(longPressTimer); longPressTimer = null; }
+        longPressLngLat = null;
+      };
+
+      map.on('touchstart', (e) => {
+        if (e.originalEvent.touches.length !== 1) { cancelLongPress(); return; }
+        const touch = e.originalEvent.touches[0];
+        startX = touch.clientX;
+        startY = touch.clientY;
+        longPressLngLat = e.lngLat;
+        longPressTimer = setTimeout(() => {
+          if (longPressLngLat) showNavigatePopup(longPressLngLat);
+          longPressTimer = null;
+        }, LONG_PRESS_MS);
+      });
+
+      map.on('touchmove', (e) => {
+        if (!longPressTimer) return;
+        const touch = e.originalEvent.touches[0];
+        const dx = touch.clientX - startX;
+        const dy = touch.clientY - startY;
+        if (Math.sqrt(dx * dx + dy * dy) > MOVE_THRESHOLD_PX) cancelLongPress();
+      });
+
+      map.on('touchend', cancelLongPress);
+      map.on('touchcancel', cancelLongPress);
+    }
+
     // style.load fires on initial style ready AND after MapLibre's internal setStyle
     // (which it calls automatically on WebGL context restore), so this covers both cases.
     map.on('style.load', () => {
@@ -1190,7 +1235,7 @@
     const gen = ++_aisTrackGen;
     const historyHours = settings.appearance.track.historyHours;
     const startTime = new Date(Date.now() - historyHours * 3_600_000).toISOString();
-    const serverBase = `${settings.signalkProtocol}://${settings.signalkHost}:${settings.signalkPort}`;
+    const serverBase = settings.signalkHttpUrl;
     fetchAisVesselTrack(serverBase, t.id, startTime).then(coords => {
       if (gen === _aisTrackGen) aisTrackRaw = coords;
     }).catch(() => { /* server may not have history for this vessel — silently skip */ });
@@ -1247,6 +1292,48 @@
       if (!t?.position) return;
       popup.remove();
       handleAisClick(coordinate, t);
+    });
+  }
+
+  /** Format a lat/lon pair as degrees and decimal minutes (marine standard). */
+  function formatDm(lat: number, lon: number): string {
+    const dm = (deg: number, isLat: boolean): string => {
+      const dir = isLat ? (deg >= 0 ? 'N' : 'S') : (deg >= 0 ? 'E' : 'W');
+      const abs = Math.abs(deg);
+      const d = Math.floor(abs);
+      const m = (abs - d) * 60;
+      return `${d}°\u202f${m.toFixed(3)}'\u202f${dir}`;
+    };
+    return `${dm(lat, true)}&emsp;${dm(lon, false)}`;
+  }
+
+  /** Show a "Navigate here" popup at an empty-water click location. */
+  function showNavigatePopup(lngLat: maplibregl.LngLat): void {
+    if (!map) return;
+    const { lat, lng: lon } = lngLat;
+    const serverBase = settings.signalkHttpUrl;
+    const canNavigate = auth.isLoggedIn;
+
+    const popup = new maplibregl.Popup({ closeButton: true, maxWidth: '240px' })
+      .setLngLat(lngLat)
+      .setHTML(`
+        <div class="ais-popup navigate-popup">
+          <div class="ais-popup-coords">${formatDm(lat, lon)}</div>
+          <button class="popup-settings-btn navigate-here-btn"
+            ${canNavigate ? '' : 'disabled title="Login required to set course"'}>
+            Navigate here
+          </button>
+        </div>
+      `)
+      .addTo(map);
+
+    popup.getElement().addEventListener('click', (ev) => {
+      const btn = (ev.target as HTMLElement).closest<HTMLButtonElement>('.navigate-here-btn');
+      if (!btn || btn.disabled) return;
+      popup.remove();
+      navigateToPoint(serverBase, lat, lon, auth.authHeaders).catch(err => {
+        console.error('[navigate] Failed to set course:', err);
+      });
     });
   }
 
@@ -2548,5 +2635,16 @@
   :global(.vessel-self-settings-btn:hover),
   :global(.popup-settings-btn:hover) {
     background: rgba(96,165,250,0.28);
+  }
+  :global(.popup-settings-btn:disabled) {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+  :global(.ais-popup-coords) {
+    font-family: monospace;
+    font-size: 11px;
+    color: #9ca3af;
+    margin-bottom: 8px;
+    text-align: center;
   }
 </style>

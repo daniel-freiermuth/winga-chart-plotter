@@ -329,3 +329,41 @@ export async function fetchAisVesselTrack(
   if (v1Coords.length === 0) return v2Coords;
   return dedupCoords([...v2Coords, ...v1Coords]);
 }
+
+/**
+ * Set the active course destination to a single point.
+ * Replaces any existing course (active route or previous waypoint).
+ *
+ * Uses the Signal K v2 course API:
+ *   PUT /signalk/v2/api/vessels/self/navigation/course
+ *   { nextPoint: { position: { latitude, longitude } } }
+ */
+export async function navigateToPoint(
+  serverBase: string,
+  latitude: number,
+  longitude: number,
+  authHeaders: Record<string, string>,
+): Promise<void> {
+  const res = await fetch(`${serverBase}/signalk/v2/api/vessels/self/navigation/course/destination`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...authHeaders },
+    body: JSON.stringify({ position: { latitude, longitude } }),
+  });
+  if (!res.ok) throw new Error(`Navigate to point failed: ${res.status} ${res.statusText}`);
+}
+
+/**
+ * Clear the active course (destination point or active route).
+ *
+ *   DELETE /signalk/v2/api/vessels/self/navigation/course
+ */
+export async function clearCourse(
+  serverBase: string,
+  authHeaders: Record<string, string>,
+): Promise<void> {
+  const res = await fetch(`${serverBase}/signalk/v2/api/vessels/self/navigation/course`, {
+    method: 'DELETE',
+    headers: authHeaders,
+  });
+  if (!res.ok) throw new Error(`Clear course failed: ${res.status} ${res.statusText}`);
+}
