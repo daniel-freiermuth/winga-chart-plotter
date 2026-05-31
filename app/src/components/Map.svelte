@@ -2358,9 +2358,9 @@
   // Follow + rotation mode: combined into one effect so we never issue two competing
   // easeTo/flyTo calls in the same reactive flush.
   //
-  // HDG follow: jumpTo at 60fps (compass rate) — instant, smooth, never blocks touch.
+  // HDG follow: easeTo at compass rate — short duration so frames chain into smooth rotation.
   // Other follow modes: easeTo/flyTo only when position or mode changes (~1Hz GPS rate).
-  // Non-follow: jumpTo for bearing-only — instant, no animation lifecycle, touch-safe.
+  // Non-follow: easeTo for bearing — short animation, touch-safe.
   $effect(() => {
     if (!map) return;
     const state = $vesselState;
@@ -2388,8 +2388,8 @@
 
     if (pos && following) {
       if (rm === 'heading' && bearing !== undefined) {
-        // HDG follow: rotate and re-centre at compass rate — instant, no animation lifecycle, touch-safe.
-        map.jumpTo({ center: [pos.longitude, pos.latitude], bearing });
+        // HDG follow: rotate and re-centre at compass rate — short duration chains into smooth rotation.
+        map.easeTo({ center: [pos.longitude, pos.latitude], bearing, duration: 200, easing: t => t });
       } else if (posChanged || rmChanged) {
         // Other modes: move camera only when position or rotation mode changes.
         const center = map.getCenter();
@@ -2402,9 +2402,9 @@
         }
       }
     } else if (bearing !== undefined && !_isInteracting) {
-      // Not following: instant bearing update — no animation, no touch interference.
+      // Not following: smooth bearing transition.
       if (bearing !== _lastNonFollowBearing || rmChanged) {
-        map.jumpTo({ bearing });
+        map.easeTo({ bearing, duration: 300 });
         _lastNonFollowBearing = bearing;
       }
     }
