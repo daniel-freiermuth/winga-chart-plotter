@@ -52,10 +52,10 @@
     - Just set course
     - Waypoints
 - [x] Own vessel -> drop waypoint
+- [x] Organize hit for multiple layers
 
 
 
-- Organize hit for multiple layers
 - Run checkers and check for errors
 - organize buttons at left
 - MOB button, requires login
@@ -64,11 +64,13 @@
   - o-charts
   - create s57 crate?
   - from NV charts somehow?
+
 - Debug tablet performance
 - SHOM proxy
 - KIP integration
 - Enable history on tablet and server
 - patch signalk crate?
+- Achor watch
 - Notificatios
 - Regression Testing! 
 - GRIB files
@@ -76,20 +78,3 @@
   - https://ims.windy.com/im/v3.0/forecast/ecmwf-hres/2026052400/2026052409/wm_grid_257/5/4/2/wind-surface.jpg
   - https://node.windy.com/citytile/v1.0/ecmwf-hres/9/270/156?hours=362&labelsVersion=v2.0&refTime=2026-05-24T00:00:00Z&step=3&pr=1&sc=6&token2=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJtYWdpYyI6NTUzLCJpYXQiOjE3Nzk2MTIxMTgsImV4cCI6MTc3OTc4NDkxOH0.9ALhlYh8t8ijAdzghEF7mAatsNB9gs-UuRdAymA3Jls&uid=8296cabd-a025-197e-b06b-9c8fea9a2681&v=50.0.3&poc=24
   - Measurements
-- Achor watch
-
-# Bugs
-
-3. Fly-to panning, there are interrupts. Better with full CPU and not only 800MHz
-
-# Names
-- Portolan
-- Vägvisare
-- Leidavisir
-- Winga, Vinga, Båken, Semaphore
-- Trubadur
-- Färd…
-
-
-# Notes
-- old eniro url: https://map.eniro.com/geowebcache/service/tms1.0.0/nautical2x/{z}/{x}/{-y}.png?v=20240523
