@@ -63,29 +63,35 @@
 - [x] all routes
 - [x] Change Heading line and style by click on own vessel?
 - [-] No or only one real GPS request?
-
-- Login
-- Performance a bit weird
+- [x] Performance a bit weird
   - Sometimes taking interactions
   - Sometime very slow fly
   - … or zoom or just little zoom on button-press
+- [x] Login
+- [x] Does fps setting actually work? I still see smooth animations
+
+
+
+
+
 - set course
   - cog, course
-- SHOM proxy
 - Ad-hoc navigation
+- Own vessel on top
 - tracks, routes
     - Draw route
     - History APIv1 & v2
     - Just set course
     - Waypoints
 - look-ahead mode, offset from middle
+- Debug tablet performance
 - More vector charts
   - o-charts
   - create s57 crate?
   - from NV charts somehow?
-- KIP integration
-- Does fps setting actually work? I still see smooth animations
 - MOB button, requires login
+- SHOM proxy
+- KIP integration
 - Plugins in WCP?
   - MOB button
   - Anchor
