@@ -98,8 +98,8 @@ function createChartsStore() {
 
     async selectLayer(id: string, layerId: string) {
       const chart = available[id];
-      if (!chart || chart.type !== 'WMTS') return;
-      const url = chart.url && chart.url.startsWith('/') ? `${serverBase}${chart.url}` : (chart.url ?? '');
+      if (chart?.type !== 'WMTS') return;
+      const url = chart.url?.startsWith('/') ? `${serverBase}${chart.url}` : (chart.url ?? '');
       try {
         const info = await resolveWmtsLayer(url, layerId);
         wmtsResolved.set(id, info.tileUrlTemplate);
@@ -144,7 +144,7 @@ function createChartsStore() {
         const wmtsTasks = Object.values(available)
           .filter(c => c.type === 'WMTS' && !wmtsOverrides.has(c.identifier))
           .map(async c => {
-            const url = c.url && c.url.startsWith('/') ? `${base}${c.url}` : (c.url ?? '');
+            const url = c.url?.startsWith('/') ? `${base}${c.url}` : (c.url ?? '');
             if (!url) { wmtsFailed.add(c.identifier); return; }
             const preferLayer = wmtsLayerSel.get(c.identifier) ?? c.layers?.[0];
             try {

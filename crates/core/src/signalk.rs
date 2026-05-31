@@ -153,7 +153,7 @@ fn extract_course(nav: &signalk::V1Navigation) -> Option<CourseState> {
 
     let active_route = c.active_route.as_ref().and_then(|ar| {
         let href = to_str(&ar.href)?;
-        let name = ar.name.as_ref().and_then(|n| to_str(n));
+        let name = ar.name.as_ref().and_then(to_str);
         Some(ActiveRoute { href, name, point_index: ar.point_index, reverse: ar.reverse })
     });
 

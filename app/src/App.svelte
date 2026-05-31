@@ -41,7 +41,7 @@
   import Settings from './components/Settings.svelte';
   import ChartPicker from './components/ChartPicker.svelte';
   import { vesselState } from './stores/vessel';
-  import { settings } from './stores/settings.svelte';
+  import { settings, type SettingsTab } from './stores/settings.svelte';
   import { followMode } from './stores/follow.svelte';
   import { charts } from './stores/charts.svelte';
   import { ais } from './stores/ais.svelte';
@@ -183,7 +183,7 @@
   }
 
   onMount(() => {
-    acquireWakeLock();
+    void acquireWakeLock();
     worker = new Worker(
       new URL('./workers/signalk.worker.ts', import.meta.url),
       { type: 'module' },
@@ -200,7 +200,7 @@
             cog: msg.state.cog ?? null,
             sog: msg.state.sog ?? null,
             heading: msg.state.heading ?? null,
-            course: msg.state.course,
+            ...(msg.state.course !== undefined ? { course: msg.state.course } : {}),
           });
         }
         // Update course/route regardless of geo mode — route is always from SK.
@@ -247,7 +247,7 @@
     };
   });
 
-  onDestroy(() => releaseWakeLock());
+  onDestroy(() => { releaseWakeLock(); });
 
   // Charts and vessel info only depend on the HTTP URL — no WASM needed on main thread.
   // Vessel info is re-fetched periodically: AIS static data (name, type, dimensions)
@@ -279,7 +279,7 @@
     void auth.init(httpUrl);
 
     if (vesselInfoTimer !== null) clearInterval(vesselInfoTimer);
-    const refresh = () => void fetchVesselInfo(httpUrl).then(info => ais.setInfoCache(info));
+    const refresh = () => void fetchVesselInfo(httpUrl).then(info => { ais.setInfoCache(info); });
     refresh();
     vesselInfoTimer = setInterval(refresh, VESSEL_INFO_INTERVAL_MS);
     return () => { if (vesselInfoTimer !== null) clearInterval(vesselInfoTimer); };
@@ -310,10 +310,23 @@
     if (reconnectTimer !== null) { clearTimeout(reconnectTimer); reconnectTimer = null; }
     worker?.postMessage({ type: 'connect', url });
   });
+
+  function handleOpenSettings(tab: SettingsTab): void {
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-call
+    settingsComp?.openTo(tab);
+  }
+  function handleFlyToVessel(): void {
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-call
+    mapComp?.flyToVessel();
+  }
+  function handleAddRuler(): void {
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-call
+    mapComp?.addRuler();
+  }
 </script>
 
 <div style="position: relative; width: 100%; height: 100%;">
-  <Map bind:this={mapComp} openSettings={(tab) => settingsComp?.openTo(tab as Parameters<typeof settingsComp.openTo>[0])} />
+  <Map bind:this={mapComp} openSettings={handleOpenSettings} />
   <Settings bind:this={settingsComp} />
   <ChartPicker />
 
@@ -330,7 +343,7 @@
   <button
     title={followMode.following ? 'Stop following vessel' : 'Follow vessel'}
     disabled={!$vesselState.position}
-    onclick={() => mapComp?.flyToVessel()}
+    onclick={handleFlyToVessel}
     style="
       position: absolute; top: 120px; left: 10px; z-index: 10;
       background: {followMode.following ? 'rgba(255,255,255,0.9)' : 'rgba(0,0,0,0.7)'};
@@ -344,7 +357,7 @@
 
   <button
     title="Add ruler"
-    onclick={() => mapComp?.addRuler()}
+    onclick={handleAddRuler}
     style="
       position: absolute; top: 158px; left: 10px; z-index: 10;
       background: rgba(0,0,0,0.7); border: 1px solid transparent; color: white;

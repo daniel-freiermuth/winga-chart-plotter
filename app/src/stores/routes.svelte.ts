@@ -27,11 +27,11 @@ function createRoutes() {
         const parsed: ServerRoute[] = [];
         for (const [uuid, entry] of Object.entries(data)) {
           const feature = entry.feature;
-          if (!feature || feature.geometry?.type !== 'LineString') continue;
+          if (!feature) continue;
           parsed.push({
             uuid,
-            name: entry.name ?? uuid,
-            description: entry.description,
+            name: entry.name,
+            ...(entry.description !== undefined ? { description: entry.description } : {}),
             geometry: feature as Feature<LineString>,
           });
         }

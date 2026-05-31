@@ -30,7 +30,7 @@ function createRotateModeStore() {
     /** Called when the user manually rotates the map (gesture detected). */
     setManual() {
       if (mode !== 'manual') {
-        resumeMode = mode as AutoRotateMode;
+        resumeMode = mode;
         mode = 'manual';
       }
     },
@@ -45,10 +45,10 @@ function createRotateModeStore() {
         mode = resumeMode;
         return;
       }
-      const current = mode as AutoRotateMode;
+      const current = mode;
       const idx = AUTO_MODES.indexOf(current);
       for (let i = 1; i <= AUTO_MODES.length; i++) {
-        const next = AUTO_MODES[(idx + i) % AUTO_MODES.length];
+        const next = AUTO_MODES[(idx + i) % AUTO_MODES.length]!;
         if (isAvailable(next, hasCog, hasHeading, hasCourse)) {
           mode = next;
           return;
@@ -63,7 +63,7 @@ function createRotateModeStore() {
      */
     ensureAvailable(hasCog: boolean, hasHeading: boolean, hasCourse: boolean) {
       if (mode === 'manual') return;
-      if (isAvailable(mode as AutoRotateMode, hasCog, hasHeading, hasCourse)) return;
+      if (isAvailable(mode, hasCog, hasHeading, hasCourse)) return;
       if (hasCog) { mode = 'cog'; return; }
       mode = 'north';
     },

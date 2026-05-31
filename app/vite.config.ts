@@ -62,6 +62,7 @@ export default defineConfig(({ command }) => ({
         // worker blob remains self-contained.
         manualChunks(id) {
           if (id.includes('node_modules/maplibre-gl')) return 'maplibre-gl';
+          return undefined;
         },
       },
     },

@@ -23,7 +23,7 @@ async function acquire(): Promise<void> {
 }
 
 function onVisibilityChange(): void {
-  if (document.visibilityState === 'visible') acquire();
+  if (document.visibilityState === 'visible') void acquire();
 }
 
 export async function acquireWakeLock(): Promise<void> {
@@ -35,6 +35,6 @@ export async function acquireWakeLock(): Promise<void> {
 export function releaseWakeLock(): void {
   enabled = false;
   document.removeEventListener('visibilitychange', onVisibilityChange);
-  sentinel?.release();
+  void sentinel?.release();
   sentinel = null;
 }

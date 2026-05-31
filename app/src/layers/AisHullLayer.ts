@@ -235,7 +235,7 @@ export interface AisHullLayerProps<DataT = number> extends LayerProps {
   opacity?: number;
 }
 
-const defaultProps: DefaultProps<AisHullLayerProps<number>> = {
+const defaultProps: DefaultProps<AisHullLayerProps> = {
   getPosition:    { type: 'accessor', value: [0, 0] },
   getSog:         { type: 'accessor', value: 0 },
   getCog:         { type: 'accessor', value: 0 },
@@ -263,6 +263,7 @@ export class AisHullLayer<DataT = number> extends Layer<AisHullLayerProps<DataT>
   private _animateTimerId: ReturnType<typeof setTimeout> | null = null;
 
   override getShaders() {
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-return
     return super.getShaders({
       vs, fs,
       modules: [project32, picking, aisHullUniformModule],
@@ -308,6 +309,7 @@ export class AisHullLayer<DataT = number> extends Layer<AisHullLayerProps<DataT>
     }
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   override draw({ uniforms: _uniforms }: { uniforms: Record<string, unknown> }) {
     const { uploadTimestamp, selfAnimate, animationIntervalMs, settingsIconSize, opacity } = this.props;
     const now = Date.now();
@@ -323,7 +325,7 @@ export class AisHullLayer<DataT = number> extends Layer<AisHullLayerProps<DataT>
         timeSinceUpload,
         zoom,
         settingsIconSize: settingsIconSize ?? 1,
-        opacity: opacity ?? 1,
+        opacity: opacity,
       },
     });
     model.draw(this.context.renderPass);
@@ -331,8 +333,8 @@ export class AisHullLayer<DataT = number> extends Layer<AisHullLayerProps<DataT>
       const intervalMs = animationIntervalMs ?? 0;
       if (intervalMs <= 17) {
         this.setNeedsRedraw();
-      } else if (this._animateTimerId === null) {
-        this._animateTimerId = setTimeout(() => {
+      } else {
+        this._animateTimerId ??= setTimeout(() => {
           this._animateTimerId = null;
           this.setNeedsRedraw();
         }, intervalMs);
@@ -349,6 +351,7 @@ export class AisHullLayer<DataT = number> extends Layer<AisHullLayerProps<DataT>
   }
 
   _getModel() {
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-argument -- deck.gl's getShaders() returns any
     return new Model(this.context.device, {
       ...this.getShaders(),
       id: this.props.id,
@@ -377,7 +380,7 @@ export class AisHullLayer<DataT = number> extends Layer<AisHullLayerProps<DataT>
  * length/2 in the vertex shader).
  */
 function buildHullOutlineGeometry(halfWidth: number): HullDecorationGeometry {
-  const outline: Array<[number, number]> = [
+  const outline: [number, number][] = [
     [0, 1],    // bow
     [1, 0.6],  // sb-shoulder
     [1, -1],   // sb-aft
@@ -386,8 +389,8 @@ function buildHullOutlineGeometry(halfWidth: number): HullDecorationGeometry {
   ];
   const v: number[] = [];
   for (let i = 0; i < outline.length; i++) {
-    const [x0, y0] = outline[i];
-    const [x1, y1] = outline[(i + 1) % outline.length];
+    const [x0, y0] = outline[i] as [number, number];
+    const [x1, y1] = outline[(i + 1) % outline.length] as [number, number];
     v.push(...hullLineSeg(x0, y0, x1, y1, halfWidth));
   }
   return buildHullDecorationGeometry(v);
@@ -700,7 +703,7 @@ export interface AisHullDecorationLayerProps<DataT = number> extends LayerProps 
   decoration:      HullDecorationGeometry;
 }
 
-const decorationDefaultProps: DefaultProps<AisHullDecorationLayerProps<number>> = {
+const decorationDefaultProps: DefaultProps<AisHullDecorationLayerProps> = {
   getPosition:    { type: 'accessor', value: [0, 0] },
   getSog:         { type: 'accessor', value: 0 },
   getCog:         { type: 'accessor', value: 0 },
@@ -729,6 +732,7 @@ export class AisHullDecorationLayer<DataT = number>
   private _animateTimerId: ReturnType<typeof setTimeout> | null = null;
 
   override getShaders() {
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-return
     return super.getShaders({
       vs: decorationVs,
       fs: decorationFs,
@@ -773,6 +777,7 @@ export class AisHullDecorationLayer<DataT = number>
     }
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   override draw({ uniforms: _uniforms }: { uniforms: Record<string, unknown> }) {
     const { uploadTimestamp, selfAnimate, animationIntervalMs, settingsIconSize } = this.props;
     const now = Date.now();
@@ -789,8 +794,8 @@ export class AisHullDecorationLayer<DataT = number>
       const intervalMs = animationIntervalMs ?? 0;
       if (intervalMs <= 17) {
         this.setNeedsRedraw();
-      } else if (this._animateTimerId === null) {
-        this._animateTimerId = setTimeout(() => {
+      } else {
+        this._animateTimerId ??= setTimeout(() => {
           this._animateTimerId = null;
           this.setNeedsRedraw();
         }, intervalMs);
@@ -808,6 +813,7 @@ export class AisHullDecorationLayer<DataT = number>
 
   _getModel() {
     const { positions, vertexCount } = this.props.decoration;
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-argument -- deck.gl's getShaders() returns any
     return new Model(this.context.device, {
       ...this.getShaders(),
       id: this.props.id,
@@ -929,7 +935,7 @@ export interface AisHullBorderLayerProps<DataT = number> extends LayerProps {
   opacity?:         number;
 }
 
-const borderDefaultProps: DefaultProps<AisHullBorderLayerProps<number>> = {
+const borderDefaultProps: DefaultProps<AisHullBorderLayerProps> = {
   getPosition:    { type: 'accessor', value: [0, 0] },
   getSog:         { type: 'accessor', value: 0 },
   getCog:         { type: 'accessor', value: 0 },
@@ -955,6 +961,7 @@ export class AisHullBorderLayer<DataT = number>
   private _animateTimerId: ReturnType<typeof setTimeout> | null = null;
 
   override getShaders() {
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-return
     return super.getShaders({
       vs: borderVs,
       fs: borderFs,
@@ -1001,6 +1008,7 @@ export class AisHullBorderLayer<DataT = number>
     }
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   override draw({ uniforms: _uniforms }: { uniforms: Record<string, unknown> }) {
     const { uploadTimestamp, selfAnimate, animationIntervalMs, settingsIconSize, opacity } = this.props;
     const now = Date.now();
@@ -1014,7 +1022,7 @@ export class AisHullBorderLayer<DataT = number>
         timeSinceUpload,
         zoom,
         settingsIconSize: settingsIconSize ?? 1,
-        opacity: opacity ?? 1,
+        opacity: opacity,
       },
     });
     model.draw(this.context.renderPass);
@@ -1022,8 +1030,8 @@ export class AisHullBorderLayer<DataT = number>
       const intervalMs = animationIntervalMs ?? 0;
       if (intervalMs <= 17) {
         this.setNeedsRedraw();
-      } else if (this._animateTimerId === null) {
-        this._animateTimerId = setTimeout(() => {
+      } else {
+        this._animateTimerId ??= setTimeout(() => {
           this._animateTimerId = null;
           this.setNeedsRedraw();
         }, intervalMs);
@@ -1041,6 +1049,7 @@ export class AisHullBorderLayer<DataT = number>
 
   _getModel() {
     const { positions, vertexCount } = HULL_BORDER_OUTLINE;
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-argument -- deck.gl's getShaders() returns any
     return new Model(this.context.device, {
       ...this.getShaders(),
       id: this.props.id,

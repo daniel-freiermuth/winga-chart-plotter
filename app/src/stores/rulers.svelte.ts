@@ -68,26 +68,23 @@ function createRulersStore() {
     /** Update snapped endpoints from current AIS data (call each rAF). */
     syncSnapped(targets: { id: string; position?: { longitude: number; latitude: number } }[]): void {
       const byId = new Map(targets.map(t => [t.id, t]));
-      let changed = false;
       const next = rulers.map(r => {
         let { a, b } = r;
         if (a.snapId) {
           const t = byId.get(a.snapId);
           if (t?.position && (t.position.longitude !== a.lon || t.position.latitude !== a.lat)) {
             a = { ...a, lon: t.position.longitude, lat: t.position.latitude };
-            changed = true;
           }
         }
         if (b.snapId) {
           const t = byId.get(b.snapId);
           if (t?.position && (t.position.longitude !== b.lon || t.position.latitude !== b.lat)) {
             b = { ...b, lon: t.position.longitude, lat: t.position.latitude };
-            changed = true;
           }
         }
-        return changed ? { ...r, a, b } : r;
+        return (a !== r.a || b !== r.b) ? { ...r, a, b } : r;
       });
-      if (changed) rulers = next;
+      if (next.some((r, i) => r !== rulers[i])) rulers = next;
     },
   };
 }

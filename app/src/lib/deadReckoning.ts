@@ -60,7 +60,7 @@ export function extrapolateHeading(
  * Returns a value in [0, 1]: 1 = full icon, 0 = icon fully faded (hull takes over).
  */
 export function vesselIconOpacity(target: AisTarget, zoom: number, settingsIconSize: number): number {
-  if (!target.position || !target.lengthM || target.heading === undefined) return 1;
+  if (!target.lengthM || target.heading === undefined) return 1;
   const { latitude } = target.position;
   const transitionZoom = Math.log2(
     settingsIconSize * 64 * 40075016.686 * Math.cos(latitude * Math.PI / 180)

@@ -58,7 +58,7 @@ function remapGlyphFonts(node: unknown): unknown {
  */
 export async function fetchAndResolveStyle(url: string): Promise<object> {
   const res = await fetch(url);
-  if (!res.ok) throw new Error(`Failed to fetch style ${url}: ${res.status} ${res.statusText}`);
+  if (!res.ok) throw new Error(`Failed to fetch style ${url}: ${String(res.status)} ${res.statusText}`);
   const raw = await res.json() as Record<string, unknown>;
 
   // Remap unsupported font names before any expression resolution so that
@@ -83,6 +83,7 @@ export async function fetchAndResolveStyle(url: string): Promise<object> {
     for (const [id, src] of Object.entries(sources)) {
       if (typeof src.url === 'string' && src.url.startsWith('mapbox://')) {
         strippedSources.add(id);
+        // eslint-disable-next-line @typescript-eslint/no-dynamic-delete -- only way to remove a key from the style sources object
         delete sources[id];
       }
     }
@@ -118,7 +119,7 @@ function resolveExprs(node: unknown, defaults: Map<string, unknown>): unknown {
     return node;
   }
 
-  const head = node[0];
+  const head: unknown = node[0];
 
   // ["config", "key"] → schema default value
   if (head === 'config' && node.length === 2 && typeof node[1] === 'string') {
@@ -159,19 +160,19 @@ function foldConstants(node: unknown[]): unknown {
   const allNumbers = args.every(a => typeof a === 'number');
 
   if (allNumbers) {
-    const nums = args as number[];
+    const nums = args;
     switch (op) {
       case '*': return nums.reduce((a, b) => a * b);
-      case '/': return nums.length === 2 && nums[1] !== 0 ? nums[0] / nums[1] : node;
+      case '/': return nums.length === 2 && nums[1]! !== 0 ? nums[0]! / nums[1]! : node;
       case '+': return nums.reduce((a, b) => a + b);
-      case '-': return nums.length === 2 ? nums[0] - nums[1] : node;
-      case '^': return nums.length === 2 ? Math.pow(nums[0], nums[1]) : node;
+      case '-': return nums.length === 2 ? nums[0]! - nums[1]! : node;
+      case '^': return nums.length === 2 ? Math.pow(nums[0]!, nums[1]!) : node;
       case 'min': return Math.min(...nums);
       case 'max': return Math.max(...nums);
-      case 'abs': return nums.length === 1 ? Math.abs(nums[0]) : node;
-      case 'ceil': return nums.length === 1 ? Math.ceil(nums[0]) : node;
-      case 'floor': return nums.length === 1 ? Math.floor(nums[0]) : node;
-      case 'round': return nums.length === 1 ? Math.round(nums[0]) : node;
+      case 'abs': return nums.length === 1 ? Math.abs(nums[0]!) : node;
+      case 'ceil': return nums.length === 1 ? Math.ceil(nums[0]!) : node;
+      case 'floor': return nums.length === 1 ? Math.floor(nums[0]!) : node;
+      case 'round': return nums.length === 1 ? Math.round(nums[0]!) : node;
     }
   }
 

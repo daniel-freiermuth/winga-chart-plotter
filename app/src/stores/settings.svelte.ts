@@ -2,6 +2,8 @@ const STORAGE_KEY = 'signalk-chart-settings';
 
 export type LineStyle = 'solid' | 'dashed' | 'dotted' | 'dash-dot';
 
+export type SettingsTab = 'connection' | 'vessel' | 'ais' | 'routes' | 'about';
+
 export interface LineAppearance {
   color: string;
   width: number;       // screen pixels
@@ -146,16 +148,16 @@ function load(): SettingsData {
             ais: {
               ...DEFAULTS.appearance.ais,
               ...(p.appearance?.ais ?? {}),
-              cog:   { ...DEFAULTS.appearance.ais.cog,   ...(p.appearance?.ais?.cog   ?? {}) },
-              track: { ...DEFAULTS.appearance.ais.track, ...(p.appearance?.ais?.track ?? {}) },
+              cog:   { ...DEFAULTS.appearance.ais.cog,   ...(p.appearance?.ais.cog   ?? {}) },
+              track: { ...DEFAULTS.appearance.ais.track, ...(p.appearance?.ais.track ?? {}) },
             },
             ruler: { ...DEFAULTS.appearance.ruler, ...(p.appearance?.ruler ?? {}) },
             planner: { ...DEFAULTS.appearance.planner, ...(p.appearance?.planner ?? {}) },
             route: {
-              bearing:   { ...DEFAULTS.appearance.route.bearing,   ...(p.appearance?.route?.bearing   ?? {}) },
-              segment:   { ...DEFAULTS.appearance.route.segment,   ...(p.appearance?.route?.segment   ?? {}) },
-              remaining: { ...DEFAULTS.appearance.route.remaining, ...(p.appearance?.route?.remaining ?? {}) },
-              allRoutes: { ...DEFAULTS.appearance.route.allRoutes, ...(p.appearance?.route?.allRoutes ?? {}) },
+              bearing:   { ...DEFAULTS.appearance.route.bearing,   ...(p.appearance?.route.bearing   ?? {}) },
+              segment:   { ...DEFAULTS.appearance.route.segment,   ...(p.appearance?.route.segment   ?? {}) },
+              remaining: { ...DEFAULTS.appearance.route.remaining, ...(p.appearance?.route.remaining ?? {}) },
+              allRoutes: { ...DEFAULTS.appearance.route.allRoutes, ...(p.appearance?.route.allRoutes ?? {}) },
             },
             track: { ...DEFAULTS.appearance.track, ...(p.appearance?.track ?? {}) },
           },

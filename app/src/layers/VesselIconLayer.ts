@@ -502,7 +502,7 @@ export interface VesselIconLayerProps<DataT = number> extends LayerProps {
   opacity?:         number;
 }
 
-const defaultProps: DefaultProps<VesselIconLayerProps<number>> = {
+const defaultProps: DefaultProps<VesselIconLayerProps> = {
   getPosition:    { type: 'accessor', value: [0, 0] },
   getSog:         { type: 'accessor', value: 0 },
   getCog:         { type: 'accessor', value: 0 },
@@ -529,6 +529,7 @@ export class VesselIconLayer<DataT = number> extends Layer<VesselIconLayerProps<
   private _animateTimerId: ReturnType<typeof setTimeout> | null = null;
 
   override getShaders() {
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-return
     return super.getShaders({
       vs, fs,
       modules: [project32, picking, aisIconUniformModule],
@@ -575,6 +576,7 @@ export class VesselIconLayer<DataT = number> extends Layer<VesselIconLayerProps<
     }
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   override draw({ uniforms: _uniforms }: { uniforms: Record<string, unknown> }) {
     const { uploadTimestamp, selfAnimate, animationIntervalMs, settingsIconSize, opacity } = this.props;
     const now = Date.now();
@@ -589,7 +591,7 @@ export class VesselIconLayer<DataT = number> extends Layer<VesselIconLayerProps<
         timeSinceUpload,
         zoom,
         settingsIconSize: settingsIconSize ?? 1,
-        opacity:         opacity         ?? 1,
+        opacity:         opacity,
       },
     });
     model.draw(this.context.renderPass);
@@ -598,9 +600,9 @@ export class VesselIconLayer<DataT = number> extends Layer<VesselIconLayerProps<
       if (intervalMs <= 17) {
         // Native fps: request next frame immediately.
         this.setNeedsRedraw();
-      } else if (this._animateTimerId === null) {
+      } else {
         // Throttled: schedule next redraw after interval, then let rAF fire draw().
-        this._animateTimerId = setTimeout(() => {
+        this._animateTimerId ??= setTimeout(() => {
           this._animateTimerId = null;
           this.setNeedsRedraw();
         }, intervalMs);
@@ -618,6 +620,7 @@ export class VesselIconLayer<DataT = number> extends Layer<VesselIconLayerProps<
 
   _getModel() {
     const geo = this.props.iconGeometry ?? ARROW_GEOMETRY;
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-argument -- deck.gl's getShaders() returns any
     return new Model(this.context.device, {
       ...this.getShaders(),
       id: this.props.id,

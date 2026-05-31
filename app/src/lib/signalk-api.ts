@@ -99,7 +99,7 @@ export interface SkRouteEntry {
 /** Fetch all routes stored on the Signal K server. */
 export async function fetchAllRoutes(serverBase: string): Promise<Record<string, SkRouteEntry>> {
   const res = await fetch(`${serverBase}/signalk/v2/api/resources/routes`);
-  if (!res.ok) throw new Error(`Routes API error: ${res.status} ${res.statusText}`);
+  if (!res.ok) throw new Error(`Routes API error: ${String(res.status)} ${res.statusText}`);
   return res.json() as Promise<Record<string, SkRouteEntry>>;
 }
 
@@ -116,7 +116,7 @@ export interface SkWaypointEntry {
 /** Fetch all waypoints stored on the Signal K server. */
 export async function fetchAllWaypoints(serverBase: string): Promise<Record<string, SkWaypointEntry>> {
   const res = await fetch(`${serverBase}/signalk/v2/api/resources/waypoints`);
-  if (!res.ok) throw new Error(`Waypoints API error: ${res.status} ${res.statusText}`);
+  if (!res.ok) throw new Error(`Waypoints API error: ${String(res.status)} ${res.statusText}`);
   return res.json() as Promise<Record<string, SkWaypointEntry>>;
 }
 
@@ -183,7 +183,7 @@ export async function fetchVesselInfo(serverBase: string): Promise<Map<string, V
 
 
 
-type GeoJsonLike = { type?: string; coordinates?: unknown; features?: unknown[]; geometry?: unknown };
+interface GeoJsonLike { type?: string; coordinates?: unknown; features?: unknown[]; geometry?: unknown }
 
 function extractTrackCoords(geojson: unknown): [number, number][] {
   if (!geojson || typeof geojson !== 'object') return [];
@@ -266,7 +266,7 @@ export async function fetchTrack(serverBase: string, startTime?: string): Promis
     fetch(`${serverBase}/signalk/v2/api/history/values?${v2Params.toString()}`).then(async res => {
       if (!res.ok) return [] as [number, number][];
       const body = await res.json() as {
-        data?: Array<[string, { longitude?: number; latitude?: number } | null]>;
+        data?: [string, { longitude?: number; latitude?: number } | null][];
       };
       const coords: [number, number][] = [];
       for (const [, pos] of body.data ?? []) {
@@ -324,7 +324,7 @@ export async function fetchAisVesselTrack(
     fetch(`${serverBase}/signalk/v2/api/history/values?${v2Params.toString()}`).then(async res => {
       if (!res.ok) return [] as [number, number][];
       const body = await res.json() as {
-        data?: Array<[string, { longitude?: number; latitude?: number } | null]>;
+        data?: [string, { longitude?: number; latitude?: number } | null][];
       };
       const coords: [number, number][] = [];
       for (const [, pos] of body.data ?? []) {
@@ -366,7 +366,7 @@ export async function navigateToPoint(
     headers: { 'Content-Type': 'application/json', ...authHeaders },
     body: JSON.stringify({ position: { latitude, longitude } }),
   });
-  if (!res.ok) throw new Error(`Navigate to point failed: ${res.status} ${res.statusText}`);
+  if (!res.ok) throw new Error(`Navigate to point failed: ${String(res.status)} ${res.statusText}`);
 }
 
 /**
@@ -382,7 +382,7 @@ export async function clearCourse(
     method: 'DELETE',
     headers: authHeaders,
   });
-  if (!res.ok) throw new Error(`Clear course failed: ${res.status} ${res.statusText}`);
+  if (!res.ok) throw new Error(`Clear course failed: ${String(res.status)} ${res.statusText}`);
 }
 
 /**
@@ -401,17 +401,17 @@ export async function activateRoute(
     headers: { 'Content-Type': 'application/json', ...authHeaders },
     body: JSON.stringify({ href: `/resources/routes/${routeUuid}` }),
   });
-  if (!res.ok) throw new Error(`Activate route failed: ${res.status} ${res.statusText}`);
+  if (!res.ok) throw new Error(`Activate route failed: ${String(res.status)} ${res.statusText}`);
 }
 
 function buildRouteBody(name: string, waypoints: { lon: number; lat: number }[]) {
   let distanceM = 0;
   for (let i = 1; i < waypoints.length; i++) {
     const R_M = 1852 * 3440.065;
-    const φ1 = (waypoints[i - 1].lat * Math.PI) / 180;
-    const φ2 = (waypoints[i].lat * Math.PI) / 180;
-    const Δφ = ((waypoints[i].lat - waypoints[i - 1].lat) * Math.PI) / 180;
-    const Δλ = ((waypoints[i].lon - waypoints[i - 1].lon) * Math.PI) / 180;
+    const φ1 = (waypoints[i - 1]!.lat * Math.PI) / 180;
+    const φ2 = (waypoints[i]!.lat * Math.PI) / 180;
+    const Δφ = ((waypoints[i]!.lat - waypoints[i - 1]!.lat) * Math.PI) / 180;
+    const Δλ = ((waypoints[i]!.lon - waypoints[i - 1]!.lon) * Math.PI) / 180;
     const a = Math.sin(Δφ / 2) ** 2 + Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) ** 2;
     distanceM += 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)) * R_M;
   }
@@ -446,7 +446,7 @@ export async function saveRoute(
     headers: { 'Content-Type': 'application/json', ...authHeaders },
     body: JSON.stringify(buildRouteBody(name, waypoints)),
   });
-  if (!res.ok) throw new Error(`Save route failed: ${res.status} ${res.statusText}`);
+  if (!res.ok) throw new Error(`Save route failed: ${String(res.status)} ${res.statusText}`);
   const data = await res.json() as { id?: string; uuid?: string } | string;
   if (typeof data === 'string') return data;
   return (data.id ?? data.uuid ?? '');
@@ -469,7 +469,7 @@ export async function updateRoute(
     headers: { 'Content-Type': 'application/json', ...authHeaders },
     body: JSON.stringify(buildRouteBody(name, waypoints)),
   });
-  if (!res.ok) throw new Error(`Update route failed: ${res.status} ${res.statusText}`);
+  if (!res.ok) throw new Error(`Update route failed: ${String(res.status)} ${res.statusText}`);
 }
 
 /**
@@ -486,7 +486,7 @@ export async function deleteRoute(
     method: 'DELETE',
     headers: { ...authHeaders },
   });
-  if (!res.ok) throw new Error(`Delete route failed: ${res.status} ${res.statusText}`);
+  if (!res.ok) throw new Error(`Delete route failed: ${String(res.status)} ${res.statusText}`);
 }
 
 /**
@@ -515,7 +515,7 @@ export async function saveWaypoint(
     headers: { 'Content-Type': 'application/json', ...authHeaders },
     body: JSON.stringify(body),
   });
-  if (!res.ok) throw new Error(`Save waypoint failed: ${res.status} ${res.statusText}`);
+  if (!res.ok) throw new Error(`Save waypoint failed: ${String(res.status)} ${res.statusText}`);
   const data = await res.json() as { id?: string } | string;
   return typeof data === 'string' ? data : (data.id ?? '');
 }
@@ -546,7 +546,7 @@ export async function updateWaypoint(
     headers: { 'Content-Type': 'application/json', ...authHeaders },
     body: JSON.stringify(body),
   });
-  if (!res.ok) throw new Error(`Update waypoint failed: ${res.status} ${res.statusText}`);
+  if (!res.ok) throw new Error(`Update waypoint failed: ${String(res.status)} ${res.statusText}`);
 }
 
 /**
@@ -563,5 +563,5 @@ export async function deleteWaypoint(
     method: 'DELETE',
     headers: { ...authHeaders },
   });
-  if (!res.ok) throw new Error(`Delete waypoint failed: ${res.status} ${res.statusText}`);
+  if (!res.ok) throw new Error(`Delete waypoint failed: ${String(res.status)} ${res.statusText}`);
 }

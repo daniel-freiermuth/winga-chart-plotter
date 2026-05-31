@@ -7,7 +7,7 @@
   import type * as GeoJSON from 'geojson';
   import { get } from 'svelte/store';
   import { vesselState, vesselPosition } from '../stores/vessel';
-  import { settings, type LineAppearance, type LineStyle } from '../stores/settings.svelte';
+  import { settings, type LineAppearance, type LineStyle, type SettingsTab } from '../stores/settings.svelte';
   import { fpsStore } from '../stores/fps.svelte';
   import { followMode } from '../stores/follow.svelte';
   import { rotateMode } from '../stores/rotateMode.svelte';
@@ -19,7 +19,7 @@
   import { PathLayer, ScatterplotLayer, TextLayer } from '@deck.gl/layers';
   import { PathStyleExtension } from '@deck.gl/extensions';
   import type { Layer } from '@deck.gl/core';
-  import { rulers, rulerBearingText, rulerDistanceText, type Ruler, type RulerEndpoint } from '../stores/rulers.svelte';
+  import { rulers, rulerBearingText, rulerDistanceText, type Ruler } from '../stores/rulers.svelte';
   import { routePlanner } from '../stores/routePlanner.svelte';
   import { route } from '../stores/route.svelte';
   import { routes } from '../stores/routes.svelte';
@@ -28,14 +28,15 @@
   import { gcLine, gcBearingDeg, gcDistanceNm } from '../lib/geoMath';
   import { fetchAndResolveStyle } from '../lib/resolveStyle';
   import { auth } from '../stores/auth.svelte';
-  import { fetchAisVesselTrack, navigateToPoint, clearCourse, activateRoute, saveRoute, deleteRoute, saveWaypoint, updateWaypoint, deleteWaypoint } from '../lib/signalk-api';
+  import { fetchAisVesselTrack, navigateToPoint, clearCourse, activateRoute, deleteRoute, saveWaypoint, updateWaypoint, deleteWaypoint } from '../lib/signalk-api';
   import { AisHullLayer, AisHullDecorationLayer, AisHullBorderLayer, HULL_ANCHOR_DOT, HULL_MOORING_BARS, HULL_AGROUND_RING, HULL_FISHING_GEAR, HULL_NUC, HULL_RESTRICTED, HULL_DRAUGHT } from '../layers/AisHullLayer';
   import { VesselIconLayer, ANCHOR_DOT_GEOMETRY, AGROUND_CIRCLE_GEOMETRY, MOORING_BARS_GEOMETRY, FISHING_GEAR_GEOMETRY, NUC_GEOMETRY, RESTRICTED_MANOEUVRING_GEOMETRY, DRAUGHT_GEOMETRY, MOB_GEOMETRY } from '../layers/VesselIconLayer';
   import { extrapolatePos } from '../lib/deadReckoning';
+  import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 
   type ProjectionId = 'mercator' | 'globe';
 
-  const { openSettings = (_tab: string) => {} }: { openSettings?: (tab: string) => void } = $props();
+  const { openSettings = () => { /* noop */ } }: { openSettings?: (tab: SettingsTab) => void } = $props();
 
   const DEFAULT_STYLE: maplibregl.StyleSpecification = {
     version: 8,
@@ -53,13 +54,13 @@
   let mapContainer: HTMLDivElement;
   let map: maplibregl.Map | undefined;
   let isFullscreen = $state(!!document.fullscreenElement);
-  let onFsChange = () => {};
+  let onFsChange = () => { /* noop */ };
 
   function toggleFullscreen() {
     if (!document.fullscreenElement) {
-      document.documentElement.requestFullscreen().catch(() => {});
+      document.documentElement.requestFullscreen().catch(() => { /* noop */ });
     } else {
-      document.exitFullscreen().catch(() => {});
+      document.exitFullscreen().catch(() => { /* noop */ });
     }
   }
 
@@ -121,8 +122,9 @@
   function setProjection(id: ProjectionId) {
     // Phase 0 — cache the converged latitude correction before leaving globe mode.
     if (id !== 'globe' && projection === 'globe') {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
       const vp = (map as any)?.style?.projection?._verticalPerspectiveProjection;
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
       if (vp) _cachedGlobeCorrection = vp._errorCorrectionUsable as number;
     }
 
@@ -132,13 +134,16 @@
     if (id === 'globe' && _cachedGlobeCorrection !== null) {
       // Phase 1 — synchronously inject cached correction into the fresh VP projection
       // so the very first rendered frame is already at the correct latitude.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
       const vp = (map as any)?.style?.projection?._verticalPerspectiveProjection;
       if (vp) {
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
         vp._errorCorrectionUsable       = _cachedGlobeCorrection;
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
         vp._errorCorrectionPreviousValue = _cachedGlobeCorrection;
         // Pre-set lastValue so the first updateGPUdependent call doesn't immediately
         // start a transition away from the cached value.
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
         vp._errorMeasurementLastValue = -_cachedGlobeCorrection;
       }
 
@@ -149,12 +154,16 @@
       requestAnimationFrame(() => {
         if (!_globeInjectionPending) return;
         _globeInjectionPending = false;
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
         const vp2 = (map as any)?.style?.projection?._verticalPerspectiveProjection;
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
         if (vp2?._errorMeasurement && _cachedGlobeCorrection !== null) {
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
           vp2._errorMeasurement._measuredError  = -_cachedGlobeCorrection;
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
           vp2._errorMeasurementLastValue         = -_cachedGlobeCorrection;
           // Far-past timestamp forces mix=1 immediately, so correction is applied without delay.
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
           vp2._errorMeasurementLastChangeTime    = performance.now() - 10_000;
         }
       });
@@ -179,7 +188,7 @@
 
   // Track the tile URL each chart source was last created with, so we can
   // detect URL changes (e.g. WMTS layer switch) and recreate the source.
-  const chartSourceUrls = new Map<string, string>();
+  const chartSourceUrls = new SvelteMap<string, string>();
   // The MapLibre style URL currently loaded as the map base (null = default OSM style).
   // Not $state — only read inside the $effect, never rendered.
   let activeStyleUrl: string | null = null;
@@ -276,9 +285,9 @@
   // NOTE: only handles western overflow (pts[0] < −540). Tracks always accumulate westward
   // so this is sufficient for own-vessel/AIS tracks.
   function splitToFit(pts: [number, number][]): [number, number][][] {
-    if (pts.length === 0 || pts[0][0] >= -540) return pts.length > 0 ? [pts] : [];
+    if (pts.length === 0 || pts[0]![0] >= -540) return pts.length > 0 ? [pts] : [];
     let si = 0;
-    while (si < pts.length - 1 && pts[si][0] < -540) si++;
+    while (si < pts.length - 1 && pts[si]![0] < -540) si++;
     const recent = pts.slice(si);
     const overflow = pts.slice(0, si + 1).map(pt => [pt[0] + 720, pt[1]] as [number, number]);
     return [...splitToFit(overflow), recent];
@@ -292,15 +301,15 @@
    */
   function splitRouteSegments(pts: [number, number][]): [number, number][][] {
     if (pts.length === 0) return [];
-    if (pts[0][0] < -540) {
+    if (pts[0]![0] < -540) {
       let si = 0;
-      while (si < pts.length - 1 && pts[si][0] < -540) si++;
+      while (si < pts.length - 1 && pts[si]![0] < -540) si++;
       const west = pts.slice(0, si + 1).map(p => [p[0] + 720, p[1]] as [number, number]);
       return [...splitRouteSegments(west), ...splitRouteSegments(pts.slice(si))];
     }
-    if (pts[pts.length - 1][0] > 540) {
+    if (pts[pts.length - 1]![0] > 540) {
       let si = pts.length - 1;
-      while (si > 0 && pts[si][0] > 540) si--;
+      while (si > 0 && pts[si]![0] > 540) si--;
       const east = pts.slice(si).map(p => [p[0] - 720, p[1]] as [number, number]);
       return [...splitRouteSegments(pts.slice(0, si + 1)), ...splitRouteSegments(east)];
     }
@@ -308,18 +317,18 @@
   }
 
   function processTrack(raw: [number, number][]): { coords: [number, number][]; overflowSegments: [number, number][][]; fadeStop: number } {
-    if (raw.length < 2) return { coords: raw as [number, number][], overflowSegments: [], fadeStop: 0 };
-    const out: [number, number][] = [[raw[0][0], raw[0][1]]];
+    if (raw.length < 2) return { coords: raw, overflowSegments: [], fadeStop: 0 };
+    const out: [number, number][] = [[raw[0]![0], raw[0]![1]]];
     for (let i = 1; i < raw.length; i++) {
-      const prev = out[out.length - 1];
-      const lon = unwrapLon(raw[i][0], prev[0]);
+      const prev = out[out.length - 1]!;
+      const lon = unwrapLon(raw[i]![0], prev[0]);
       // Densify along the great-circle path. For short segments (< 50 km, the common
       // case for live tracks) gcDensifySegment is a cheap no-op returning just the endpoint.
-      for (const pt of gcDensifySegment(prev[0], prev[1], lon, raw[i][1])) out.push(pt);
+      for (const pt of gcDensifySegment(prev[0], prev[1], lon, raw[i]![1])) out.push(pt);
     }
     // Anchor the most-recent point to [-180, 180]. Without this, multiple antimeridian
     // crossings accumulate unbounded longitude values which MapLibre cannot render.
-    const shift = Math.round(out[out.length - 1][0] / 360) * 360;
+    const shift = Math.round(out[out.length - 1]![0] / 360) * 360;
     if (shift !== 0) for (const pt of out) pt[0] -= shift;
     // Split into segments each within ±540°; the last segment is the most recent.
     const segments = splitToFit(out);
@@ -327,7 +336,7 @@
     const overflowSegments = segments.slice(0, -1);
     // Fade stop is computed over the most-recent segment only (where the gradient applies).
     let total = 0;
-    for (let i = 1; i < coords.length; i++) total += haversineMeters(coords[i - 1], coords[i]);
+    for (let i = 1; i < coords.length; i++) total += haversineMeters(coords[i - 1]!, coords[i]!);
     const fadeStop = total > 0 ? Math.min(Math.min(0.5 * 1852, total * 0.1) / total, 1) : 0;
     return { coords, overflowSegments, fadeStop };
   }
@@ -339,13 +348,13 @@
    */
   function processRouteCoords(raw: [number, number][]): [number, number][] {
     if (raw.length < 2) return raw;
-    const out: [number, number][] = [[raw[0][0], raw[0][1]]];
+    const out: [number, number][] = [[raw[0]![0], raw[0]![1]]];
     for (let i = 1; i < raw.length; i++) {
-      const prev = out[out.length - 1];
-      const lon = unwrapLon(raw[i][0], prev[0]);
-      for (const pt of gcDensifySegment(prev[0], prev[1], lon, raw[i][1])) out.push(pt);
+      const prev = out[out.length - 1]!;
+      const lon = unwrapLon(raw[i]![0], prev[0]);
+      for (const pt of gcDensifySegment(prev[0], prev[1], lon, raw[i]![1])) out.push(pt);
     }
-    const mid = (out[0][0] + out[out.length - 1][0]) / 2;
+    const mid = (out[0]![0] + out[out.length - 1]![0]) / 2;
     const shift = Math.round(mid / 360) * 360;
     if (shift !== 0) for (const pt of out) pt[0] -= shift;
     return out;
@@ -358,10 +367,10 @@
    */
   function buildTrackGradient(color: string, fadeStop: number): unknown[] {
     const hex = color.replace('#', '');
-    const r = parseInt(hex.length === 3 ? hex[0] + hex[0] : hex.slice(0, 2), 16);
-    const g = parseInt(hex.length === 3 ? hex[1] + hex[1] : hex.slice(2, 4), 16);
-    const b = parseInt(hex.length === 3 ? hex[2] + hex[2] : hex.slice(4, 6), 16);
-    const transparent = `rgba(${r},${g},${b},0)`;
+    const r = parseInt(hex.length === 3 ? hex.charAt(0) + hex.charAt(0) : hex.slice(0, 2), 16);
+    const g = parseInt(hex.length === 3 ? hex.charAt(1) + hex.charAt(1) : hex.slice(2, 4), 16);
+    const b = parseInt(hex.length === 3 ? hex.charAt(2) + hex.charAt(2) : hex.slice(4, 6), 16);
+    const transparent = `rgba(${String(r)},${String(g)},${String(b)},0)`;
     if (fadeStop < 0.001) {
       return ['interpolate', ['linear'], ['line-progress'], 0, color, 1, color];
     }
@@ -507,7 +516,7 @@
     if (routePlanner.active) {
       const plannerPick = overlay.pickObject({ x, y, radius: 12, layerIds: ['planner-handles'] });
       if (plannerPick?.object !== null && plannerPick?.object !== undefined) {
-        type PlannerHandle = { idx: number };
+        interface PlannerHandle { idx: number }
         const d = plannerPick.object as PlannerHandle;
         if (e.button === 2) {
           // Right-click on a handle → store for deletion in the contextmenu handler.
@@ -527,7 +536,7 @@
     // Check label click — opens the remove popup.
     const labelPick = overlay.pickObject({ x, y, radius: 14, layerIds: ['ruler-labels'] });
     if (labelPick?.object) {
-      type LabelDatum = { ruler: { id: string } };
+      interface LabelDatum { ruler: { id: string } }
       const d = labelPick.object as LabelDatum;
       rulerPopup = { rulerId: d.ruler.id, x: e.clientX, y: e.clientY };
       e.stopPropagation();
@@ -537,7 +546,7 @@
     if (rulerPopup) { rulerPopup = null; return; }
     const picked = overlay.pickObject({ x, y, radius: 10, layerIds: ['ruler-handles'] });
     if (!picked?.object) return;
-    type HandleDatum = { rulerId: string; endpoint: 'a' | 'b' };
+    interface HandleDatum { rulerId: string; endpoint: 'a' | 'b' }
     const d = picked.object as HandleDatum;
     rulerDrag = { rulerId: d.rulerId, endpoint: d.endpoint };
     map.dragPan.disable();
@@ -637,7 +646,7 @@
   // When the target FPS changes: cancel the pending tick, clear measurement history,
   // and reschedule immediately at the new rate.
   $effect(() => {
-    const _ = settings.targetFps;
+    void settings.targetFps;
     cancelAnimationFrame(rafId);
     clearTimeout(rafId);
     _fpsSamples.length = 0;
@@ -680,7 +689,7 @@
       // between our own layers. In non-interleaved mode this only affects deck.gl's canvas.
       parameters: { depthCompare: 'always', cullMode: 'none' },
     });
-    map.addControl(overlay as unknown as maplibregl.IControl);
+    map.addControl(overlay);
     // Flush any AIS layers that were built before the overlay was ready.
     flushLayers();
 
@@ -691,9 +700,9 @@
       const now = performance.now();
       _fpsSamples.push(now);
       const cutoff = now - 3000;
-      while (_fpsSamples.length > 2 && _fpsSamples[0] < cutoff) _fpsSamples.shift();
+      while (_fpsSamples.length > 2 && _fpsSamples[0]! < cutoff) _fpsSamples.shift();
       if (_fpsSamples.length >= 2) {
-        const span = _fpsSamples[_fpsSamples.length - 1] - _fpsSamples[0];
+        const span = _fpsSamples[_fpsSamples.length - 1]! - _fpsSamples[0]!;
         fpsStore.set((_fpsSamples.length - 1) / (span / 1000));
       }
 
@@ -714,16 +723,16 @@
             const ids = aisIdsSnapshot;
             const n = ids.length;
             for (let i = 0; i < n; i++) {
-              const lon = hd[i * S + AIS_F_LON];
-              const lat = hd[i * S + AIS_F_LAT];
-              snapPts.push({ id: ids[i], position: { longitude: lon, latitude: lat } });
-              const cog = hd[i * S + AIS_F_COG];
-              const sog = hd[i * S + AIS_F_SOG];
+              const lon = hd[i * S + AIS_F_LON]!;
+              const lat = hd[i * S + AIS_F_LAT]!;
+              snapPts.push({ id: ids[i]!, position: { longitude: lon, latitude: lat } });
+              const cog = hd[i * S + AIS_F_COG]!;
+              const sog = hd[i * S + AIS_F_SOG]!;
               if (!isNaN(cog) && !isNaN(sog) && sog > 0.1) {
-                const rot = hd[i * S + AIS_F_ROT];
-                const lastPosMs = aisUploadTimestamp - hd[i * S + AIS_F_AGE] * 1000;
+                const rot = hd[i * S + AIS_F_ROT]!;
+                const lastPosMs = aisUploadTimestamp - hd[i * S + AIS_F_AGE]! * 1000;
                 const [gLon, gLat] = extrapolatePos(lon, lat, cog, sog, isNaN(rot) ? 0 : rot, lastPosMs, nowForSnap);
-                snapPts.push({ id: ids[i] + ':ghost', position: { longitude: gLon, latitude: gLat } });
+                snapPts.push({ id: `${String(ids[i])}:ghost`, position: { longitude: gLon, latitude: gLat } });
               }
             }
           }
@@ -740,8 +749,8 @@
         const currentRulers = rulers.rulers;
         if (currentRulers.length > 0) {
           // --- Ruler layers ---
-          type HandleDatum    = { rulerId: string; endpoint: 'a' | 'b'; lon: number; lat: number; snapId?: string };
-          type LineDatum      = { ruler: Ruler };
+          interface HandleDatum { rulerId: string; endpoint: 'a' | 'b'; lon: number; lat: number; snapId?: string | undefined }
+          interface LineDatum { ruler: Ruler }
 
           const rulerColor    = settings.appearance.ruler.color;
           const rulerWidth    = settings.appearance.ruler.width;
@@ -754,7 +763,7 @@
           const lineRgba   = hexToRgba(rulerColor, 0.87);
           const handleRgba = hexToRgba(rulerColor, 0.90);
 
-          type MidDatum = { ruler: Ruler; lon: number; lat: number };
+          interface MidDatum { ruler: Ruler; lon: number; lat: number }
 
           // Exact GC midpoint — land on the line, not the chord.
           // Omit entries where the two handles are <100px apart (label would overlap handles).
@@ -766,7 +775,7 @@
               if (Math.hypot(pB.x - pA.x, pB.y - pA.y) < LABEL_MIN_PX) return [];
             }
             const pts = gcLine(r.a.lon, r.a.lat, r.b.lon, r.b.lat);
-            const mid = pts[Math.floor(pts.length / 2)];
+            const mid = pts[Math.floor(pts.length / 2)]!;
             return [{ ruler: r, lon: mid[0], lat: mid[1] }];
           });
 
@@ -823,7 +832,7 @@
               getTextAnchor: 'middle' as const,
               getAlignmentBaseline: 'center' as const,
               fontFamily: 'monospace',
-              characterSet: [...'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 °·.,\'-/T'],
+              characterSet: Array.from('ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 °·.,\'-/T'),
               pickable: true,
               updateTriggers: { getText: [currentRulers], getPosition: [currentRulers] },
             }),
@@ -840,24 +849,24 @@
         {
           const wpts = routePlanner.waypoints;
           if (routePlanner.active) {
-            type PlannerHandle = { idx: number; lon: number; lat: number };
+            interface PlannerHandle { idx: number; lon: number; lat: number }
 
             // Build per-segment label data: midpoint + bearing + distance for each leg.
-            type PlannerLabelDatum = { lon: number; lat: number; text: string };
+            interface PlannerLabelDatum { lon: number; lat: number; text: string }
             const LABEL_MIN_PX = 60;
             const segmentLabels: PlannerLabelDatum[] = [];
             const paths: [number, number][][] = [];
 
             for (let i = 1; i < wpts.length; i++) {
-              const a = wpts[i - 1];
-              const b = wpts[i];
+              const a = wpts[i - 1]!;
+              const b = wpts[i]!;
               const pts = gcLine(a.lon, a.lat, b.lon, b.lat);
               paths.push(pts);
               if (map) {
                 const pA = map.project([a.lon, a.lat]);
                 const pB = map.project([b.lon, b.lat]);
                 if (Math.hypot(pB.x - pA.x, pB.y - pA.y) >= LABEL_MIN_PX) {
-                  const mid = pts[Math.floor(pts.length / 2)];
+                  const mid = pts[Math.floor(pts.length / 2)]!;
                   const dist = gcDistanceNm(a.lon, a.lat, b.lon, b.lat);
                   const brg  = gcBearingDeg(a.lon, a.lat, b.lon, b.lat);
                   const distStr = dist < 10 ? dist.toFixed(2) : dist.toFixed(1);
@@ -872,7 +881,7 @@
             const handleData: PlannerHandle[] = wpts.map((w, idx) => ({ idx, lon: w.lon, lat: w.lat }));
 
             // Typed segment data so clicking a line returns the segment index.
-            type PlannerSegment = { segIdx: number; path: [number, number][] };
+            interface PlannerSegment { segIdx: number; path: [number, number][] }
             const segData: PlannerSegment[] = paths.map((path, segIdx) => ({ segIdx, path }));
 
             plannerLayerGroup = [
@@ -914,7 +923,7 @@
                 getTextAnchor: 'middle' as const,
                 getAlignmentBaseline: 'center' as const,
                 fontFamily: 'monospace',
-                characterSet: [...'0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz °·.,\'-/TN'],
+                characterSet: Array.from('0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz °·.,\'-/TN'),
                 pickable: false,
                 updateTriggers: { getText: [wpts], getPosition: [wpts] },
               }),
@@ -953,15 +962,15 @@
     map.on('zoom',   () => { mapZoom    = map?.getZoom()    ?? mapZoom; });
     map.on('rotate', () => { mapBearing = map?.getBearing() ?? mapBearing; });
     // Track user interactions so programmatic easeTo calls don't interrupt gestures.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access
     map.on('movestart', (e: any) => { if (e.originalEvent) _isInteracting = true; });
     map.on('moveend',   () => { _isInteracting = false; });
     // User dragging the map cancels follow mode.
     map.on('dragstart', () => { if (!rulerDrag) followMode.following = false; });
     // User rotating the map (gesture) switches to manual rotate mode.
     // Programmatic camera moves (easeTo/flyTo) also fire rotatestart but without originalEvent.
-    map.on('rotatestart', (e: maplibregl.MapRotateEvent) => {
-      if (e.originalEvent) rotateMode.setManual();
+    map.on('rotatestart', (e: maplibregl.MapLibreEvent<MouseEvent | TouchEvent | undefined>) => {
+      if ((e as unknown as { originalEvent?: Event }).originalEvent) rotateMode.setManual();
     });
 
     // Cursor feedback for interactive MapLibre layers.
@@ -979,6 +988,8 @@
     // exactly one action fires per click regardless of layer overlap.
     map.on('click', (e) => {
       if (!overlay) return;
+      const m = map;
+      if (!m) return;
       const { x, y } = e.point;
 
       // 1. Moving-waypoint mode: the next click places the waypoint.
@@ -988,7 +999,7 @@
         mapContainer.style.cursor = '';
         updateWaypoint(settings.signalkHttpUrl, uuid, name, e.lngLat.lat, e.lngLat.lng, auth.authHeaders)
           .then(() => waypoints.load(settings.signalkHttpUrl))
-          .catch(err => console.error('[waypoint] Failed to move:', err));
+          .catch((err: unknown) => { console.error('[waypoint] Failed to move:', err); });
         return;
       }
 
@@ -998,7 +1009,7 @@
         if (handlePick?.object) return; // clicked an existing handle — drag handles it
         const segPick = overlay.pickObject({ x, y, radius: 8, layerIds: ['planner-line'] });
         if (segPick?.object) {
-          type PlannerSeg = { segIdx: number };
+          interface PlannerSeg { segIdx: number }
           const { segIdx } = segPick.object as PlannerSeg;
           routePlanner.insertWaypoint(segIdx + 1, e.lngLat.lng, e.lngLat.lat);
         } else {
@@ -1014,32 +1025,32 @@
       // 4. AIS vessels (deck.gl). Deduplicate by vessel index — multiple layers can match.
       const aisLayerIds = ['ais-confirmed-icon', 'ais-hull-ghost', 'ais-hull-confirmed', 'ais-ghost-icon', 'ais-mob-icon'];
       const allPicked = overlay.pickMultipleObjects({ x, y, radius: 5, layerIds: aisLayerIds });
-      const seen = new Set<number>();
+      const seen = new SvelteSet<number>();
       const uniqueHits: { idx: number; coordinate: number[] }[] = [];
       for (const p of allPicked) {
         const idx = p.object as number | undefined | null;
         if (idx === undefined || idx === null) continue;
         if (seen.has(idx)) continue;
         seen.add(idx);
-        if (p.coordinate) uniqueHits.push({ idx, coordinate: p.coordinate as number[] });
+        if (p.coordinate) uniqueHits.push({ idx, coordinate: p.coordinate });
       }
       if (uniqueHits.length === 1) {
-        const target = ais.getTarget(uniqueHits[0].idx);
-        if (target?.position) { handleAisClick(uniqueHits[0].coordinate as [number, number], target); return; }
+        const target = ais.getTarget(uniqueHits[0]!.idx);
+        if (target?.position) { handleAisClick(uniqueHits[0]!.coordinate as [number, number], target); return; }
       }
-      if (uniqueHits.length > 1) { openDisambigPopup(uniqueHits[0].coordinate as [number, number], uniqueHits.map(h => h.idx)); return; }
+      if (uniqueHits.length > 1) { openDisambigPopup(uniqueHits[0]!.coordinate as [number, number], uniqueHits.map(h => h.idx)); return; }
 
       // 5. Waypoints (MapLibre layer).
-      const waypointFeats = map!.queryRenderedFeatures(e.point, { layers: ['all-waypoints-circle'] });
-      if (waypointFeats.length > 0) { showWaypointPopup(e.lngLat, waypointFeats[0]); return; }
+      const waypointFeats = m.queryRenderedFeatures(e.point, { layers: ['all-waypoints-circle'] });
+      if (waypointFeats.length > 0) { showWaypointPopup(e.lngLat, waypointFeats[0]!); return; }
 
       // 6. Active route layers (MapLibre).
-      const activeRouteFeats = map!.queryRenderedFeatures(e.point, { layers: routeClickLayers });
+      const activeRouteFeats = m.queryRenderedFeatures(e.point, { layers: routeClickLayers });
       if (activeRouteFeats.length > 0) { showActiveRoutePopup(e.lngLat); return; }
 
       // 7. All routes on map (MapLibre).
-      const allRouteFeats = map!.queryRenderedFeatures(e.point, { layers: ['all-routes-line'] });
-      if (allRouteFeats.length > 0) { showAllRoutesPopup(e.lngLat, allRouteFeats[0]); return; }
+      const allRouteFeats = m.queryRenderedFeatures(e.point, { layers: ['all-routes-line'] });
+      if (allRouteFeats.length > 0) { showAllRoutesPopup(e.lngLat, allRouteFeats[0]!); return; }
     });
 
     // Right-click (desktop) → remove planner waypoint, or show navigate popup.
@@ -1073,7 +1084,7 @@
 
       map.on('touchstart', (e) => {
         if (e.originalEvent.touches.length !== 1) { cancelLongPress(); return; }
-        const touch = e.originalEvent.touches[0];
+        const touch = e.originalEvent.touches[0]!;
         startX = touch.clientX;
         startY = touch.clientY;
         const rect = mapContainer.getBoundingClientRect();
@@ -1084,7 +1095,7 @@
           if (overlay && routePlanner.active) {
             const pick = overlay.pickObject({ x, y, radius: 20, layerIds: ['planner-handles'] });
             if (pick?.object !== null && pick?.object !== undefined) {
-              type PlannerHandle = { idx: number };
+              interface PlannerHandle { idx: number }
               routePlanner.removeWaypoint((pick.object as PlannerHandle).idx);
             }
             // Long-press on empty space while drawing → do nothing (no undo).
@@ -1098,7 +1109,7 @@
 
       map.on('touchmove', (e) => {
         if (!longPressTimer) return;
-        const touch = e.originalEvent.touches[0];
+        const touch = e.originalEvent.touches[0]!;
         const dx = touch.clientX - startX;
         const dy = touch.clientY - startY;
         if (Math.sqrt(dx * dx + dy * dy) > MOVE_THRESHOLD_PX) cancelLongPress();
@@ -1130,7 +1141,7 @@
 
       // Vessel + AIS layers must be added first because route layers are inserted before them.
       if (!m.getLayer('vessel-gc-line')) m.addLayer({ id: 'vessel-gc-line', type: 'line', source: GC_SOURCE,
-        paint: { 'line-color': ap.gc.color, 'line-width': ap.gc.width, ...(dashArray(ap.gc.style, ap.gc.width) !== null && { 'line-dasharray': dashArray(ap.gc.style, ap.gc.width)! }) } });
+        paint: { 'line-color': ap.gc.color, 'line-width': ap.gc.width, ...(dashArray(ap.gc.style, ap.gc.width) !== null && { 'line-dasharray': dashArray(ap.gc.style, ap.gc.width) as number[] }) } });
 
       // AIS vessel icon, hull, and COG line are rendered by deck.gl (see $effect below).
       // Only the text label stays in MapLibre for quality text rendering + collision detection.
@@ -1149,7 +1160,7 @@
       });
 
       if (!m.getLayer('vessel-cog-line')) m.addLayer({ id: 'vessel-cog-line', type: 'line', source: COG_SOURCE,
-        paint: { 'line-color': ap.cog.color, 'line-width': ap.cog.width, ...(dashArray(ap.cog.style, ap.cog.width) !== null && { 'line-dasharray': dashArray(ap.cog.style, ap.cog.width)! }) } });
+        paint: { 'line-color': ap.cog.color, 'line-width': ap.cog.width, ...(dashArray(ap.cog.style, ap.cog.width) !== null && { 'line-dasharray': dashArray(ap.cog.style, ap.cog.width) as number[] }) } });
 
       if (!m.getLayer('vessel-hdg-line')) m.addLayer({ id: 'vessel-hdg-line', type: 'line', source: HDG_SOURCE,
         paint: { 'line-color': ap.heading.color, 'line-width': ap.heading.width } });
@@ -1269,8 +1280,8 @@
         },
       });
 
-      mapZoom    = map.getZoom();
-      mapBearing = map.getBearing();
+      mapZoom    = m.getZoom();
+      mapBearing = m.getBearing();
       mapLoaded  = true;
     }); // end style.load
 
@@ -1322,8 +1333,8 @@
         </div>`
       : '';
 
-    const lon = t.position?.longitude;
-    const lat = t.position?.latitude;
+    const lon = t.position.longitude;
+    const lat = t.position.latitude;
 
     const posMs = t.lastPositionUpdateMs;
     const lastSeenDate = new Date(posMs);
@@ -1339,8 +1350,8 @@
       row('Status',       t.navState   ?? null),
       row('Flag',         t.flag       ?? null),
       row('Port',         t.port       ?? null),
-      row('Position', lon !== undefined && lat !== undefined ? `${lat.toFixed(5)}°N, ${lon.toFixed(5)}°E` : null),
-      `<tr><td>Updated</td><td><b>${lastSeenTime} <span id="ais-age" data-posms="${posMs}" style="opacity:0.6;font-size:0.85em">(${ageStr})</span></b></td></tr>`,
+      row('Position', `${lat.toFixed(5)}°N, ${lon.toFixed(5)}°E`),
+      `<tr><td>Updated</td><td><b>${lastSeenTime} <span id="ais-age" data-posms="${String(posMs)}" style="opacity:0.6;font-size:0.85em">(${ageStr})</span></b></td></tr>`,
     ].join('');
 
     const navRows = [
@@ -1368,7 +1379,7 @@
         ${lookupLinks}
         <div class="ais-links" style="margin-top:6px">
           <button class="popup-settings-btn add-waypoint-here-btn"
-            data-lat="${t.position!.latitude}" data-lon="${t.position!.longitude}">Add waypoint here</button>
+            data-lat="${String(t.position.latitude)}" data-lon="${String(t.position.longitude)}">Add waypoint here</button>
           <button class="popup-settings-btn" data-settings="ais">AIS settings</button>
         </div>
       </div>`;
@@ -1379,14 +1390,14 @@
   function formatAge(posMs: number): string {
     const ageSec = Math.round((Date.now() - posMs) / 1000);
     return ageSec < 60
-      ? `${ageSec}s ago`
+      ? `${String(ageSec)}s ago`
       : ageSec < 3600
-        ? `${Math.floor(ageSec / 60)}m ${ageSec % 60}s ago`
-        : `${Math.floor(ageSec / 3600)}h ${Math.floor((ageSec % 3600) / 60)}m ago`;
+        ? `${String(Math.floor(ageSec / 60))}m ${String(ageSec % 60)}s ago`
+        : `${String(Math.floor(ageSec / 3600))}h ${String(Math.floor((ageSec % 3600) / 60))}m ago`;
   }
 
   function handleAisClick(coordinate: [number, number], t: AisTarget): boolean {
-    if (!t.position) return false;
+    if (!map) return false;
 
     if (aisAgeTimer !== null) {
       clearInterval(aisAgeTimer);
@@ -1396,14 +1407,15 @@
     const popup = new maplibregl.Popup({ closeButton: true, maxWidth: 'none' })
       .setLngLat(coordinate)
       .setHTML(buildAisPopupHtml(t))
-      .addTo(map!);
+      .addTo(map);
 
-    aisAgeTimer = setInterval(() => {
+    const timerId = setInterval(() => {
       const el = document.getElementById('ais-age');
-      if (!el) { clearInterval(aisAgeTimer!); aisAgeTimer = null; return; }
-      const posMs = Number(el.dataset.posms);
+      if (!el) { clearInterval(timerId); aisAgeTimer = null; return; }
+      const posMs = Number(el.dataset['posms']);
       el.textContent = `(${formatAge(posMs)})`;
     }, 1000);
+    aisAgeTimer = timerId;
 
     // Fetch and display this vessel's position history.
     aisTrackRaw = [];
@@ -1425,11 +1437,11 @@
     popup.getElement().addEventListener('click', (ev) => {
       const el = ev.target as HTMLElement;
       const settingsBtn = el.closest<HTMLElement>('[data-settings]');
-      if (settingsBtn) { popup.remove(); openSettings(settingsBtn.dataset.settings!); return; }
+      if (settingsBtn) { popup.remove(); openSettings((settingsBtn.dataset['settings'] ?? 'connection') as SettingsTab); return; }
       const wpBtn = el.closest<HTMLButtonElement>('.add-waypoint-here-btn');
       if (wpBtn && !wpBtn.disabled) {
         popup.remove();
-        promptAndSaveWaypoint(Number(wpBtn.dataset.lat), Number(wpBtn.dataset.lon));
+        promptAndSaveWaypoint(Number(wpBtn.dataset['lat']), Number(wpBtn.dataset['lon']));
       }
     });
 
@@ -1438,16 +1450,16 @@
 
   function openDisambigPopup(coordinate: [number, number], indices: number[]) {
     const targets = indices.map(i => ({ idx: i, target: ais.getTarget(i) }))
-      .filter(e => e.target?.position != null);
+      .filter((e): e is { idx: number; target: AisTarget } => e.target?.position != null);
 
     if (targets.length === 0) return;
     if (targets.length === 1) {
-      handleAisClick(coordinate, targets[0].target!);
+      handleAisClick(coordinate, targets[0]!.target);
       return;
     }
 
     const items = targets.map(({ idx, target: t }) =>
-      `<li class="ais-disambig-item" data-idx="${idx}">${t!.name ?? t!.mmsi ?? 'Unknown vessel'}</li>`
+      `<li class="ais-disambig-item" data-idx="${String(idx)}">${t.name ?? t.mmsi ?? 'Unknown vessel'}</li>`
     ).join('');
 
     const html = `
@@ -1456,17 +1468,18 @@
         <ul class="ais-disambig-list">${items}</ul>
       </div>`;
 
+    if (!map) return;
     const popup = new maplibregl.Popup({ closeButton: true, maxWidth: 'none' })
       .setLngLat(coordinate)
       .setHTML(html)
-      .addTo(map!);
+      .addTo(map);
 
     // Attach click handler after the popup is in the DOM.
     const el = popup.getElement();
     el.addEventListener('click', (ev) => {
-      const li = (ev.target as HTMLElement).closest('[data-idx]') as HTMLElement | null;
+      const li = (ev.target as HTMLElement).closest<HTMLElement>('[data-idx]');
       if (!li) return;
-      const idx = Number(li.dataset.idx);
+      const idx = Number(li.dataset['idx']);
       const t = ais.getTarget(idx);
       if (!t?.position) return;
       popup.remove();
@@ -1481,7 +1494,7 @@
       const abs = Math.abs(deg);
       const d = Math.floor(abs);
       const m = (abs - d) * 60;
-      return `${d}°\u202f${m.toFixed(3)}'\u202f${dir}`;
+      return `${String(d)}°\u202f${m.toFixed(3)}'\u202f${dir}`;
     };
     return `${dm(lat, true)}&emsp;${dm(lon, false)}`;
   }
@@ -1492,7 +1505,7 @@
     if (name === null) return; // cancelled
     saveWaypoint(settings.signalkHttpUrl, name.trim() || formatDm(lat, lon), lat, lon, auth.authHeaders)
       .then(() => waypoints.load(settings.signalkHttpUrl))
-      .catch(err => console.error('[waypoint] Failed to save:', err));
+      .catch((err: unknown) => { console.error('[waypoint] Failed to save:', err); });
   }
 
   /** Show a "Navigate here" popup at an empty-water click location. */
@@ -1513,7 +1526,7 @@
             Navigate here
           </button>
           <button class="popup-settings-btn add-waypoint-here-btn"
-            ${canWaypoint ? `data-lat="${lat}" data-lon="${lon}"` : 'disabled title="Login required"'}>
+            ${canWaypoint ? `data-lat="${String(lat)}" data-lon="${String(lon)}"` : 'disabled title="Login required"'}>
             Add waypoint here
           </button>
         </div>
@@ -1525,7 +1538,7 @@
       const navBtn = el.closest<HTMLButtonElement>('.navigate-here-btn');
       if (navBtn && !navBtn.disabled) {
         popup.remove();
-        navigateToPoint(serverBase, lat, lon, auth.authHeaders).catch(err => {
+        navigateToPoint(serverBase, lat, lon, auth.authHeaders).catch((err: unknown) => {
           console.error('[navigate] Failed to set course:', err);
         });
         return;
@@ -1547,7 +1560,7 @@
       .setHTML(`
         <button class="vessel-self-settings-btn">Own vessel settings</button>
         <button class="popup-settings-btn add-waypoint-here-btn"
-          ${canWaypoint ? `data-lat="${ownPos!.latitude}" data-lon="${ownPos!.longitude}"` : 'disabled title="Login required"'}>Add waypoint here</button>
+          ${canWaypoint ? `data-lat="${String(ownPos.latitude)}" data-lon="${String(ownPos.longitude)}"` : 'disabled title="Login required"'}>Add waypoint here</button>
       `)
       .addTo(map);
     popup.getElement().addEventListener('click', (ev) => {
@@ -1556,7 +1569,7 @@
       const wpBtn = (ev.target as HTMLElement).closest<HTMLButtonElement>('.add-waypoint-here-btn');
       if (wpBtn && !wpBtn.disabled) {
         popup.remove();
-        promptAndSaveWaypoint(Number(wpBtn.dataset.lat), Number(wpBtn.dataset.lon));
+        promptAndSaveWaypoint(Number(wpBtn.dataset['lat']), Number(wpBtn.dataset['lon']));
       }
     });
   }
@@ -1580,11 +1593,11 @@
     popup.getElement().addEventListener('click', (ev) => {
       const el = ev.target as HTMLElement;
       const settingsBtn = el.closest<HTMLElement>('[data-settings]');
-      if (settingsBtn) { popup.remove(); openSettings(settingsBtn.dataset.settings!); return; }
+      if (settingsBtn) { popup.remove(); openSettings((settingsBtn.dataset['settings'] ?? 'connection') as SettingsTab); return; }
       const stopBtn = el.closest<HTMLButtonElement>('.stop-nav-btn');
       if (stopBtn && !stopBtn.disabled) {
         popup.remove();
-        clearCourse(settings.signalkHttpUrl, auth.authHeaders).catch(err => {
+        clearCourse(settings.signalkHttpUrl, auth.authHeaders).catch((err: unknown) => {
           console.error('[navigate] Failed to clear course:', err);
         });
       }
@@ -1593,8 +1606,8 @@
 
   function showAllRoutesPopup(lngLat: maplibregl.LngLat, f: maplibregl.MapGeoJSONFeature): void {
     if (!map) return;
-    const name = f.properties?.name as string ?? '';
-    const uuid = f.properties?.uuid as string ?? '';
+    const name = (f.properties['name'] as string | null | undefined) ?? '';
+    const uuid = (f.properties['uuid'] as string | null | undefined) ?? '';
     const canAct = auth.isLoggedIn && uuid !== '';
     const popup = new maplibregl.Popup({ closeButton: false, offset: 10, maxWidth: 'none' })
       .setLngLat(lngLat)
@@ -1615,18 +1628,18 @@
     popup.getElement().addEventListener('click', (ev) => {
       const el = ev.target as HTMLElement;
       const settingsBtn = el.closest<HTMLElement>('[data-settings]');
-      if (settingsBtn) { popup.remove(); openSettings(settingsBtn.dataset.settings!); return; }
+      if (settingsBtn) { popup.remove(); openSettings((settingsBtn.dataset['settings'] ?? 'connection') as SettingsTab); return; }
       const activateBtn = el.closest<HTMLButtonElement>('.activate-route-btn');
-      if (activateBtn && !activateBtn.disabled && activateBtn.dataset.uuid) {
+      if (activateBtn && !activateBtn.disabled && activateBtn.dataset['uuid']) {
         popup.remove();
-        activateRoute(settings.signalkHttpUrl, activateBtn.dataset.uuid, auth.authHeaders)
-          .catch(err => console.error('[route] Failed to activate route:', err));
+        activateRoute(settings.signalkHttpUrl, activateBtn.dataset['uuid'], auth.authHeaders)
+          .catch((err: unknown) => { console.error('[route] Failed to activate route:', err); });
         return;
       }
       const editBtn = el.closest<HTMLButtonElement>('.edit-route-btn');
-      if (editBtn && !editBtn.disabled && editBtn.dataset.uuid) {
+      if (editBtn && !editBtn.disabled && editBtn.dataset['uuid']) {
         popup.remove();
-        const r = routes.entries.find(r => r.uuid === editBtn.dataset.uuid);
+        const r = routes.entries.find(r => r.uuid === editBtn.dataset['uuid']);
         if (r) {
           const coords = r.geometry.geometry.coordinates as [number, number][];
           routePlanner.loadRoute(r.uuid, r.name, coords.map(([lon, lat]) => ({ lon, lat })));
@@ -1634,22 +1647,22 @@
         return;
       }
       const deleteBtn = el.closest<HTMLButtonElement>('.delete-route-btn');
-      if (deleteBtn && !deleteBtn.disabled && deleteBtn.dataset.uuid) {
-        const routeUuid = deleteBtn.dataset.uuid;
-        const routeName = deleteBtn.dataset.name || 'this route';
+      if (deleteBtn && !deleteBtn.disabled && deleteBtn.dataset['uuid']) {
+        const routeUuid = deleteBtn.dataset['uuid'];
+        const routeName = deleteBtn.dataset['name'] ?? 'this route';
         if (!confirm(`Delete "${routeName}"? This cannot be undone.`)) return;
         popup.remove();
         deleteRoute(settings.signalkHttpUrl, routeUuid, auth.authHeaders)
           .then(() => routes.load(settings.signalkHttpUrl))
-          .catch(err => console.error('[route] Failed to delete route:', err));
+          .catch((err: unknown) => { console.error('[route] Failed to delete route:', err); });
       }
     });
   }
 
   function showWaypointPopup(lngLat: maplibregl.LngLat, f: maplibregl.MapGeoJSONFeature): void {
     if (!map) return;
-    const uuid = f.properties?.uuid as string ?? '';
-    const name = f.properties?.name as string ?? '';
+    const uuid = (f.properties['uuid'] as string | null | undefined) ?? '';
+    const name = (f.properties['name'] as string | null | undefined) ?? '';
     const coords = (f.geometry as GeoJSON.Point).coordinates;
     const lon = coords[0] as number;
     const lat = coords[1] as number;
@@ -1664,7 +1677,7 @@
             <button class="popup-settings-btn navigate-here-btn"
               ${auth.isLoggedIn ? '' : 'disabled title="Login required"'}>Navigate here</button>
             <button class="popup-settings-btn rename-waypoint-btn"
-              ${canAct ? `data-uuid="${uuid}" data-name="${name}" data-lat="${lat}" data-lon="${lon}"` : 'disabled title="Login required"'}>Rename</button>
+              ${canAct ? `data-uuid="${uuid}" data-name="${name}" data-lat="${String(lat)}" data-lon="${String(lon)}"` : 'disabled title="Login required"'}>Rename</button>
             <button class="popup-settings-btn move-waypoint-btn"
               ${canAct ? `data-uuid="${uuid}" data-name="${name}"` : 'disabled title="Login required"'}>Move</button>
             <button class="popup-settings-btn delete-waypoint-btn"
@@ -1678,35 +1691,35 @@
       if (navBtn && !navBtn.disabled) {
         popup.remove();
         navigateToPoint(settings.signalkHttpUrl, lat, lon, auth.authHeaders)
-          .catch(err => console.error('[waypoint] Failed to set course:', err));
+          .catch((err: unknown) => { console.error('[waypoint] Failed to set course:', err); });
         return;
       }
       const renameBtn = el.closest<HTMLButtonElement>('.rename-waypoint-btn');
       if (renameBtn && !renameBtn.disabled) {
-        const newName = prompt('Rename waypoint:', renameBtn.dataset.name ?? '');
+        const newName = prompt('Rename waypoint:', renameBtn.dataset['name'] ?? '');
         if (newName === null) return;
         popup.remove();
         updateWaypoint(
           settings.signalkHttpUrl, uuid, newName.trim() || name,
-          Number(renameBtn.dataset.lat), Number(renameBtn.dataset.lon), auth.authHeaders,
+          Number(renameBtn.dataset['lat']), Number(renameBtn.dataset['lon']), auth.authHeaders,
         ).then(() => waypoints.load(settings.signalkHttpUrl))
-          .catch(err => console.error('[waypoint] Failed to rename:', err));
+          .catch((err: unknown) => { console.error('[waypoint] Failed to rename:', err); });
         return;
       }
       const moveBtn = el.closest<HTMLButtonElement>('.move-waypoint-btn');
       if (moveBtn && !moveBtn.disabled) {
         popup.remove();
-        movingWaypoint = { uuid: moveBtn.dataset.uuid!, name: moveBtn.dataset.name ?? '' };
+        movingWaypoint = { uuid: moveBtn.dataset['uuid'] ?? '', name: moveBtn.dataset['name'] ?? '' };
         mapContainer.style.cursor = 'crosshair';
         return;
       }
       const delBtn = el.closest<HTMLButtonElement>('.delete-waypoint-btn');
       if (delBtn && !delBtn.disabled) {
-        if (!confirm(`Delete waypoint "${delBtn.dataset.name || 'this waypoint'}"?`)) return;
+        if (!confirm(`Delete waypoint "${delBtn.dataset['name'] ?? 'this waypoint'}"?`)) return;
         popup.remove();
         deleteWaypoint(settings.signalkHttpUrl, uuid, auth.authHeaders)
           .then(() => waypoints.load(settings.signalkHttpUrl))
-          .catch(err => console.error('[waypoint] Failed to delete:', err));
+          .catch((err: unknown) => { console.error('[waypoint] Failed to delete:', err); });
       }
     });
   }
@@ -1730,7 +1743,7 @@
       if (newStyleUrl) {
         fetchAndResolveStyle(newStyleUrl)
           .then(resolved => m.setStyle(resolved as maplibregl.StyleSpecification, { diff: false }))
-          .catch(e => {
+          .catch((e: unknown) => {
             console.error('[map] Failed to load style', newStyleUrl, e);
             // setStyle() was never called, so the map's previous style is still intact.
             // Reset both flags so the effect can retry on next trigger (e.g. chart still
@@ -1747,7 +1760,7 @@
     // Remove deselected tile-based chart layers.
     // Style-based charts never create a chart-* source/layer, so this is safe for them too.
     for (const id of Object.keys(avail)) {
-      if (sel.has(id) && !avail[id].style) continue;
+      if (sel.has(id) && !avail[id]!.style) continue;
       const layerId  = `chart-layer-${id}`;
       const sourceId = `chart-${id}`;
       if (m.getLayer(layerId))   m.removeLayer(layerId);
@@ -1830,7 +1843,7 @@
     const hotData = ais.hotData;
     const ids     = ais.ids;
     const coldMap = ais.coldMap;
-    const _coldVer = ais.coldVersion; // register reactive dependency on cold data changes
+    void ais.coldVersion; // register reactive dependency on cold data changes
 
     const S = AIS_HOT_STRIDE;
     const features: GeoJSON.Feature[] = [];
@@ -1840,9 +1853,9 @@
           type: 'Feature' as const,
           geometry: {
             type: 'Point' as const,
-            coordinates: [hotData[i * S + AIS_F_LON], hotData[i * S + AIS_F_LAT]],
+            coordinates: [hotData[i * S + AIS_F_LON]!, hotData[i * S + AIS_F_LAT]!],
           },
-          properties: { label: coldMap.get(ids[i])?.name ?? '' },
+          properties: { label: coldMap.get(ids[i]!)?.name ?? '' },
         });
       }
     }
@@ -1850,6 +1863,7 @@
     const flush = () => {
       _aisLastUpdateMs = Date.now();
       aisSrc.setData({ type: 'FeatureCollection', features });
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access
       if ((window as any).__mapDiag) (window as any).__mapDiag.aisLabels++;
     };
     _pendingAisSetData = flush;
@@ -1859,8 +1873,8 @@
       if (_aisThrottleId !== null) { clearTimeout(_aisThrottleId); _aisThrottleId = null; }
       flush();
       _pendingAisSetData = null;
-    } else if (_aisThrottleId === null) {
-      _aisThrottleId = setTimeout(() => {
+    } else {
+      _aisThrottleId ??= setTimeout(() => {
         _aisThrottleId = null;
         _pendingAisSetData?.();
         _pendingAisSetData = null;
@@ -1874,7 +1888,7 @@
     const hotData  = ais.hotData;
     const ids      = ais.ids;
     const coldMap  = ais.coldMap;
-    const _coldVer = ais.coldVersion; // register reactive dependency on cold data changes
+    void ais.coldVersion; // register reactive dependency on cold data changes
     const ap = settings.appearance.ais;
     const settingsIconSize = ap.vesselSize / 64;
     const now = Date.now();
@@ -1924,7 +1938,7 @@
 
     for (let i = 0; i < n; i++) {
       // Nav state lookup first — SART vessels are routed entirely to their own layer.
-      const cold = coldMap.get(ids[i]);
+      const cold = coldMap.get(ids[i]!);
       const ns = cold?.navState?.toLowerCase() ?? '';
       const isSart = ns.includes('sart') || ns.includes('transponder');
 
@@ -1936,15 +1950,15 @@
       visIndices.push(i);
 
       // Motion — SOG only, nav state irrelevant
-      const isog = hotData[i * S + AIS_F_SOG];
-      const icog = hotData[i * S + AIS_F_COG];
+      const isog = hotData[i * S + AIS_F_SOG]!;
+      const icog = hotData[i * S + AIS_F_COG]!;
       if (!isNaN(icog) && !isNaN(isog) && isog > 0.1) {
         ghostIndices.push(i);
         cogIndices.push(i);
       }
 
       // Hull — heading + dimensions only
-      const ihdg = hotData[i * S + AIS_F_HDG];
+      const ihdg = hotData[i * S + AIS_F_HDG]!;
       const hasHull = !isNaN(ihdg) && (cold?.lengthM ?? 0) > 0 && (cold?.beamM ?? 0) > 0;
       if (hasHull) {
         hullIndices.push(i);
@@ -1995,15 +2009,15 @@
     const ghostBorderColor: [number,number,number,number] = [br, bg, bb, 160];
 
     // Accessor lambdas — close over hotData, coldMap, ids. Zero allocations per frame.
-    const getPos  = (i: number): [number, number, number] => [hotData[i * S + AIS_F_LON], hotData[i * S + AIS_F_LAT], 0];
-    const getSog  = (i: number) => { const v = hotData[i * S + AIS_F_SOG]; return isNaN(v) ? 0 : v; };
-    const getCog  = (i: number) => { const v = hotData[i * S + AIS_F_COG]; return isNaN(v) ? 0 : v; };
-    const getHdg  = (i: number) => { const h = hotData[i * S + AIS_F_HDG]; if (!isNaN(h)) return h; const c = hotData[i * S + AIS_F_COG]; return isNaN(c) ? 0 : c; };
-    const getHdgStrict = (i: number) => { const h = hotData[i * S + AIS_F_HDG]; return isNaN(h) ? 0 : h; };
-    const getRot  = (i: number) => { const v = hotData[i * S + AIS_F_ROT]; return isNaN(v) ? 0 : v; };
-    const getAge  = (i: number) => hotData[i * S + AIS_F_AGE];
-    const getLen  = (i: number, fallback: number) => coldMap.get(ids[i])?.lengthM ?? fallback;
-    const getBeam = (i: number, fallback: number) => coldMap.get(ids[i])?.beamM ?? fallback;
+    const getPos  = (i: number): [number, number, number] => [hotData[i * S + AIS_F_LON]!, hotData[i * S + AIS_F_LAT]!, 0];
+    const getSog  = (i: number) => { const v = hotData[i * S + AIS_F_SOG]!; return isNaN(v) ? 0 : v; };
+    const getCog  = (i: number) => { const v = hotData[i * S + AIS_F_COG]!; return isNaN(v) ? 0 : v; };
+    const getHdg  = (i: number) => { const h = hotData[i * S + AIS_F_HDG]!; if (!isNaN(h)) return h; const c = hotData[i * S + AIS_F_COG]!; return isNaN(c) ? 0 : c; };
+    const getHdgStrict = (i: number) => { const h = hotData[i * S + AIS_F_HDG]!; return isNaN(h) ? 0 : h; };
+    const getRot  = (i: number) => { const v = hotData[i * S + AIS_F_ROT]!; return isNaN(v) ? 0 : v; };
+    const getAge  = (i: number) => hotData[i * S + AIS_F_AGE]!;
+    const getLen  = (i: number, fallback: number) => coldMap.get(ids[i]!)?.lengthM ?? fallback;
+    const getBeam = (i: number, fallback: number) => coldMap.get(ids[i]!)?.beamM ?? fallback;
     // Icon cross-fade only fires when a hull polygon is actually drawn for this vessel.
     // A vessel with length but no heading has no hull → icon must stay at full opacity.
     const hullSet = new Set(hullIndices);
@@ -2323,6 +2337,9 @@
     const restrictedGhostDecoration = makeHullDecoration('ais-restricted-hull-ghost', restrictedHullIndices, HULL_RESTRICTED, true);
     const draughtGhostDecoration  = makeHullDecoration('ais-draught-hull-ghost',  draughtHullIndices,  HULL_DRAUGHT, true);
 
+    // getDashArray is a PathStyleExtension prop; spread from variable to bypass excess-property check.
+    const cogDashProps = { getDashArray: lineStyleDash(cogStyle, cogWidth) };
+
     aisLayerGroup = [
       // bottom: confirmed hull at last-known position (full opacity, static)
       ...(confirmedHullLayer ? [confirmedHullLayer] : []),
@@ -2353,11 +2370,11 @@
         id: 'ais-cog',
         data: cogIndices,
         getPath: (i: number) => {
-          const lon  = hotData[i * S + AIS_F_LON];
-          const lat  = hotData[i * S + AIS_F_LAT];
-          const c    = hotData[i * S + AIS_F_COG];
-          const s    = hotData[i * S + AIS_F_SOG];
-          const r    = hotData[i * S + AIS_F_ROT];
+          const lon  = hotData[i * S + AIS_F_LON]!;
+          const lat  = hotData[i * S + AIS_F_LAT]!;
+          const c    = hotData[i * S + AIS_F_COG]!;
+          const s    = hotData[i * S + AIS_F_SOG]!;
+          const r    = hotData[i * S + AIS_F_ROT]!;
           const totalSec = cogLengthMinutes * 60;
           const rotRad = isNaN(r) ? 0 : r;
           if (Math.abs(rotRad) < 1e-4) {
@@ -2377,7 +2394,7 @@
         },
         getColor: () => hexToRgba(cogColor, 200),
         getWidth: cogWidth,
-        getDashArray: lineStyleDash(cogStyle, cogWidth),
+        ...cogDashProps,
         widthUnits: 'pixels',
         widthMinPixels: 1,
         pickable: false,
@@ -2426,7 +2443,7 @@
     // Track: solid style uses line-gradient for the fade effect (incompatible with line-dasharray).
     // Non-solid styles fall back to line-color + line-dasharray (no fade).
     if (ap.track.style === 'solid') {
-      map.setPaintProperty('vessel-track-line', 'line-gradient',  buildTrackGradient(ap.track.color, trackFadeStop) as never);
+      map.setPaintProperty('vessel-track-line', 'line-gradient',  buildTrackGradient(ap.track.color, trackFadeStop));
       map.setPaintProperty('vessel-track-line', 'line-dasharray', undefined);
     } else {
       map.setPaintProperty('vessel-track-line', 'line-gradient',  null);
@@ -2533,6 +2550,7 @@
       cogSrc.setData(cogFC);
       gcSrc.setData(gcFC);
       hdgSrc.setData(hdgFC);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access
       if ((window as any).__mapDiag) (window as any).__mapDiag.ownVessel++;
     };
 
@@ -2543,7 +2561,7 @@
         _pendingVesselSetData?.();
         _pendingVesselSetData = null;
       });
-      _vesselCancelFn = () => cancelAnimationFrame(_vesselRafId!);
+      _vesselCancelFn = () => { if (_vesselRafId !== null) cancelAnimationFrame(_vesselRafId); };
     }
   });
 
@@ -2561,7 +2579,7 @@
       trackFadeStop = 0;
       return;
     }
-    const { coords: unwrapped, overflowSegments, fadeStop } = processTrack(coords as [number, number][]);
+    const { coords: unwrapped, overflowSegments, fadeStop } = processTrack(coords);
     trackFadeStop = fadeStop;
     src.setData({
       type: 'FeatureCollection',
@@ -2615,7 +2633,7 @@
     const ta       = settings.appearance.ais.track;
     const fadeStop = aisTrackFadeStop;
     if (ta.style === 'solid') {
-      map.setPaintProperty('ais-track-line', 'line-gradient',  buildTrackGradient(ta.color, fadeStop) as never);
+      map.setPaintProperty('ais-track-line', 'line-gradient',  buildTrackGradient(ta.color, fadeStop));
       map.setPaintProperty('ais-track-line', 'line-dasharray', undefined);
     } else {
       map.setPaintProperty('ais-track-line', 'line-gradient',  null);
@@ -2774,7 +2792,7 @@
 
     const posChanged = pos !== null && (pos.longitude !== _easedLon || pos.latitude !== _easedLat);
     const rmChanged  = rm !== _lastRm;
-    if (posChanged) { _easedLon = pos!.longitude; _easedLat = pos!.latitude; }
+    if (posChanged) { _easedLon = pos.longitude; _easedLat = pos.latitude; }
     _lastRm = rm;
 
     if (pos && following) {
@@ -2816,7 +2834,7 @@
     class="proj-btn"
     class:proj-btn--manual={rotateMode.mode === 'manual'}
     title="Rotation mode: {rotateMode.label}"
-    onclick={() => rotateMode.toggle($vesselState.cog !== null, $vesselState.heading !== null, route.nextPoint !== null)}
+    onclick={() => { rotateMode.toggle($vesselState.cog !== null, $vesselState.heading !== null, route.nextPoint !== null); }}
   >{rotateMode.label}</button>
   <button
     class="proj-btn"
@@ -2855,8 +2873,11 @@
 {#if rulerPopup}
 <div
   class="ruler-popup"
+  role="dialog"
+  aria-label="Ruler options"
+  tabindex="-1"
   style="left: {rulerPopup.x}px; top: {rulerPopup.y}px;"
-  onpointerdown={(e) => e.stopPropagation()}
+  onpointerdown={(e) => { e.stopPropagation(); }}
 >
   <button
     class="ruler-popup-remove"

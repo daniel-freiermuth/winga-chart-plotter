@@ -1,4 +1,5 @@
 import type { VesselInfo } from '../lib/signalk-api';
+import { SvelteMap } from 'svelte/reactivity';
 
 // ---------------------------------------------------------------------------
 // Hot data typed array — stride and field offsets
@@ -79,7 +80,7 @@ function createAisStore() {
   /** Vessel IDs in the same order as rows in hotData. */
   let ids = $state<string[]>([]);
   /** Persistent cold metadata map — patched on each batch, never fully replaced. */
-  let coldMap = new Map<string, AisColdData>();
+  const coldMap = new SvelteMap<string, AisColdData>();
   /**
    * Bumped whenever coldMap changes independently of hotData (i.e. setInfoCache).
    * Effects that read coldMap should also read coldVersion to register the dependency.
@@ -101,7 +102,7 @@ function createAisStore() {
     updateBinary(
       hot: ArrayBuffer,
       newIds: string[],
-      cold: Array<{ id: string; name?: string; mmsi?: string }>,
+      cold: { id: string; name?: string; mmsi?: string }[],
     ) {
       hotData = new Float64Array(hot);
       ids = newIds;

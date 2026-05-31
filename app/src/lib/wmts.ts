@@ -29,7 +29,7 @@ async function fetchAndParse(
   for (const url of candidates) {
     try {
       const res = await fetch(url, { signal: AbortSignal.timeout(30_000) });
-      if (!res.ok) { errors.push(`${url} → ${res.status}`); continue; }
+      if (!res.ok) { errors.push(`${url} → ${String(res.status)}`); continue; }
       const xml = await res.text();
       const doc = new DOMParser().parseFromString(xml, 'text/xml');
       if (!doc.querySelector('Capabilities, WMT_MS_Capabilities')) {
@@ -66,7 +66,7 @@ function buildInfo(
   sep: string,
   targetLayer: Element,
   compatibleTms: Set<string>,
-  availableLayers: Array<{ id: string; title: string }>,
+  availableLayers: { id: string; title: string }[],
 ): WmtsInfo {
   const layerName = qs(targetLayer, 'Identifier') ?? '';
   const fmt       = qs(targetLayer, 'Format') ?? 'image/png';
@@ -130,16 +130,16 @@ function pickLayer(
   // Second try: first layer that links to a compatible TMS
   for (const l of layers) {
     for (const link of l.querySelectorAll('TileMatrixSetLink > TileMatrixSet')) {
-      if (compatibleTms.has(link.textContent ?? '')) return l;
+      if (compatibleTms.has(link.textContent)) return l;
     }
   }
   // Last resort: just return the first layer
-  return layers[0];
+  return layers[0]!;
 }
 
 function pickTileMatrixSet(layer: Element, compatibleTms: Set<string>): string {
   for (const link of layer.querySelectorAll('TileMatrixSetLink > TileMatrixSet')) {
-    const id = link.textContent ?? '';
+    const id = link.textContent;
     if (compatibleTms.has(id)) return id;
   }
   return compatibleTms.values().next().value ?? 'WebMercatorQuad';

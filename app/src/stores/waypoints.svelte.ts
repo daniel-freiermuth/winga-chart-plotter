@@ -26,8 +26,8 @@ function createWaypoints() {
         const data = await fetchAllWaypoints(serverBase);
         const parsed: ServerWaypoint[] = [];
         for (const [uuid, entry] of Object.entries(data)) {
-          const coords = entry.feature?.geometry?.coordinates;
-          if (!coords || coords.length < 2) continue;
+          const coords = entry.feature?.geometry.coordinates;
+          if (!coords) continue;
           parsed.push({
             uuid,
             name: entry.name ?? uuid,

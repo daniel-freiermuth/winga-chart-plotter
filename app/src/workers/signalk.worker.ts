@@ -19,7 +19,7 @@ type InMessage =
 interface AisWasmPayload {
   hot: ArrayBuffer;
   ids: string[];
-  cold: Array<{ id: string; name?: string; mmsi?: string }>;
+  cold: { id: string; name?: string; mmsi?: string }[];
 }
 
 let client: SignalKClient | null = null;

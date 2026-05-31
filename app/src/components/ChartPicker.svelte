@@ -79,7 +79,7 @@
                     oninput={(e) => { manualInputs[id] = (e.target as HTMLInputElement).value; }}
                     onkeydown={(e) => { if (e.key === 'Enter') applyManualUrl(id); }}
                   />
-                  <button class="wmts-apply" onclick={() => applyManualUrl(id)}>Apply</button>
+                  <button class="wmts-apply" onclick={() => { applyManualUrl(id); }}>Apply</button>
                 </div>
               {:else if chart.type === 'WMTS' && charts.getOverride(id)}
                 <span class="wmts-ok">✓ Custom URL active</span>
@@ -103,7 +103,7 @@
                         <input
                           type="checkbox"
                           checked={charts.isShowingAll(id)}
-                          onchange={() => charts.toggleShowAll(id)}
+                          onchange={() => { charts.toggleShowAll(id); }}
                         /> All
                       </label>
                     {/if}

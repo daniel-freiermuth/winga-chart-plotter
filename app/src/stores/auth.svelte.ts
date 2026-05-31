@@ -62,7 +62,7 @@ function createAuth() {
             _token = fresh;
           }
           // If we had no token but cookie auth worked, flag as logged in without a username.
-          if (!_token && res.ok) {
+          if (!_token) {
             _token    = 'cookie';  // sentinel — cookie auth, no JWT to store
             _username = '(session)';
           }
@@ -86,7 +86,7 @@ function createAuth() {
         });
         if (res.status === 401) { _error = 'Invalid username or password.'; return; }
         if (res.status === 501) { _error = 'This server does not support authentication.'; return; }
-        if (!res.ok)            { _error = `Login failed (${res.status}).`; return; }
+        if (!res.ok)            { _error = `Login failed (${String(res.status)}).`; return; }
 
         const data = await res.json() as { token?: string };
         if (!data.token) { _error = 'Server returned no token.'; return; }

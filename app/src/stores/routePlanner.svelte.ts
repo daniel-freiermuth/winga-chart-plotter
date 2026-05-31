@@ -14,7 +14,7 @@ function createRoutePlannerStore() {
   const totalDistanceNm = $derived.by(() => {
     let total = 0;
     for (let i = 1; i < waypoints.length; i++) {
-      total += gcDistanceNm(waypoints[i - 1].lon, waypoints[i - 1].lat, waypoints[i].lon, waypoints[i].lat);
+      total += gcDistanceNm(waypoints[i - 1]!.lon, waypoints[i - 1]!.lat, waypoints[i]!.lon, waypoints[i]!.lat);
     }
     return total;
   });

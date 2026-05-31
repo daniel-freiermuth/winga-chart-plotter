@@ -3,9 +3,11 @@
     value: string;
     oninput?: () => void;
   }
+  // eslint-disable-next-line @typescript-eslint/no-useless-default-assignment -- $bindable() is a Svelte 5 rune, not a default value
   let { value = $bindable(), oninput }: Props = $props();
 
   // Keep the text field in sync, but only commit valid 6-digit hex values.
+  // eslint-disable-next-line svelte/prefer-writable-derived -- hexText is also written by event handlers
   let hexText = $state(value);
   $effect(() => { hexText = value; });
 

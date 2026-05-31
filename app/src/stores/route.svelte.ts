@@ -54,19 +54,26 @@ async function fetchRouteGeometry(serverBase: string, href: string): Promise<Fea
   }
   console.debug('[route] fetching geometry from', normHref);
   const res = await fetch(normHref);
-  if (!res.ok) throw new Error(`Route fetch failed: ${res.status} ${res.statusText}`);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const data = await res.json() as any;
-  console.debug('[route] REST response keys:', Object.keys(data ?? {}), 'type:', data?.type, 'featureType:', data?.feature?.type);
+  if (!res.ok) throw new Error(`Route fetch failed: ${String(res.status)} ${res.statusText}`);
+
+  // Type represents the various SK server response formats for a route resource.
+  interface RouteResponseShape {
+    feature?: { type?: string; geometry?: { type?: string } };
+    type?: string;
+    geometry?: { type?: string };
+    features?: unknown[];
+  }
+  const data = await res.json() as RouteResponseShape;
+  console.debug('[route] REST response keys:', Object.keys(data), 'type:', data.type, 'featureType:', data.feature?.type);
 
   // SK resource envelope: { feature: { type: "Feature", geometry: { type: "LineString" } } }
-  if (data?.feature?.geometry?.type === 'LineString') return data.feature as Feature<LineString>;
+  if (data.feature?.geometry?.type === 'LineString') return data.feature as Feature<LineString>;
   // Bare GeoJSON Feature
-  if (data?.type === 'Feature' && data?.geometry?.type === 'LineString') return data as Feature<LineString>;
+  if (data.type === 'Feature' && data.geometry?.type === 'LineString') return data as Feature<LineString>;
   // FeatureCollection (some plugins wrap it)
-  if (data?.type === 'FeatureCollection') {
-    const f = (data.features as unknown[]).find((f: unknown) =>
-      (f as Feature).geometry?.type === 'LineString'
+  if (data.type === 'FeatureCollection') {
+    const f = (data.features ?? []).find((f: unknown) =>
+      (f as Feature).geometry.type === 'LineString'
     );
     if (f) return f as Feature<LineString>;
   }
@@ -115,7 +122,7 @@ function createRoute() {
           _loading = true;
           fetchRouteGeometry(serverBase, newHref)
             .then(geo => { _geometry = geo; _loading = false; console.debug('[route] geometry loaded:', !!geo); })
-            .catch(e => { _error = String(e); _loading = false; console.warn('[route] fetch error:', e); });
+            .catch((e: unknown) => { _error = String(e); _loading = false; console.warn('[route] fetch error:', e); });
         } else {
           _loading = false;
         }

@@ -44,6 +44,10 @@ export default ts.config(
 
       // no-non-null-assertion is stricter; non-nullable-type-assertion-style conflicts with it
       '@typescript-eslint/non-nullable-type-assertion-style': 'off',
+
+      // noUncheckedIndexedAccess makes all array access return T | undefined; using ! for
+      // bounds-checked loops is the idiomatic fix and much cleaner than adding guards everywhere.
+      '@typescript-eslint/no-non-null-assertion': 'off',
     },
   },
   {

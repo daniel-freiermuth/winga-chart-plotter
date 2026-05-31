@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { settings, type AppearanceSettings } from '../stores/settings.svelte';
+  import { settings, type AppearanceSettings, type SettingsTab } from '../stores/settings.svelte';
   import { auth } from '../stores/auth.svelte';
   import { fpsStore } from '../stores/fps.svelte';
   import FaIcon from '../lib/FaIcon.svelte';
@@ -7,13 +7,13 @@
   import { faGear } from '@fortawesome/free-solid-svg-icons';
 
   let open = $state(false);
-  let tab  = $state<'connection' | 'vessel' | 'ais' | 'routes' | 'about'>('connection');
+  let tab  = $state<SettingsTab>('connection');
 
   // Connection settings use a draft (applied only on Save)
   let connDraft = $state({ protocol: settings.protocol, host: settings.host, port: settings.port });
   // Appearance and targetFps are edited directly — instant live preview.
   // Cancel reverts to this snapshot.
-  type SettingsSnapshot = { appearance: AppearanceSettings; targetFps: number; resourcePollIntervalSeconds: number };
+  interface SettingsSnapshot { appearance: AppearanceSettings; targetFps: number; resourcePollIntervalSeconds: number }
   let settingsSnapshot = '';
 
   // Login form local state — not part of the saved settings draft.
@@ -29,9 +29,9 @@
     return fps >= 10 ? Math.round(fps) : Math.round(fps * 10) / 10;
   }
   function fpsLabel(fps: number): string {
-    if (fps >= 10) return `${Math.round(fps)} fps`;
+    if (fps >= 10) return `${String(Math.round(fps))} fps`;
     if (fps >= 1)  return `${fps.toFixed(1)} fps`;
-    return `every ${Math.round(1 / fps)}s`;
+    return `every ${String(Math.round(1 / fps))}s`;
   }
 
   // Logarithmic slider helpers: range [0, 1000] ↔ track history hours [5min, 5yr]
@@ -44,19 +44,19 @@
     return Math.exp(TRACK_LOG_MIN + (v / 1000) * (TRACK_LOG_MAX - TRACK_LOG_MIN));
   }
   function trackDurationLabel(hours: number): string {
-    if (hours < 1)           return `${Math.round(hours * 60)} min`;
-    if (hours < 24)          return `${Math.round(hours)} h`;
+    if (hours < 1)           return `${String(Math.round(hours * 60))} min`;
+    if (hours < 24)          return `${String(Math.round(hours))} h`;
     const days = hours / 24;
-    if (days < 14)           return `${Math.round(days)} days`;
+    if (days < 14)           return `${String(Math.round(days))} days`;
     const weeks = days / 7;
-    if (weeks < 10)          return `${Math.round(weeks)} weeks`;
+    if (weeks < 10)          return `${String(Math.round(weeks))} weeks`;
     const months = days / 30.44;
-    if (months < 18)         return `${Math.round(months)} months`;
+    if (months < 18)         return `${String(Math.round(months))} months`;
     return `${(hours / (365.25 * 24)).toFixed(1)} years`;
   }
   function formatActualFps(fps: number): string {
     if (fps <= 0) return '';
-    if (fps >= 10) return `${Math.round(fps)} fps`;
+    if (fps >= 10) return `${String(Math.round(fps))} fps`;
     return `${fps.toFixed(1)} fps`;
   }
 
@@ -67,7 +67,7 @@
     open = true;
   }
 
-  export function openTo(t: typeof tab) {
+  export function openTo(t: SettingsTab) {
     connDraft = { protocol: settings.protocol, host: settings.host, port: settings.port };
     settingsSnapshot = JSON.stringify({ appearance: settings.appearance, targetFps: settings.targetFps, resourcePollIntervalSeconds: settings.resourcePollIntervalSeconds });
     tab  = t;
@@ -104,7 +104,7 @@
   function close() { open = false; }
 
   async function doLogin() {
-    const httpUrl = `http://${connDraft.host}:${connDraft.port}`;
+    const httpUrl = `http://${connDraft.host}:${String(connDraft.port)}`;
     await auth.login(httpUrl, loginUser, loginPass);
     if (auth.isLoggedIn) loginPass = '';
   }
@@ -125,8 +125,7 @@
 <button onclick={openModal} title="Settings" class="gear-btn"><FaIcon icon={faGear} /></button>
 
 {#if open}
-  <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-  <div onclick={close} class="backdrop"></div>
+  <div onclick={close} class="backdrop" role="presentation"></div>
 
   <div class="modal">
     <h2>Settings</h2>
@@ -142,7 +141,7 @@
     {#if tab === 'connection'}
       <p class="section-title">Signal K server</p>
       <div class="row">
-        <label>Protocol</label>
+        <span class="field-label">Protocol</span>
         <div class="field">
           <select bind:value={connDraft.protocol}>
             <option value="ws">ws://</option>
@@ -151,20 +150,20 @@
         </div>
       </div>
       <div class="row">
-        <label>Host</label>
+        <span class="field-label">Host</span>
         <div class="field">
           <input type="text" bind:value={connDraft.host} placeholder="192.168.1.1" style="flex:1; font-family: monospace;" />
         </div>
       </div>
       <div class="row">
-        <label>Port</label>
+        <span class="field-label">Port</span>
         <div class="field">
           <input type="number" bind:value={connDraft.port} min="1" max="65535" />
         </div>
       </div>
       <p class="hint">→ {connDraft.protocol}://{connDraft.host}:{connDraft.port}/signalk/v1/stream?subscribe=self</p>
       <div class="row">
-        <label>Waypoint/route poll</label>
+        <span class="field-label">Waypoint/route poll</span>
         <div class="field" style="gap:6px">
           <input
             type="number"
@@ -182,7 +181,7 @@
 
       <p class="section-title">Position source</p>
       <div class="row">
-        <label>Browser GPS</label>
+        <span class="field-label">Browser GPS</span>
         <div class="field">
           <label class="toggle">
             <input
@@ -193,14 +192,14 @@
                 // Request permission while still inside the user-gesture event — some
                 // mobile browsers suppress the prompt when called from an async context.
                 if (checked && 'geolocation' in navigator) {
-                  navigator.geolocation.getCurrentPosition(() => {}, () => {});
+                  navigator.geolocation.getCurrentPosition(() => { /* noop */ }, () => { /* noop */ });
                 }
                 // iOS 13+ requires an explicit user-gesture permission for DeviceOrientationEvent.
                 if (checked && typeof (window.DeviceOrientationEvent as unknown as { requestPermission?: unknown }).requestPermission === 'function') {
                   (window.DeviceOrientationEvent as unknown as { requestPermission: () => Promise<string> })
                     .requestPermission()
                     .then(r => { if (r !== 'granted') settings.setGeoError('Compass access denied — heading unavailable'); })
-                    .catch(() => {});
+                    .catch(() => { /* noop */ });
                 }
                 settings.apply({ useGeoLocation: checked });
               }}
@@ -238,21 +237,21 @@
       {#if auth.isLoggedIn}
         <div class="auth-status">
           <span class="auth-user">✓ Logged in as <strong>{auth.username}</strong></span>
-          <button class="btn btn-cancel btn-sm" onclick={() => auth.logout()}>Log out</button>
+          <button class="btn btn-cancel btn-sm" onclick={() => { auth.logout(); }}>Log out</button>
         </div>
       {:else}
         <div class="row">
-          <label>Username</label>
+          <label for="login-user">Username</label>
           <div class="field">
-            <input type="text" bind:value={loginUser} placeholder="admin" autocomplete="username" />
+            <input type="text" id="login-user" bind:value={loginUser} placeholder="admin" autocomplete="username" />
           </div>
         </div>
         <div class="row">
-          <label>Password</label>
+          <label for="login-pass">Password</label>
           <div class="field">
-            <!-- svelte-ignore a11y_no_interactive_element_to_noninteractive_role -->
             <input
               type="password"
+              id="login-pass"
               bind:value={loginPass}
               placeholder="••••••••"
               autocomplete="current-password"
@@ -272,11 +271,11 @@
     {#if tab === 'vessel'}
       <p class="section-title">Icon</p>
       <div class="row">
-        <label>Color</label>
+        <span class="field-label">Color</span>
         <div class="field"><ColorInput bind:value={settings.appearance.vesselColor} oninput={applyAppearance} /></div>
       </div>
       <div class="row">
-        <label>Size</label>
+        <span class="field-label">Size</span>
         <div class="field">
           <input type="number" bind:value={settings.appearance.vesselSize} min="8" max="64" step="2" oninput={applyAppearance} />
           <span class="unit">px</span>
@@ -285,7 +284,7 @@
 
       <p class="section-title">Track</p>
       <div class="row">
-        <label>Show</label>
+        <span class="field-label">Show</span>
         <div class="field">
           <label class="toggle">
             <input type="checkbox" bind:checked={settings.appearance.track.show} onchange={applyAppearance} />
@@ -294,18 +293,18 @@
         </div>
       </div>
       <div class="row">
-        <label>Color</label>
+        <span class="field-label">Color</span>
         <div class="field"><ColorInput bind:value={settings.appearance.track.color} oninput={applyAppearance} /></div>
       </div>
       <div class="row">
-        <label>Width</label>
+        <span class="field-label">Width</span>
         <div class="field">
           <input type="number" bind:value={settings.appearance.track.width} min="1" max="8" step="0.5" oninput={applyAppearance} />
           <span class="unit">px</span>
         </div>
       </div>
       <div class="row">
-        <label>Style</label>
+        <span class="field-label">Style</span>
         <div class="field">
           <select bind:value={settings.appearance.track.style} onchange={applyAppearance}>
             <option value="solid">Solid</option>
@@ -316,7 +315,7 @@
         </div>
       </div>
       <div class="row">
-        <label>History</label>
+        <span class="field-label">History</span>
         <div class="field" style="flex-direction: column; align-items: flex-start; gap: 4px;">
           <input type="range" min="0" max="1000" step="1"
             value={hoursToSlider(settings.appearance.track.historyHours)}
@@ -338,18 +337,18 @@
       ] as { key, nextTitle } (key)}
         {@const line = key === 'heading' ? settings.appearance.heading : key === 'cog' ? settings.appearance.cog : settings.appearance.gc}
         <div class="row">
-          <label>Color</label>
+          <span class="field-label">Color</span>
           <div class="field"><ColorInput bind:value={line.color} oninput={applyAppearance} /></div>
         </div>
         <div class="row">
-          <label>Width</label>
+          <span class="field-label">Width</span>
           <div class="field">
             <input type="number" bind:value={line.width} min="1" max="8" step="0.5" oninput={applyAppearance} />
             <span class="unit">px</span>
           </div>
         </div>
         <div class="row">
-          <label>Style</label>
+          <span class="field-label">Style</span>
           <div class="field">
             <select bind:value={line.style} onchange={applyAppearance}>
               <option value="solid">Solid</option>
@@ -360,7 +359,7 @@
           </div>
         </div>
         <div class="row">
-          <label>Length</label>
+          <span class="field-label">Length</span>
           <div class="field">
             <input type="number" bind:value={line.lengthValue} min="0" step="0.1" style="width:72px" oninput={applyAppearance} />
             <select bind:value={line.lengthUnit} onchange={applyAppearance}>
@@ -379,11 +378,11 @@
     {#if tab === 'ais'}
       <p class="section-title">Icon</p>
       <div class="row">
-        <label>Color</label>
+        <span class="field-label">Color</span>
         <div class="field"><ColorInput bind:value={settings.appearance.ais.vesselColor} oninput={applyAppearance} /></div>
       </div>
       <div class="row">
-        <label>Size</label>
+        <span class="field-label">Size</span>
         <div class="field">
           <input type="number" bind:value={settings.appearance.ais.vesselSize} min="8" max="48" step="2" oninput={applyAppearance} />
           <span class="unit">px</span>
@@ -392,18 +391,18 @@
 
       <p class="section-title">COG line</p>
       <div class="row">
-        <label>Color</label>
+        <span class="field-label">Color</span>
         <div class="field"><ColorInput bind:value={settings.appearance.ais.cog.color} oninput={applyAppearance} /></div>
       </div>
       <div class="row">
-        <label>Width</label>
+        <span class="field-label">Width</span>
         <div class="field">
           <input type="number" bind:value={settings.appearance.ais.cog.width} min="1" max="8" step="0.5" oninput={applyAppearance} />
           <span class="unit">px</span>
         </div>
       </div>
       <div class="row">
-        <label>Style</label>
+        <span class="field-label">Style</span>
         <div class="field">
           <select bind:value={settings.appearance.ais.cog.style} onchange={applyAppearance}>
             <option value="solid">Solid</option>
@@ -414,7 +413,7 @@
         </div>
       </div>
       <div class="row">
-        <label>Length</label>
+        <span class="field-label">Length</span>
         <div class="field">
           <input type="number" bind:value={settings.appearance.ais.cog.lengthMinutes} min="1" max="60" step="1" oninput={applyAppearance} />
           <span class="unit">min</span>
@@ -423,7 +422,7 @@
 
       <p class="section-title">Track (on click)</p>
       <div class="row">
-        <label>Show</label>
+        <span class="field-label">Show</span>
         <div class="field">
           <label class="toggle">
             <input type="checkbox" bind:checked={settings.appearance.ais.track.show} onchange={applyAppearance} />
@@ -432,18 +431,18 @@
         </div>
       </div>
       <div class="row">
-        <label>Color</label>
+        <span class="field-label">Color</span>
         <div class="field"><ColorInput bind:value={settings.appearance.ais.track.color} oninput={applyAppearance} /></div>
       </div>
       <div class="row">
-        <label>Width</label>
+        <span class="field-label">Width</span>
         <div class="field">
           <input type="number" bind:value={settings.appearance.ais.track.width} min="1" max="8" step="0.5" oninput={applyAppearance} />
           <span class="unit">px</span>
         </div>
       </div>
       <div class="row">
-        <label>Style</label>
+        <span class="field-label">Style</span>
         <div class="field">
           <select bind:value={settings.appearance.ais.track.style} onchange={applyAppearance}>
             <option value="solid">Solid</option>
@@ -456,14 +455,14 @@
 
       <p class="section-title">Performance</p>
       <div class="row">
-        <label>Frame rate</label>
+        <span class="field-label">Frame rate</span>
         <div class="fps-field">
           <input
             type="range"
             class="fps-slider"
             min="0" max="1000"
             value={fpsToSlider(settings.targetFps)}
-            oninput={(e) => settings.setTargetFps(sliderToFps(+(e.target as HTMLInputElement).value))}
+            oninput={(e) => { settings.setTargetFps(sliderToFps(+(e.target as HTMLInputElement).value)); }}
           />
           <span class="fps-target">{fpsLabel(settings.targetFps)}</span>
           <span class="fps-actual">{formatActualFps(fpsStore.value)}</span>
@@ -480,18 +479,18 @@
       ] as { key, nextTitle } (key)}
         {@const rl = key === 'bearing' ? settings.appearance.route.bearing : key === 'segment' ? settings.appearance.route.segment : settings.appearance.route.remaining}
         <div class="row">
-          <label>Color</label>
+          <span class="field-label">Color</span>
           <div class="field"><ColorInput bind:value={rl.color} oninput={applyAppearance} /></div>
         </div>
         <div class="row">
-          <label>Width</label>
+          <span class="field-label">Width</span>
           <div class="field">
             <input type="number" bind:value={rl.width} min="1" max="8" step="0.5" oninput={applyAppearance} />
             <span class="unit">px</span>
           </div>
         </div>
         <div class="row">
-          <label>Style</label>
+          <span class="field-label">Style</span>
           <div class="field">
             <select bind:value={rl.style} onchange={applyAppearance}>
               <option value="solid">Solid</option>
@@ -508,18 +507,18 @@
 
       <p class="section-title">All routes on map</p>
       <div class="row">
-        <label>Color</label>
+        <span class="field-label">Color</span>
         <div class="field"><ColorInput bind:value={settings.appearance.route.allRoutes.color} oninput={applyAppearance} /></div>
       </div>
       <div class="row">
-        <label>Width</label>
+        <span class="field-label">Width</span>
         <div class="field">
           <input type="number" bind:value={settings.appearance.route.allRoutes.width} min="1" max="8" step="0.5" oninput={applyAppearance} />
           <span class="unit">px</span>
         </div>
       </div>
       <div class="row">
-        <label>Style</label>
+        <span class="field-label">Style</span>
         <div class="field">
           <select bind:value={settings.appearance.route.allRoutes.style} onchange={applyAppearance}>
             <option value="solid">Solid</option>
@@ -532,11 +531,11 @@
 
       <p class="section-title">Route planner</p>
       <div class="row">
-        <label>Color</label>
+        <span class="field-label">Color</span>
         <div class="field"><ColorInput bind:value={settings.appearance.planner.color} oninput={applyAppearance} /></div>
       </div>
       <div class="row">
-        <label>Width</label>
+        <span class="field-label">Width</span>
         <div class="field">
           <input type="number" bind:value={settings.appearance.planner.width} min="1" max="16" step="0.5" oninput={applyAppearance} />
           <span class="unit">px</span>
@@ -545,11 +544,11 @@
 
       <p class="section-title">Ruler</p>
       <div class="row">
-        <label>Color</label>
+        <span class="field-label">Color</span>
         <div class="field"><ColorInput bind:value={settings.appearance.ruler.color} oninput={applyAppearance} /></div>
       </div>
       <div class="row">
-        <label>Width</label>
+        <span class="field-label">Width</span>
         <div class="field">
           <input type="number" bind:value={settings.appearance.ruler.width} min="1" max="8" step="0.5" oninput={applyAppearance} />
           <span class="unit">px</span>
@@ -608,7 +607,7 @@
     letter-spacing: 0.08em; margin: 16px 0 10px;
   }
   .row { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
-  .row > label { width: 72px; font-size: 13px; color: #a0a0c0; flex-shrink: 0; }
+  .field-label { width: 72px; font-size: 13px; color: #a0a0c0; flex-shrink: 0; }
   .field { flex: 1; display: flex; align-items: center; gap: 8px; }
   .unit { font-size: 12px; color: #666688; }
   .hint { font-size: 11px; color: #666688; margin: 2px 0 12px 84px; word-break: break-all; }
@@ -629,14 +628,13 @@
   .geo-accuracy-dot--gps      { background: #22c55e; }
   .geo-accuracy-dot--marginal { background: #f59e0b; }
   .geo-accuracy-dot--poor     { background: #f87171; }
-  .radio-group { gap: 16px; }
-  .radio-group label { display: flex; align-items: center; gap: 6px; color: white; font-size: 13px; cursor: pointer; width: auto; }
+
   input[type=text], input[type=number], select {
     background: #2a2a3e; border: 1px solid #444466; color: white;
     padding: 6px 8px; border-radius: 6px; font-size: 13px; box-sizing: border-box;
   }
   input[type=text]   { flex: 1; }
-  input[type=number] { width: 80px; -moz-appearance: textfield; }
+  input[type=number] { width: 80px; -moz-appearance: textfield; appearance: textfield; }
   select { cursor: pointer; }
   .actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 24px; }
   .btn { padding: 7px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; }
