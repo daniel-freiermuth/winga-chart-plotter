@@ -568,13 +568,14 @@ export async function deleteWaypoint(
 
 /**
  * Raise a Man Overboard alarm.
- *   PUT /signalk/v2/api/vessels/self/notifications/mob
+ *   PUT /signalk/v1/api/vessels/self/notifications/mob
+ * (The v2 API does not expose a notifications endpoint.)
  */
 export async function raiseMob(
   serverBase: string,
   authHeaders: Record<string, string>,
 ): Promise<void> {
-  const res = await fetch(`${serverBase}/signalk/v2/api/vessels/self/notifications/mob`, {
+  const res = await fetch(`${serverBase}/signalk/v1/api/vessels/self/notifications/mob`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json', ...authHeaders },
     body: JSON.stringify({
@@ -588,13 +589,13 @@ export async function raiseMob(
 
 /**
  * Clear the Man Overboard alarm.
- *   DELETE /signalk/v2/api/vessels/self/notifications/mob
+ *   DELETE /signalk/v1/api/vessels/self/notifications/mob
  */
 export async function clearMob(
   serverBase: string,
   authHeaders: Record<string, string>,
 ): Promise<void> {
-  const res = await fetch(`${serverBase}/signalk/v2/api/vessels/self/notifications/mob`, {
+  const res = await fetch(`${serverBase}/signalk/v1/api/vessels/self/notifications/mob`, {
     method: 'DELETE',
     headers: { ...authHeaders },
   });
