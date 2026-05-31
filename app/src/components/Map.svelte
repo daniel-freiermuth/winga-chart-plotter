@@ -964,187 +964,24 @@
       if (e.originalEvent) rotateMode.setManual();
     });
 
-    // Own vessel click — handled in the generic map.on('click') via deck.gl picking.
-
-    // Route click — show popup with route name and link to route settings.
+    // Cursor feedback for interactive MapLibre layers.
     const routeClickLayers = ['route-full', 'route-leg', 'route-bearing', 'route-waypoints'];
-    map.on('click', routeClickLayers, (e) => {
-      const name = route.routeName;
-      const canStop = auth.isLoggedIn;
-      const html = `
-        <div class="ais-popup">
-          ${name ? `<div class="ais-popup-title">${name}</div>` : ''}
-          <div class="ais-links" style="margin-top:0">
-            <button class="popup-settings-btn stop-nav-btn"
-              ${canStop ? '' : 'disabled title="Login required"'}>Stop navigation</button>
-            <button class="popup-settings-btn" data-settings="routes">Route settings</button>
-          </div>
-        </div>`;
-      const popup = new maplibregl.Popup({ closeButton: false, offset: 10, maxWidth: 'none' })
-        .setLngLat(e.lngLat)
-        .setHTML(html)
-        .addTo(map!);
-      popup.getElement().addEventListener('click', (ev) => {
-        const el = ev.target as HTMLElement;
-        const settingsBtn = el.closest<HTMLElement>('[data-settings]');
-        if (settingsBtn) { popup.remove(); openSettings(settingsBtn.dataset.settings!); return; }
-        const stopBtn = el.closest<HTMLButtonElement>('.stop-nav-btn');
-        if (stopBtn && !stopBtn.disabled) {
-          popup.remove();
-          clearCourse(settings.signalkHttpUrl, auth.authHeaders).catch(err => {
-            console.error('[navigate] Failed to clear course:', err);
-          });
-        }
-      });
-    });
     for (const id of routeClickLayers) {
       map.on('mouseenter', id, () => { if (map) map.getCanvas().style.cursor = 'pointer'; });
       map.on('mouseleave', id, () => { if (map) map.getCanvas().style.cursor = ''; });
     }
-
-    // All-routes click — show route name, Activate / Edit buttons, and link to route appearance settings.
-    map.on('click', 'all-routes-line', (e) => {
-      const f = e.features?.[0];
-      if (!f) return;
-      const name = f.properties?.name as string ?? '';
-      const uuid = f.properties?.uuid as string ?? '';
-      const canActivate = auth.isLoggedIn && uuid !== '';
-      const canEdit     = auth.isLoggedIn && uuid !== '';
-      const canDelete   = auth.isLoggedIn && uuid !== '';
-      const html = `
-        <div class="ais-popup">
-          ${name ? `<div class="ais-popup-title">${name}</div>` : ''}
-          <div class="ais-links" style="margin-top:0">
-            <button class="popup-settings-btn activate-route-btn"
-              ${canActivate ? `data-uuid="${uuid}"` : 'disabled title="Login required to activate route"'}>Activate route</button>
-            <button class="popup-settings-btn edit-route-btn"
-              ${canEdit ? `data-uuid="${uuid}"` : 'disabled title="Login required to edit route"'}>Edit route</button>
-            <button class="popup-settings-btn delete-route-btn"
-              ${canDelete ? `data-uuid="${uuid}" data-name="${name}"` : 'disabled title="Login required to delete route"'}>Delete route</button>
-            <button class="popup-settings-btn" data-settings="routes">Route style</button>
-          </div>
-        </div>`;
-      const popup = new maplibregl.Popup({ closeButton: false, offset: 10, maxWidth: 'none' })
-        .setLngLat(e.lngLat)
-        .setHTML(html)
-        .addTo(map!);
-      popup.getElement().addEventListener('click', (ev) => {
-        const el = ev.target as HTMLElement;
-        const settingsBtn = el.closest<HTMLElement>('[data-settings]');
-        if (settingsBtn) { popup.remove(); openSettings(settingsBtn.dataset.settings!); return; }
-        const activateBtn = el.closest<HTMLButtonElement>('.activate-route-btn');
-        if (activateBtn && !activateBtn.disabled && activateBtn.dataset.uuid) {
-          popup.remove();
-          activateRoute(settings.signalkHttpUrl, activateBtn.dataset.uuid, auth.authHeaders).catch(err => {
-            console.error('[route] Failed to activate route:', err);
-          });
-          return;
-        }
-        const editBtn = el.closest<HTMLButtonElement>('.edit-route-btn');
-        if (editBtn && !editBtn.disabled && editBtn.dataset.uuid) {
-          popup.remove();
-          const r = routes.entries.find(r => r.uuid === editBtn.dataset.uuid);
-          if (r) {
-            const coords = r.geometry.geometry.coordinates as [number, number][];
-            routePlanner.loadRoute(r.uuid, r.name, coords.map(([lon, lat]) => ({ lon, lat })));
-          }
-          return;
-        }
-        const deleteBtn = el.closest<HTMLButtonElement>('.delete-route-btn');
-        if (deleteBtn && !deleteBtn.disabled && deleteBtn.dataset.uuid) {
-          const routeUuid = deleteBtn.dataset.uuid;
-          const routeName = deleteBtn.dataset.name || 'this route';
-          if (!confirm(`Delete "${routeName}"? This cannot be undone.`)) return;
-          popup.remove();
-          deleteRoute(settings.signalkHttpUrl, routeUuid, auth.authHeaders)
-            .then(() => routes.load(settings.signalkHttpUrl))
-            .catch(err => {
-              console.error('[route] Failed to delete route:', err);
-            });
-        }
-      });
-      e.preventDefault();
-    });
-    map.on('mouseenter', 'all-routes-line', () => { if (map) map.getCanvas().style.cursor = 'pointer'; });
-    map.on('mouseleave', 'all-routes-line', () => { if (map) map.getCanvas().style.cursor = ''; });
-
-    // Waypoint click — show popup with name, Edit, Navigate here, Delete.
-    map.on('click', 'all-waypoints-circle', (e) => {
-      const f = e.features?.[0];
-      if (!f) return;
-      const uuid = f.properties?.uuid as string ?? '';
-      const name = f.properties?.name as string ?? '';
-      const coords = (f.geometry as GeoJSON.Point).coordinates;
-      const lon = coords[0];
-      const lat = coords[1];
-      const canAct = auth.isLoggedIn && uuid !== '';
-      const html = `
-        <div class="ais-popup">
-          <div class="ais-popup-title">${name || 'Waypoint'}</div>
-          <div class="ais-popup-coords">${formatDm(lat, lon)}</div>
-          <div class="ais-links" style="margin-top:4px">
-            <button class="popup-settings-btn navigate-here-btn"
-              ${auth.isLoggedIn ? '' : 'disabled title="Login required"'}>Navigate here</button>
-            <button class="popup-settings-btn rename-waypoint-btn"
-              ${canAct ? `data-uuid="${uuid}" data-name="${name}" data-lat="${lat}" data-lon="${lon}"` : 'disabled title="Login required"'}>Rename</button>
-            <button class="popup-settings-btn move-waypoint-btn"
-              ${canAct ? `data-uuid="${uuid}" data-name="${name}"` : 'disabled title="Login required"'}>Move</button>
-            <button class="popup-settings-btn delete-waypoint-btn"
-              ${canAct ? `data-uuid="${uuid}" data-name="${name}"` : 'disabled title="Login required"'}>Delete</button>
-          </div>
-        </div>`;
-      const popup = new maplibregl.Popup({ closeButton: true, maxWidth: 'none' })
-        .setLngLat([lon, lat])
-        .setHTML(html)
-        .addTo(map!);
-      popup.getElement().addEventListener('click', (ev) => {
-        const el = ev.target as HTMLElement;
-        const navBtn = el.closest<HTMLButtonElement>('.navigate-here-btn');
-        if (navBtn && !navBtn.disabled) {
-          popup.remove();
-          navigateToPoint(settings.signalkHttpUrl, lat, lon, auth.authHeaders).catch(err => {
-            console.error('[waypoint] Failed to set course:', err);
-          });
-          return;
-        }
-        const editBtn = el.closest<HTMLButtonElement>('.rename-waypoint-btn');
-        if (editBtn && !editBtn.disabled) {
-          const newName = prompt('Rename waypoint:', editBtn.dataset.name ?? '');
-          if (newName === null) return;
-          popup.remove();
-          updateWaypoint(
-            settings.signalkHttpUrl, uuid, newName.trim() || name,
-            Number(editBtn.dataset.lat), Number(editBtn.dataset.lon), auth.authHeaders,
-          ).then(() => waypoints.load(settings.signalkHttpUrl))
-            .catch(err => console.error('[waypoint] Failed to update:', err));
-          return;
-        }
-        const moveBtn = el.closest<HTMLButtonElement>('.move-waypoint-btn');
-        if (moveBtn && !moveBtn.disabled) {
-          popup.remove();
-          movingWaypoint = { uuid: moveBtn.dataset.uuid!, name: moveBtn.dataset.name ?? '' };
-          mapContainer.style.cursor = 'crosshair';
-          return;
-        }
-        const delBtn = el.closest<HTMLButtonElement>('.delete-waypoint-btn');
-        if (delBtn && !delBtn.disabled) {
-          if (!confirm(`Delete waypoint "${delBtn.dataset.name || 'this waypoint'}"?`)) return;
-          popup.remove();
-          deleteWaypoint(settings.signalkHttpUrl, uuid, auth.authHeaders)
-            .then(() => waypoints.load(settings.signalkHttpUrl))
-            .catch(err => console.error('[waypoint] Failed to delete:', err));
-        }
-      });
-      e.preventDefault();
-    });
+    map.on('mouseenter', 'all-routes-line',      () => { if (map) map.getCanvas().style.cursor = 'pointer'; });
+    map.on('mouseleave', 'all-routes-line',      () => { if (map) map.getCanvas().style.cursor = ''; });
     map.on('mouseenter', 'all-waypoints-circle', () => { if (map) map.getCanvas().style.cursor = 'pointer'; });
     map.on('mouseleave', 'all-waypoints-circle', () => { if (map) map.getCanvas().style.cursor = ''; });
 
+    // Single unified click handler — hits processed in explicit priority order so
+    // exactly one action fires per click regardless of layer overlap.
     map.on('click', (e) => {
       if (!overlay) return;
       const { x, y } = e.point;
 
-      // Moving waypoint mode: next click sets the new position.
+      // 1. Moving-waypoint mode: the next click places the waypoint.
       if (movingWaypoint) {
         const { uuid, name } = movingWaypoint;
         movingWaypoint = null;
@@ -1155,14 +992,10 @@
         return;
       }
 
-      // In planner mode: handle click adds or inserts a waypoint.
+      // 2. Route planner mode: click adds or inserts a waypoint.
       if (routePlanner.active) {
         const handlePick = overlay.pickObject({ x, y, radius: 12, layerIds: ['planner-handles'] });
-        if (handlePick?.object) {
-          // Clicked on an existing handle — no action (drag is handled by pointerdown).
-          return;
-        }
-        // Check if the click landed on a segment line → insert between the two endpoints.
+        if (handlePick?.object) return; // clicked an existing handle — drag handles it
         const segPick = overlay.pickObject({ x, y, radius: 8, layerIds: ['planner-line'] });
         if (segPick?.object) {
           type PlannerSeg = { segIdx: number };
@@ -1174,35 +1007,13 @@
         return;
       }
 
-      // Own vessel is the topmost deck.gl layer — check it first.
+      // 3. Own vessel (deck.gl — topmost layer).
       const ownPicked = overlay.pickMultipleObjects({ x, y, radius: 5, layerIds: ['own-vessel-icon'] });
-      if (ownPicked.length > 0) {
-        const ownPos = get(vesselState).position;
-        const canWaypoint = auth.isLoggedIn && ownPos != null;
-        const popup = new maplibregl.Popup({ closeButton: false, offset: 14, className: 'vessel-self-popup' })
-          .setLngLat(e.lngLat)
-          .setHTML(`
-            <button class="vessel-self-settings-btn">Own vessel settings</button>
-            <button class="popup-settings-btn add-waypoint-here-btn"
-              ${canWaypoint ? `data-lat="${ownPos!.latitude}" data-lon="${ownPos!.longitude}"` : 'disabled title="Login required"'}>Add waypoint here</button>
-          `)
-          .addTo(map!);
-        popup.getElement().addEventListener('click', (ev) => {
-          const settingsBtn = (ev.target as HTMLElement).closest('.vessel-self-settings-btn');
-          if (settingsBtn) { popup.remove(); openSettings('vessel'); return; }
-          const wpBtn = (ev.target as HTMLElement).closest<HTMLButtonElement>('.add-waypoint-here-btn');
-          if (wpBtn && !wpBtn.disabled) {
-            popup.remove();
-            promptAndSaveWaypoint(Number(wpBtn.dataset.lat), Number(wpBtn.dataset.lon));
-          }
-        });
-        return;
-      }
+      if (ownPicked.length > 0) { showOwnVesselPopup(e.lngLat); return; }
 
+      // 4. AIS vessels (deck.gl). Deduplicate by vessel index — multiple layers can match.
       const aisLayerIds = ['ais-confirmed-icon', 'ais-hull-ghost', 'ais-hull-confirmed', 'ais-ghost-icon', 'ais-mob-icon'];
       const allPicked = overlay.pickMultipleObjects({ x, y, radius: 5, layerIds: aisLayerIds });
-
-      // Deduplicate by vessel index — multiple layers can return the same vessel.
       const seen = new Set<number>();
       const uniqueHits: { idx: number; coordinate: number[] }[] = [];
       for (const p of allPicked) {
@@ -1212,20 +1023,23 @@
         seen.add(idx);
         if (p.coordinate) uniqueHits.push({ idx, coordinate: p.coordinate as number[] });
       }
-
-      if (uniqueHits.length === 0) return;
-
-      const coordinate = uniqueHits[0].coordinate as [number, number];
-
       if (uniqueHits.length === 1) {
         const target = ais.getTarget(uniqueHits[0].idx);
-        if (!target?.position) return;
-        handleAisClick(coordinate, target);
-        return;
+        if (target?.position) { handleAisClick(uniqueHits[0].coordinate as [number, number], target); return; }
       }
+      if (uniqueHits.length > 1) { openDisambigPopup(uniqueHits[0].coordinate as [number, number], uniqueHits.map(h => h.idx)); return; }
 
-      // Multiple vessels — show a disambiguation list popup.
-      openDisambigPopup(coordinate, uniqueHits.map(h => h.idx));
+      // 5. Waypoints (MapLibre layer).
+      const waypointFeats = map!.queryRenderedFeatures(e.point, { layers: ['all-waypoints-circle'] });
+      if (waypointFeats.length > 0) { showWaypointPopup(e.lngLat, waypointFeats[0]); return; }
+
+      // 6. Active route layers (MapLibre).
+      const activeRouteFeats = map!.queryRenderedFeatures(e.point, { layers: routeClickLayers });
+      if (activeRouteFeats.length > 0) { showActiveRoutePopup(e.lngLat); return; }
+
+      // 7. All routes on map (MapLibre).
+      const allRouteFeats = map!.queryRenderedFeatures(e.point, { layers: ['all-routes-line'] });
+      if (allRouteFeats.length > 0) { showAllRoutesPopup(e.lngLat, allRouteFeats[0]); return; }
     });
 
     // Right-click (desktop) → remove planner waypoint, or show navigate popup.
@@ -1724,7 +1538,180 @@
     });
   }
 
-  // Add / remove chart tile layers when selection changes
+  function showOwnVesselPopup(lngLat: maplibregl.LngLat): void {
+    if (!map) return;
+    const ownPos = get(vesselState).position;
+    const canWaypoint = auth.isLoggedIn && ownPos != null;
+    const popup = new maplibregl.Popup({ closeButton: false, offset: 14, className: 'vessel-self-popup' })
+      .setLngLat(lngLat)
+      .setHTML(`
+        <button class="vessel-self-settings-btn">Own vessel settings</button>
+        <button class="popup-settings-btn add-waypoint-here-btn"
+          ${canWaypoint ? `data-lat="${ownPos!.latitude}" data-lon="${ownPos!.longitude}"` : 'disabled title="Login required"'}>Add waypoint here</button>
+      `)
+      .addTo(map);
+    popup.getElement().addEventListener('click', (ev) => {
+      const settingsBtn = (ev.target as HTMLElement).closest('.vessel-self-settings-btn');
+      if (settingsBtn) { popup.remove(); openSettings('vessel'); return; }
+      const wpBtn = (ev.target as HTMLElement).closest<HTMLButtonElement>('.add-waypoint-here-btn');
+      if (wpBtn && !wpBtn.disabled) {
+        popup.remove();
+        promptAndSaveWaypoint(Number(wpBtn.dataset.lat), Number(wpBtn.dataset.lon));
+      }
+    });
+  }
+
+  function showActiveRoutePopup(lngLat: maplibregl.LngLat): void {
+    if (!map) return;
+    const name = route.routeName;
+    const canStop = auth.isLoggedIn;
+    const popup = new maplibregl.Popup({ closeButton: false, offset: 10, maxWidth: 'none' })
+      .setLngLat(lngLat)
+      .setHTML(`
+        <div class="ais-popup">
+          ${name ? `<div class="ais-popup-title">${name}</div>` : ''}
+          <div class="ais-links" style="margin-top:0">
+            <button class="popup-settings-btn stop-nav-btn"
+              ${canStop ? '' : 'disabled title="Login required"'}>Stop navigation</button>
+            <button class="popup-settings-btn" data-settings="routes">Route settings</button>
+          </div>
+        </div>`)
+      .addTo(map);
+    popup.getElement().addEventListener('click', (ev) => {
+      const el = ev.target as HTMLElement;
+      const settingsBtn = el.closest<HTMLElement>('[data-settings]');
+      if (settingsBtn) { popup.remove(); openSettings(settingsBtn.dataset.settings!); return; }
+      const stopBtn = el.closest<HTMLButtonElement>('.stop-nav-btn');
+      if (stopBtn && !stopBtn.disabled) {
+        popup.remove();
+        clearCourse(settings.signalkHttpUrl, auth.authHeaders).catch(err => {
+          console.error('[navigate] Failed to clear course:', err);
+        });
+      }
+    });
+  }
+
+  function showAllRoutesPopup(lngLat: maplibregl.LngLat, f: maplibregl.MapGeoJSONFeature): void {
+    if (!map) return;
+    const name = f.properties?.name as string ?? '';
+    const uuid = f.properties?.uuid as string ?? '';
+    const canAct = auth.isLoggedIn && uuid !== '';
+    const popup = new maplibregl.Popup({ closeButton: false, offset: 10, maxWidth: 'none' })
+      .setLngLat(lngLat)
+      .setHTML(`
+        <div class="ais-popup">
+          ${name ? `<div class="ais-popup-title">${name}</div>` : ''}
+          <div class="ais-links" style="margin-top:0">
+            <button class="popup-settings-btn activate-route-btn"
+              ${canAct ? `data-uuid="${uuid}"` : 'disabled title="Login required to activate route"'}>Activate route</button>
+            <button class="popup-settings-btn edit-route-btn"
+              ${canAct ? `data-uuid="${uuid}"` : 'disabled title="Login required to edit route"'}>Edit route</button>
+            <button class="popup-settings-btn delete-route-btn"
+              ${canAct ? `data-uuid="${uuid}" data-name="${name}"` : 'disabled title="Login required to delete route"'}>Delete route</button>
+            <button class="popup-settings-btn" data-settings="routes">Route style</button>
+          </div>
+        </div>`)
+      .addTo(map);
+    popup.getElement().addEventListener('click', (ev) => {
+      const el = ev.target as HTMLElement;
+      const settingsBtn = el.closest<HTMLElement>('[data-settings]');
+      if (settingsBtn) { popup.remove(); openSettings(settingsBtn.dataset.settings!); return; }
+      const activateBtn = el.closest<HTMLButtonElement>('.activate-route-btn');
+      if (activateBtn && !activateBtn.disabled && activateBtn.dataset.uuid) {
+        popup.remove();
+        activateRoute(settings.signalkHttpUrl, activateBtn.dataset.uuid, auth.authHeaders)
+          .catch(err => console.error('[route] Failed to activate route:', err));
+        return;
+      }
+      const editBtn = el.closest<HTMLButtonElement>('.edit-route-btn');
+      if (editBtn && !editBtn.disabled && editBtn.dataset.uuid) {
+        popup.remove();
+        const r = routes.entries.find(r => r.uuid === editBtn.dataset.uuid);
+        if (r) {
+          const coords = r.geometry.geometry.coordinates as [number, number][];
+          routePlanner.loadRoute(r.uuid, r.name, coords.map(([lon, lat]) => ({ lon, lat })));
+        }
+        return;
+      }
+      const deleteBtn = el.closest<HTMLButtonElement>('.delete-route-btn');
+      if (deleteBtn && !deleteBtn.disabled && deleteBtn.dataset.uuid) {
+        const routeUuid = deleteBtn.dataset.uuid;
+        const routeName = deleteBtn.dataset.name || 'this route';
+        if (!confirm(`Delete "${routeName}"? This cannot be undone.`)) return;
+        popup.remove();
+        deleteRoute(settings.signalkHttpUrl, routeUuid, auth.authHeaders)
+          .then(() => routes.load(settings.signalkHttpUrl))
+          .catch(err => console.error('[route] Failed to delete route:', err));
+      }
+    });
+  }
+
+  function showWaypointPopup(lngLat: maplibregl.LngLat, f: maplibregl.MapGeoJSONFeature): void {
+    if (!map) return;
+    const uuid = f.properties?.uuid as string ?? '';
+    const name = f.properties?.name as string ?? '';
+    const coords = (f.geometry as GeoJSON.Point).coordinates;
+    const lon = coords[0] as number;
+    const lat = coords[1] as number;
+    const canAct = auth.isLoggedIn && uuid !== '';
+    const popup = new maplibregl.Popup({ closeButton: true, maxWidth: 'none' })
+      .setLngLat([lon, lat])
+      .setHTML(`
+        <div class="ais-popup">
+          <div class="ais-popup-title">${name || 'Waypoint'}</div>
+          <div class="ais-popup-coords">${formatDm(lat, lon)}</div>
+          <div class="ais-links" style="margin-top:4px">
+            <button class="popup-settings-btn navigate-here-btn"
+              ${auth.isLoggedIn ? '' : 'disabled title="Login required"'}>Navigate here</button>
+            <button class="popup-settings-btn rename-waypoint-btn"
+              ${canAct ? `data-uuid="${uuid}" data-name="${name}" data-lat="${lat}" data-lon="${lon}"` : 'disabled title="Login required"'}>Rename</button>
+            <button class="popup-settings-btn move-waypoint-btn"
+              ${canAct ? `data-uuid="${uuid}" data-name="${name}"` : 'disabled title="Login required"'}>Move</button>
+            <button class="popup-settings-btn delete-waypoint-btn"
+              ${canAct ? `data-uuid="${uuid}" data-name="${name}"` : 'disabled title="Login required"'}>Delete</button>
+          </div>
+        </div>`)
+      .addTo(map);
+    popup.getElement().addEventListener('click', (ev) => {
+      const el = ev.target as HTMLElement;
+      const navBtn = el.closest<HTMLButtonElement>('.navigate-here-btn');
+      if (navBtn && !navBtn.disabled) {
+        popup.remove();
+        navigateToPoint(settings.signalkHttpUrl, lat, lon, auth.authHeaders)
+          .catch(err => console.error('[waypoint] Failed to set course:', err));
+        return;
+      }
+      const renameBtn = el.closest<HTMLButtonElement>('.rename-waypoint-btn');
+      if (renameBtn && !renameBtn.disabled) {
+        const newName = prompt('Rename waypoint:', renameBtn.dataset.name ?? '');
+        if (newName === null) return;
+        popup.remove();
+        updateWaypoint(
+          settings.signalkHttpUrl, uuid, newName.trim() || name,
+          Number(renameBtn.dataset.lat), Number(renameBtn.dataset.lon), auth.authHeaders,
+        ).then(() => waypoints.load(settings.signalkHttpUrl))
+          .catch(err => console.error('[waypoint] Failed to rename:', err));
+        return;
+      }
+      const moveBtn = el.closest<HTMLButtonElement>('.move-waypoint-btn');
+      if (moveBtn && !moveBtn.disabled) {
+        popup.remove();
+        movingWaypoint = { uuid: moveBtn.dataset.uuid!, name: moveBtn.dataset.name ?? '' };
+        mapContainer.style.cursor = 'crosshair';
+        return;
+      }
+      const delBtn = el.closest<HTMLButtonElement>('.delete-waypoint-btn');
+      if (delBtn && !delBtn.disabled) {
+        if (!confirm(`Delete waypoint "${delBtn.dataset.name || 'this waypoint'}"?`)) return;
+        popup.remove();
+        deleteWaypoint(settings.signalkHttpUrl, uuid, auth.authHeaders)
+          .then(() => waypoints.load(settings.signalkHttpUrl))
+          .catch(err => console.error('[waypoint] Failed to delete:', err));
+      }
+    });
+  }
+
+
   $effect(() => {
     if (!map || !mapLoaded) return;
     const m   = map;
