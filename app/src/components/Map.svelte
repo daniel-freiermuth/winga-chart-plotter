@@ -1154,7 +1154,7 @@
 
   function buildAisPopupHtml(t: AisTarget): string {
     const row = (label: string, value: string | number | null, unit = '') =>
-      `<tr><td>${label}</td><td><b>${value !== null ? `${String(value)}${unit}` : '<span style="opacity:0.4">—</span>'}</b></td></tr>`;
+      value !== null ? `<tr><td>${label}</td><td><b>${String(value)}${unit}</b></td></tr>` : '';
 
     const rotDpm = t.rot !== undefined ? (t.rot * 180 / Math.PI) * 60 : null;
     const rotStr = rotDpm !== null
@@ -1176,30 +1176,40 @@
     const lastSeenTime = lastSeenDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     const ageStr = formatAge(posMs);
 
+    const identRows = [
+      row('MMSI',         t.mmsi       ?? null),
+      row('Callsign VHF', t.callsign   ?? null),
+      row('Callsign HF',  t.callsignHf ?? null),
+      row('Skipper',      t.skipperName ?? null),
+      row('Type',         t.shipType   ?? null),
+      row('Status',       t.navState   ?? null),
+      row('Flag',         t.flag       ?? null),
+      row('Port',         t.port       ?? null),
+      row('Position', lon !== undefined && lat !== undefined ? `${lat.toFixed(5)}°N, ${lon.toFixed(5)}°E` : null),
+      `<tr><td>Updated</td><td><b>${lastSeenTime} <span id="ais-age" data-posms="${posMs}" style="opacity:0.6;font-size:0.85em">(${ageStr})</span></b></td></tr>`,
+    ].join('');
+
+    const navRows = [
+      row('SOG',     t.sog     !== undefined ? (t.sog     * 1.94384).toFixed(1) : null, ' kn'),
+      row('COG',     t.cog     !== undefined ? (t.cog     * 180 / Math.PI).toFixed(1) : null, '°'),
+      row('Heading', t.heading !== undefined ? (t.heading * 180 / Math.PI).toFixed(1) : null, '°'),
+      row('ROT',     rotStr),
+    ].join('');
+
+    const dimRows = [
+      row('Length',     t.lengthM    ?? null, ' m'),
+      row('Beam',       t.beamM      ?? null, ' m'),
+      row('Draft',      t.draftM     ?? null, ' m'),
+      row('Air height', t.airHeightM ?? null, ' m'),
+    ].join('');
+
     return `
       <div class="ais-popup">
         <div class="ais-popup-title">${t.name ?? t.mmsi ?? 'Unknown vessel'}</div>
         <table>
-          ${row('MMSI',     t.mmsi     ?? null)}
-          ${row('Callsign VHF', t.callsign   ?? null)}
-          ${row('Callsign HF',  t.callsignHf ?? null)}
-          ${row('Skipper',      t.skipperName ?? null)}
-          ${row('Type',     t.shipType ?? null)}
-          ${row('Status',   t.navState ?? null)}
-          ${row('Flag',     t.flag     ?? null)}
-          ${row('Port',     t.port     ?? null)}
-          ${row('Position', lon !== undefined && lat !== undefined ? `${lat.toFixed(5)}°N, ${lon.toFixed(5)}°E` : null)}
-          ${row('Updated',  `${lastSeenTime} <span id="ais-age" data-posms="${posMs}" style="opacity:0.6;font-size:0.85em">(${ageStr})</span>`)}
-          <tr><td colspan="2" class="ais-section">Navigation</td></tr>
-          ${row('SOG',     t.sog     !== undefined ? (t.sog     * 1.94384).toFixed(1) : null, ' kn')}
-          ${row('COG',     t.cog     !== undefined ? (t.cog     * 180 / Math.PI).toFixed(1) : null, '°')}
-          ${row('Heading', t.heading !== undefined ? (t.heading * 180 / Math.PI).toFixed(1) : null, '°')}
-          ${row('ROT',     rotStr)}
-          <tr><td colspan="2" class="ais-section">Dimensions</td></tr>
-          ${row('Length',     t.lengthM    ?? null, ' m')}
-          ${row('Beam',       t.beamM      ?? null, ' m')}
-          ${row('Draft',      t.draftM     ?? null, ' m')}
-          ${row('Air height', t.airHeightM ?? null, ' m')}
+          ${identRows}
+          ${navRows ? `<tr><td colspan="2" class="ais-section">Navigation</td></tr>${navRows}` : ''}
+          ${dimRows ? `<tr><td colspan="2" class="ais-section">Dimensions</td></tr>${dimRows}` : ''}
         </table>
         ${lookupLinks}
         <div class="ais-links" style="margin-top:6px">
