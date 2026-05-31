@@ -8,7 +8,7 @@
   } from '@fortawesome/free-solid-svg-icons';
   import { routePlanner } from './stores/routePlanner.svelte';
   import { waypoints } from './stores/waypoints.svelte';
-  import { saveRoute, updateRoute } from './lib/signalk-api';
+  import { saveRoute, updateRoute, raiseMob, clearMob } from './lib/signalk-api';
 
   let plannerSaving = $state(false);
   let plannerDiscardConfirm = $state(false);
@@ -345,6 +345,53 @@
     // eslint-disable-next-line @typescript-eslint/no-unsafe-call
     mapComp?.toggleFullscreen();
   }
+
+  // MOB (Man Overboard) — three-state: idle → confirming → active
+  type MobState = 'idle' | 'confirming' | 'active';
+  let mobState = $state<MobState>('idle');
+  let mobCountdown = $state(4);
+  let mobError = $state<string | null>(null);
+  let mobConfirmTimer: ReturnType<typeof setInterval> | null = null;
+
+  function mobStartConfirm() {
+    mobState = 'confirming';
+    mobCountdown = 4;
+    mobError = null;
+    mobConfirmTimer = setInterval(() => {
+      mobCountdown -= 1;
+      if (mobCountdown <= 0) {
+        if (mobConfirmTimer !== null) clearInterval(mobConfirmTimer);
+        mobConfirmTimer = null;
+        mobState = 'idle';
+      }
+    }, 1000);
+  }
+
+  async function mobActivate() {
+    if (mobConfirmTimer !== null) { clearInterval(mobConfirmTimer); mobConfirmTimer = null; }
+    mobState = 'active';
+    mobError = null;
+    try {
+      await raiseMob(settings.signalkHttpUrl, auth.authHeaders);
+    } catch (e) {
+      mobError = String(e);
+      console.error('[mob] raise failed', e);
+    }
+  }
+
+  async function mobCancel() {
+    if (mobConfirmTimer !== null) { clearInterval(mobConfirmTimer); mobConfirmTimer = null; }
+    const wasActive = mobState === 'active';
+    mobState = 'idle';
+    mobError = null;
+    if (wasActive) {
+      try {
+        await clearMob(settings.signalkHttpUrl, auth.authHeaders);
+      } catch (e) {
+        console.error('[mob] clear failed', e);
+      }
+    }
+  }
 </script>
 
 <div style="position: relative; width: 100%; height: 100%;">
@@ -492,6 +539,27 @@
       {/if}
     </div>
   {/if}
+
+  <!-- MOB (Man Overboard) button — bottom-right, two-step confirm -->
+  <div class="mob-container">
+    {#if mobState === 'idle'}
+      <button class="mob-btn" onclick={mobStartConfirm} title="Man Overboard alarm">
+        ⚠ MOB
+      </button>
+    {:else if mobState === 'confirming'}
+      <button class="mob-btn mob-btn--confirm" onclick={() => void mobActivate()} title="Confirm Man Overboard">
+        CONFIRM ({mobCountdown})
+      </button>
+      <button class="mob-cancel-btn" onclick={() => void mobCancel()}>Cancel</button>
+    {:else}
+      <button class="mob-btn mob-btn--active" onclick={() => void mobCancel()} title="MOB active — tap to cancel">
+        ⚠ MOB ACTIVE
+      </button>
+      {#if mobError}
+        <div class="mob-error">{mobError}</div>
+      {/if}
+    {/if}
+  </div>
 </div>
 
 <style>
@@ -544,5 +612,81 @@
     height: 1px;
     background: rgba(255,255,255,0.15);
     margin: 2px 0;
+  }
+
+  .mob-container {
+    position: absolute;
+    bottom: 20px;
+    right: 16px;
+    z-index: 20;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 6px;
+  }
+
+  .mob-btn {
+    background: #b91c1c;
+    border: 2px solid #fca5a5;
+    color: white;
+    font-size: 14px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    padding: 10px 18px;
+    border-radius: 8px;
+    cursor: pointer;
+    box-shadow: 0 2px 12px rgba(185,28,28,0.6);
+    transition: background 0.15s, transform 0.1s;
+    min-width: 90px;
+    text-align: center;
+  }
+  .mob-btn:hover { background: #991b1b; transform: scale(1.04); }
+  .mob-btn:active { transform: scale(0.97); }
+
+  /* Confirming: orange — intentional second tap required */
+  .mob-btn--confirm {
+    background: #c2410c;
+    border-color: #fdba74;
+    box-shadow: 0 2px 12px rgba(194,65,12,0.6);
+    animation: mob-pulse 0.6s ease-in-out infinite alternate;
+  }
+
+  /* Active: bright flashing red */
+  .mob-btn--active {
+    background: #dc2626;
+    border-color: white;
+    box-shadow: 0 0 20px rgba(220,38,38,0.9);
+    animation: mob-flash 0.8s ease-in-out infinite alternate;
+  }
+  .mob-btn--active:hover { background: #b91c1c; }
+
+  @keyframes mob-pulse {
+    from { box-shadow: 0 2px 8px rgba(194,65,12,0.5); }
+    to   { box-shadow: 0 2px 20px rgba(194,65,12,0.9); }
+  }
+  @keyframes mob-flash {
+    from { box-shadow: 0 0 12px rgba(220,38,38,0.7); opacity: 0.9; }
+    to   { box-shadow: 0 0 28px rgba(220,38,38,1.0); opacity: 1.0; }
+  }
+
+  .mob-cancel-btn {
+    background: rgba(0,0,0,0.65);
+    border: 1px solid rgba(255,255,255,0.3);
+    color: #ccc;
+    font-size: 12px;
+    padding: 4px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  .mob-cancel-btn:hover { background: rgba(60,60,60,0.8); color: white; }
+
+  .mob-error {
+    background: rgba(185,28,28,0.85);
+    color: #fca5a5;
+    font-size: 11px;
+    padding: 4px 8px;
+    border-radius: 4px;
+    max-width: 160px;
+    text-align: right;
   }
 </style>

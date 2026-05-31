@@ -565,3 +565,38 @@ export async function deleteWaypoint(
   });
   if (!res.ok) throw new Error(`Delete waypoint failed: ${String(res.status)} ${res.statusText}`);
 }
+
+/**
+ * Raise a Man Overboard alarm.
+ *   PUT /signalk/v2/api/vessels/self/notifications/mob
+ */
+export async function raiseMob(
+  serverBase: string,
+  authHeaders: Record<string, string>,
+): Promise<void> {
+  const res = await fetch(`${serverBase}/signalk/v2/api/vessels/self/notifications/mob`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...authHeaders },
+    body: JSON.stringify({
+      method: ['visual', 'sound'],
+      state: 'emergency',
+      message: 'Man Overboard!',
+    }),
+  });
+  if (!res.ok) throw new Error(`MOB raise failed: ${String(res.status)} ${res.statusText}`);
+}
+
+/**
+ * Clear the Man Overboard alarm.
+ *   DELETE /signalk/v2/api/vessels/self/notifications/mob
+ */
+export async function clearMob(
+  serverBase: string,
+  authHeaders: Record<string, string>,
+): Promise<void> {
+  const res = await fetch(`${serverBase}/signalk/v2/api/vessels/self/notifications/mob`, {
+    method: 'DELETE',
+    headers: { ...authHeaders },
+  });
+  if (!res.ok) throw new Error(`MOB clear failed: ${String(res.status)} ${res.statusText}`);
+}
