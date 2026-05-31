@@ -998,19 +998,22 @@
       map.on('mouseleave', id, () => { if (map) map.getCanvas().style.cursor = ''; });
     }
 
-    // All-routes click — show route name, Activate button, and link to route appearance settings.
+    // All-routes click — show route name, Activate / Edit buttons, and link to route appearance settings.
     map.on('click', 'all-routes-line', (e) => {
       const f = e.features?.[0];
       if (!f) return;
       const name = f.properties?.name as string ?? '';
       const uuid = f.properties?.uuid as string ?? '';
       const canActivate = auth.isLoggedIn && uuid !== '';
+      const canEdit     = auth.isLoggedIn && uuid !== '';
       const html = `
         <div class="ais-popup">
           ${name ? `<div class="ais-popup-title">${name}</div>` : ''}
           <div class="ais-links" style="margin-top:0">
             <button class="popup-settings-btn activate-route-btn"
               ${canActivate ? `data-uuid="${uuid}"` : 'disabled title="Login required to activate route"'}>Activate route</button>
+            <button class="popup-settings-btn edit-route-btn"
+              ${canEdit ? `data-uuid="${uuid}"` : 'disabled title="Login required to edit route"'}>Edit route</button>
             <button class="popup-settings-btn" data-settings="routes">Route style</button>
           </div>
         </div>`;
@@ -1028,6 +1031,16 @@
           activateRoute(settings.signalkHttpUrl, activateBtn.dataset.uuid, auth.authHeaders).catch(err => {
             console.error('[route] Failed to activate route:', err);
           });
+          return;
+        }
+        const editBtn = el.closest<HTMLButtonElement>('.edit-route-btn');
+        if (editBtn && !editBtn.disabled && editBtn.dataset.uuid) {
+          popup.remove();
+          const r = routes.entries.find(r => r.uuid === editBtn.dataset.uuid);
+          if (r) {
+            const coords = r.geometry.geometry.coordinates as [number, number][];
+            routePlanner.loadRoute(r.uuid, r.name, coords.map(([lon, lat]) => ({ lon, lat })));
+          }
         }
       });
       e.preventDefault();

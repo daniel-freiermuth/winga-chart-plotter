@@ -6,8 +6,10 @@ export interface PlannerWaypoint {
 }
 
 function createRoutePlannerStore() {
-  let active    = $state(false);
-  let waypoints = $state<PlannerWaypoint[]>([]);
+  let active           = $state(false);
+  let waypoints        = $state<PlannerWaypoint[]>([]);
+  let editingRouteUuid = $state<string | null>(null);
+  let name             = $state('');
 
   const totalDistanceNm = $derived.by(() => {
     let total = 0;
@@ -17,14 +19,31 @@ function createRoutePlannerStore() {
     return total;
   });
 
-  return {
-    get active(): boolean             { return active; },
-    get waypoints(): PlannerWaypoint[] { return waypoints; },
-    get totalDistanceNm(): number     { return totalDistanceNm; },
+  function reset() {
+    active = false;
+    waypoints = [];
+    editingRouteUuid = null;
+    name = '';
+  }
 
-    enter(): void  { active = true; },
-    exit(): void   { active = false; waypoints = []; },
-    toggle(): void { if (active) { active = false; waypoints = []; } else { active = true; } },
+  return {
+    get active(): boolean              { return active; },
+    get waypoints(): PlannerWaypoint[] { return waypoints; },
+    get totalDistanceNm(): number      { return totalDistanceNm; },
+    get editingRouteUuid(): string | null { return editingRouteUuid; },
+    get name(): string                 { return name; },
+    set name(v: string)                { name = v; },
+
+    enter(): void  { active = true; name = ''; },
+    exit(): void   { reset(); },
+
+    /** Enter planner pre-loaded with an existing route's waypoints for editing. */
+    loadRoute(uuid: string, routeName: string, wpts: PlannerWaypoint[]): void {
+      waypoints = [...wpts];
+      editingRouteUuid = uuid;
+      name = routeName;
+      active = true;
+    },
 
     insertWaypoint(beforeIdx: number, lon: number, lat: number): void {
       const next = [...waypoints];

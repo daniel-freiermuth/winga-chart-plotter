@@ -4,22 +4,14 @@
   import FaIcon from './lib/FaIcon.svelte';
   import { faLocationCrosshairs, faRuler, faPencil } from '@fortawesome/free-solid-svg-icons';
   import { routePlanner } from './stores/routePlanner.svelte';
-  import { saveRoute } from './lib/signalk-api';
+  import { saveRoute, updateRoute } from './lib/signalk-api';
 
-  let plannerRouteName = $state('');
   let plannerSaving = $state(false);
   let plannerDiscardConfirm = $state(false);
-
-  // Clear name and confirmation state whenever planner activates.
-  $effect(() => {
-    if (routePlanner.active) {
-      plannerRouteName = '';
-      plannerDiscardConfirm = false;
-    }
-  });
+  let plannerError = $state<string | null>(null);
 
   function handleDiscard() {
-    if (plannerRouteName.trim()) {
+    if (routePlanner.name.trim()) {
       plannerDiscardConfirm = true;
     } else {
       routePlanner.exit();
@@ -27,14 +19,20 @@
   }
 
   async function handleSaveRoute() {
-    if (!plannerRouteName.trim()) return;
+    if (!routePlanner.name.trim()) return;
     plannerSaving = true;
+    plannerError = null;
     try {
-      await saveRoute(settings.signalkHttpUrl, plannerRouteName.trim(), routePlanner.waypoints.map(w => [w.lon, w.lat]), auth.authHeaders);
+      if (routePlanner.editingRouteUuid) {
+        await updateRoute(settings.signalkHttpUrl, routePlanner.editingRouteUuid, routePlanner.name.trim(), routePlanner.waypoints, auth.authHeaders);
+      } else {
+        await saveRoute(settings.signalkHttpUrl, routePlanner.name.trim(), routePlanner.waypoints, auth.authHeaders);
+      }
       routePlanner.exit();
-      plannerRouteName = '';
+      await routes.load(settings.signalkHttpUrl);
     } catch (e) {
       console.error('[planner] Failed to save route:', e);
+      plannerError = String(e);
     } finally {
       plannerSaving = false;
     }
@@ -342,7 +340,7 @@
   <!-- Route planner toggle button -->
   <button
     title={routePlanner.active ? 'Exit route planner' : 'Route planner / measurement'}
-    onclick={() => routePlanner.toggle()}
+    onclick={() => { if (!routePlanner.active) routePlanner.enter(); }}
     style="
       position: absolute; top: 325px; left: 10px; z-index: 10;
       background: {routePlanner.active ? 'rgba(100,200,255,0.9)' : 'rgba(0,0,0,0.7)'};
@@ -376,28 +374,31 @@
           <input
             type="text"
             placeholder="Route name…"
-            bind:value={plannerRouteName}
+            bind:value={routePlanner.name}
             style="
               flex: 1; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.25);
               border-radius: 6px; color: white; padding: 5px 8px; font-size: 13px; outline: none;
             "
           />
           <button
-            title="Save as route"
-            disabled={plannerSaving || !plannerRouteName.trim()}
+            title={routePlanner.editingRouteUuid ? 'Update route' : 'Save as route'}
+            disabled={plannerSaving || !routePlanner.name.trim()}
             onclick={handleSaveRoute}
             style="
               background: rgba(100,200,100,0.8); border: none; outline: none; color: white;
               padding: 5px 10px; border-radius: 6px; cursor: pointer; font-size: 13px;
-              opacity: {plannerSaving || !plannerRouteName.trim() ? 0.4 : 1};
+              opacity: {plannerSaving || !routePlanner.name.trim() ? 0.4 : 1};
             "
-          >{plannerSaving ? '…' : 'Save'}</button>
+          >{plannerSaving ? '…' : routePlanner.editingRouteUuid ? 'Update' : 'Save'}</button>
         </div>
+        {#if plannerError}
+          <div style="color: #fca5a5; font-size: 12px;">{plannerError}</div>
+        {/if}
       {/if}
 
       {#if plannerDiscardConfirm}
         <div style="background: rgba(255,80,80,0.15); border: 1px solid rgba(255,80,80,0.4); border-radius: 8px; padding: 8px 10px; display: flex; flex-direction: column; gap: 8px;">
-          <span style="font-size: 13px; color: #fca5a5;">Discard route and all waypoints?</span>
+          <span style="font-size: 13px; color: #fca5a5;">{routePlanner.editingRouteUuid ? 'Discard changes to this route?' : 'Discard route and all waypoints?'}</span>
           <div style="display: flex; gap: 8px; justify-content: flex-end;">
             <button
               onclick={() => plannerDiscardConfirm = false}
