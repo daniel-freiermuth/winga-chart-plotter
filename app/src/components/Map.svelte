@@ -21,6 +21,7 @@
   import type { Layer } from '@deck.gl/core';
   import { rulers, rulerBearingText, rulerDistanceText, type Ruler, type RulerEndpoint } from '../stores/rulers.svelte';
   import { route } from '../stores/route.svelte';
+  import { routes } from '../stores/routes.svelte';
   import { track } from '../stores/track.svelte';
   import { gcLine, gcBearingDeg } from '../lib/geoMath';
   import { fetchAndResolveStyle } from '../lib/resolveStyle';
@@ -161,6 +162,7 @@
   const AIS_SOURCE      = 'ais-targets'; // kept for ais-label text layer
   const ROUTE_LINE_SRC  = 'route-lines';
   const ROUTE_WPT_SRC   = 'route-waypoints';
+  const ALL_ROUTES_SRC  = 'all-routes';
   const TRACK_SOURCE          = 'vessel-track';
   const TRACK_OVERFLOW_SOURCE = 'vessel-track-overflow';
   const AIS_TRACK_SOURCE          = 'ais-track';
@@ -863,6 +865,35 @@
       map.on('mouseleave', id, () => { if (map) map.getCanvas().style.cursor = ''; });
     }
 
+    // All-routes click — show route name, stub Activate button, and link to route appearance settings.
+    map.on('click', 'all-routes-line', (e) => {
+      if (map?.queryRenderedFeatures(e.point, { layers: ['vessel-icon'] }).length) return;
+      const f = e.features?.[0];
+      if (!f) return;
+      const name = f.properties?.name as string ?? '';
+      const html = `
+        <div class="ais-popup">
+          ${name ? `<div class="ais-popup-title">${name}</div>` : ''}
+          <div class="ais-links" style="margin-top:0">
+            <button class="popup-settings-btn" disabled title="Route activation requires authentication — coming soon">Activate route</button>
+            <button class="popup-settings-btn" data-settings="routes">Route style</button>
+          </div>
+        </div>`;
+      const popup = new maplibregl.Popup({ closeButton: false, offset: 10, maxWidth: '240px' })
+        .setLngLat(e.lngLat)
+        .setHTML(html)
+        .addTo(map!);
+      popup.getElement().addEventListener('click', (ev) => {
+        const btn = (ev.target as HTMLElement).closest<HTMLElement>('[data-settings]');
+        if (!btn) return;
+        popup.remove();
+        openSettings(btn.dataset.settings!);
+      });
+      e.preventDefault();
+    });
+    map.on('mouseenter', 'all-routes-line', () => { if (map) map.getCanvas().style.cursor = 'pointer'; });
+    map.on('mouseleave', 'all-routes-line', () => { if (map) map.getCanvas().style.cursor = ''; });
+
     map.on('click', (e) => {
       // Don't open AIS popup if the own-vessel icon was clicked (handled above).
       if (map?.queryRenderedFeatures(e.point, { layers: ['vessel-icon'] }).length) return;
@@ -915,6 +946,7 @@
       if (!m.getSource(AIS_SOURCE))    m.addSource(AIS_SOURCE,    { type: 'geojson', data: EMPTY_FC }); // for ais-label only
       if (!m.getSource(ROUTE_LINE_SRC)) m.addSource(ROUTE_LINE_SRC, { type: 'geojson', data: EMPTY_FC });
       if (!m.getSource(ROUTE_WPT_SRC))  m.addSource(ROUTE_WPT_SRC,  { type: 'geojson', data: EMPTY_FC });
+      if (!m.getSource(ALL_ROUTES_SRC))  m.addSource(ALL_ROUTES_SRC,  { type: 'geojson', data: EMPTY_FC });
       if (!m.getSource(TRACK_SOURCE))          m.addSource(TRACK_SOURCE,          { type: 'geojson', data: EMPTY_FC, lineMetrics: true });
       if (!m.getSource(TRACK_OVERFLOW_SOURCE)) m.addSource(TRACK_OVERFLOW_SOURCE, { type: 'geojson', data: EMPTY_FC });
       if (!m.getSource(AIS_TRACK_SOURCE))          m.addSource(AIS_TRACK_SOURCE,          { type: 'geojson', data: EMPTY_FC, lineMetrics: true });
@@ -1003,6 +1035,12 @@
       }, 'vessel-gc-line');
 
       // Route layers — inserted before the anchor vessel layers so they render below them.
+      // All server routes (background) — subtle, clickable via appearance settings.
+      if (!m.getLayer('all-routes-line')) m.addLayer({
+        id: 'all-routes-line', type: 'line', source: ALL_ROUTES_SRC,
+        paint: { 'line-color': '#7cc8e8', 'line-width': 1.5, 'line-opacity': 0.45 },
+      }, 'vessel-gc-line');
+
       // Full planned route: dashed magenta line.
       if (!m.getLayer('route-full')) m.addLayer({
         id: 'route-full', type: 'line', source: ROUTE_LINE_SRC,
@@ -1957,6 +1995,10 @@
     map.setPaintProperty('vessel-track-overflow-line', 'line-dasharray',
       ap.track.style !== 'solid' ? dashArray(ap.track.style, ap.track.width) ?? undefined : undefined);
     // Route appearance — kept here so it never fires on 60 Hz heading ticks.
+    map.setPaintProperty('all-routes-line', 'line-color',     ra.allRoutes.color);
+    map.setPaintProperty('all-routes-line', 'line-width',     ra.allRoutes.width);
+    map.setPaintProperty('all-routes-line', 'line-opacity',   0.55);
+    map.setPaintProperty('all-routes-line', 'line-dasharray', dashArray(ra.allRoutes.style, ra.allRoutes.width) ?? undefined);
     map.setPaintProperty('route-full',    'line-color',     ra.remaining.color);
     map.setPaintProperty('route-full',    'line-width',     ra.remaining.width);
     map.setPaintProperty('route-full',    'line-dasharray', dashArray(ra.remaining.style, ra.remaining.width) ?? undefined);
@@ -2174,6 +2216,39 @@
     if (nxtPt) wptFeatures.push({ type: 'Feature', geometry: { type: 'Point', coordinates: [nxtPt.longitude, nxtPt.latitude] }, properties: { wtype: 'next' } });
     if (prevPt) wptFeatures.push({ type: 'Feature', geometry: { type: 'Point', coordinates: [prevPt.longitude, prevPt.latitude] }, properties: { wtype: 'prev' } });
     wptSrc.setData({ type: 'FeatureCollection', features: wptFeatures });
+  });
+
+  // Exclude the active route from the all-routes layer so it isn't double-styled.
+  $effect(() => {
+    const activeUuid = route.activeUuid;
+    if (!map || !mapLoaded) return;
+    if (!map.getLayer('all-routes-line')) return;
+    map.setFilter('all-routes-line',
+      activeUuid ? ['!=', ['get', 'uuid'], activeUuid] : null,
+    );
+  });
+
+  // All server routes — rebuild GeoJSON source when the route list changes.
+  // Each route is split into antimeridian-safe segments (same pipeline as the active route).
+  $effect(() => {
+    const entries = routes.entries;
+    if (!map || !mapLoaded) return;
+    const src = map.getSource(ALL_ROUTES_SRC);
+    if (!(src instanceof maplibregl.GeoJSONSource)) return;
+
+    const features: GeoJSON.Feature[] = [];
+    for (const r of entries) {
+      const coords = r.geometry.geometry.coordinates as [number, number][];
+      const processed = processRouteCoords(coords);
+      for (const seg of splitRouteSegments(processed)) {
+        features.push({
+          type: 'Feature',
+          geometry: { type: 'LineString', coordinates: seg },
+          properties: { uuid: r.uuid, name: r.name },
+        });
+      }
+    }
+    src.setData({ type: 'FeatureCollection', features });
   });
 
   // Auto-fallback: if the current rotation mode becomes unavailable (e.g. route cleared),

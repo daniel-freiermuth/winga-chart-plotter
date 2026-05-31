@@ -42,6 +42,7 @@ export interface RouteAppearance {
   bearing:   RouteLineAppearance;  // vessel → next waypoint
   segment:   RouteLineAppearance;  // previous → next waypoint (active leg)
   remaining: RouteLineAppearance;  // full planned route polyline
+  allRoutes: RouteLineAppearance;  // all server routes (non-active)
 }
 
 export interface TrackAppearance {
@@ -94,6 +95,7 @@ const DEFAULTS: SettingsData = {
       bearing:   { color: '#ff6d00', width: 2,   style: 'dashed' },
       segment:   { color: '#e040fb', width: 2.5, style: 'solid'  },
       remaining: { color: '#e040fb', width: 2,   style: 'dashed' },
+      allRoutes: { color: '#7cc8e8', width: 1.5, style: 'dashed' },
     },
     track: { show: true, color: '#3b82f6', width: 2, style: 'solid', historyHours: 24 },
   },
@@ -142,6 +144,7 @@ function load(): SettingsData {
               bearing:   { ...DEFAULTS.appearance.route.bearing,   ...(p.appearance?.route?.bearing   ?? {}) },
               segment:   { ...DEFAULTS.appearance.route.segment,   ...(p.appearance?.route?.segment   ?? {}) },
               remaining: { ...DEFAULTS.appearance.route.remaining, ...(p.appearance?.route?.remaining ?? {}) },
+              allRoutes: { ...DEFAULTS.appearance.route.allRoutes, ...(p.appearance?.route?.allRoutes ?? {}) },
             },
             track: { ...DEFAULTS.appearance.track, ...(p.appearance?.track ?? {}) },
           },

@@ -444,6 +444,30 @@
         {/if}
       {/each}
 
+      <p class="section-title">All routes on map</p>
+      <div class="row">
+        <label>Color</label>
+        <div class="field"><ColorInput bind:value={settings.appearance.route.allRoutes.color} oninput={applyAppearance} /></div>
+      </div>
+      <div class="row">
+        <label>Width</label>
+        <div class="field">
+          <input type="number" bind:value={settings.appearance.route.allRoutes.width} min="1" max="8" step="0.5" oninput={applyAppearance} />
+          <span class="unit">px</span>
+        </div>
+      </div>
+      <div class="row">
+        <label>Style</label>
+        <div class="field">
+          <select bind:value={settings.appearance.route.allRoutes.style} onchange={applyAppearance}>
+            <option value="solid">Solid</option>
+            <option value="dashed">Dashed</option>
+            <option value="dotted">Dotted</option>
+            <option value="dash-dot">Dash-dot</option>
+          </select>
+        </div>
+      </div>
+
       <p class="section-title">Ruler</p>
       <div class="row">
         <label>Color</label>

@@ -80,6 +80,7 @@ function createRoute() {
     get nextPoint()     { return _nextPoint; },
     get previousPoint() { return _previousPoint; },
     get activeHref()    { return _activeHref; },
+    get activeUuid()    { return _activeHref ? _activeHref.split('/').at(-1) ?? null : null; },
     get routeName()     { return _routeName; },
     get pointIndex()    { return _pointIndex; },
     get reverse()       { return _reverse; },

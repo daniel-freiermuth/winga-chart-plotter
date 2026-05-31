@@ -14,6 +14,7 @@
   import { acquireWakeLock, releaseWakeLock } from './lib/wakeLock';
   import { route } from './stores/route.svelte';
   import { track } from './stores/track.svelte';
+  import { routes } from './stores/routes.svelte';
 
   // Message types received from the SignalK worker.
   interface WsState {
@@ -223,6 +224,7 @@
     if (httpUrl === lastHttpUrl) return;
     lastHttpUrl = httpUrl;
     void charts.load(httpUrl);
+    void routes.load(httpUrl);
 
     if (vesselInfoTimer !== null) clearInterval(vesselInfoTimer);
     const refresh = () => void fetchVesselInfo(httpUrl).then(info => ais.setInfoCache(info));

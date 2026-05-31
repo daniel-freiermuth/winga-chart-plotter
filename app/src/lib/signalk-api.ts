@@ -86,6 +86,23 @@ function mimeType(format: string): string {
   }
 }
 
+export interface SkRouteEntry {
+  name: string;
+  description?: string;
+  feature?: {
+    type: 'Feature';
+    geometry: { type: 'LineString'; coordinates: number[][] };
+    properties?: Record<string, unknown>;
+  };
+}
+
+/** Fetch all routes stored on the Signal K server. */
+export async function fetchAllRoutes(serverBase: string): Promise<Record<string, SkRouteEntry>> {
+  const res = await fetch(`${serverBase}/signalk/v2/api/resources/routes`);
+  if (!res.ok) throw new Error(`Routes API error: ${res.status} ${res.statusText}`);
+  return res.json() as Promise<Record<string, SkRouteEntry>>;
+}
+
 export async function fetchCharts(serverBase: string): Promise<ChartRecord> {
   const res = await fetch(`${serverBase}/signalk/v2/api/resources/charts`);
   if (!res.ok) throw new Error(`Charts API error: ${String(res.status)} ${res.statusText}`);
