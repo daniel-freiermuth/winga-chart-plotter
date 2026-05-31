@@ -1,27 +1,20 @@
 <script lang="ts">
   import { charts } from '../stores/charts.svelte';
   import { baseLayers, BASE_LAYERS } from '../stores/baseLayers.svelte';
-  import FaIcon from '../lib/FaIcon.svelte';
-  import { faLayerGroup } from '@fortawesome/free-solid-svg-icons';
 
-  let open = $state(false);
+  let isOpen = $state(false);
   // Track pending manual URL inputs per chart id
   let manualInputs = $state<Record<string, string>>({});
 
-  function toggle() { open = !open; }
-  function close()  { open = false; }
+  export function open() { isOpen = true; }
+  function close()  { isOpen = false; }
 
   function applyManualUrl(id: string) {
     charts.setOverride(id, manualInputs[id] ?? '');
   }
 </script>
 
-<!-- Layers button -->
-<button class="charts-btn" class:active={open} onclick={toggle} title="Charts">
-  <FaIcon icon={faLayerGroup} />
-</button>
-
-{#if open}
+{#if isOpen}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="backdrop" onclick={close} onkeydown={close}></div>
 
@@ -121,23 +114,6 @@
 {/if}
 
 <style>
-  .charts-btn {
-    position: absolute;
-    top: 80px;
-    left: 10px;
-    z-index: 10;
-    background: rgba(0,0,0,0.7);
-    border: none;
-    color: white;
-    padding: 6px 10px;
-    border-radius: 6px;
-    cursor: pointer;
-    font-size: 16px;
-    transition: background 0.15s;
-  }
-  .charts-btn:hover  { background: rgba(40,40,80,0.9); }
-  .charts-btn.active { background: rgba(37,99,235,0.85); border: 1px solid #3b82f6; }
-
   .backdrop {
     position: fixed;
     inset: 0;

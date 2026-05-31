@@ -2,11 +2,9 @@
   import { settings, type AppearanceSettings, type SettingsTab } from '../stores/settings.svelte';
   import { auth } from '../stores/auth.svelte';
   import { fpsStore } from '../stores/fps.svelte';
-  import FaIcon from '../lib/FaIcon.svelte';
   import ColorInput from '../lib/ColorInput.svelte';
-  import { faGear } from '@fortawesome/free-solid-svg-icons';
 
-  let open = $state(false);
+  let isOpen = $state(false);
   let tab  = $state<SettingsTab>('connection');
 
   // Connection settings use a draft (applied only on Save)
@@ -64,14 +62,18 @@
     connDraft = { protocol: settings.protocol, host: settings.host, port: settings.port };
     settingsSnapshot = JSON.stringify({ appearance: settings.appearance, targetFps: settings.targetFps, resourcePollIntervalSeconds: settings.resourcePollIntervalSeconds });
     tab  = 'connection';
-    open = true;
+    isOpen = true;
+  }
+
+  export function open() {
+    openModal();
   }
 
   export function openTo(t: SettingsTab) {
     connDraft = { protocol: settings.protocol, host: settings.host, port: settings.port };
     settingsSnapshot = JSON.stringify({ appearance: settings.appearance, targetFps: settings.targetFps, resourcePollIntervalSeconds: settings.resourcePollIntervalSeconds });
     tab  = t;
-    open = true;
+    isOpen = true;
   }
 
   function saveConnection() {
@@ -83,7 +85,7 @@
       appearance:      settings.appearance,
       targetFps:       settings.targetFps,
     });
-    open = false;
+    isOpen = false;
   }
 
   function cancel() {
@@ -98,10 +100,10 @@
       targetFps:       snap.targetFps,
       resourcePollIntervalSeconds: snap.resourcePollIntervalSeconds,
     });
-    open = false;
+    isOpen = false;
   }
 
-  function close() { open = false; }
+  function close() { isOpen = false; }
 
   async function doLogin() {
     const httpUrl = `http://${connDraft.host}:${String(connDraft.port)}`;
@@ -122,9 +124,7 @@
   }
 </script>
 
-<button onclick={openModal} title="Settings" class="gear-btn"><FaIcon icon={faGear} /></button>
-
-{#if open}
+{#if isOpen}
   <div onclick={close} class="backdrop" role="presentation"></div>
 
   <div class="modal">
@@ -583,11 +583,6 @@
 {/if}
 
 <style>
-  .gear-btn {
-    position: absolute; top: 44px; left: 10px; z-index: 10;
-    background: rgba(0,0,0,0.7); border: none; color: white;
-    padding: 6px 10px; border-radius: 6px; cursor: pointer; font-size: 16px;
-  }
   .backdrop { position: fixed; inset: 0; z-index: 20; background: rgba(0,0,0,0.5); }
   .modal {
     position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%);

@@ -2,7 +2,10 @@
   import { onMount, onDestroy } from 'svelte';
   import Map from './components/Map.svelte';
   import FaIcon from './lib/FaIcon.svelte';
-  import { faLocationCrosshairs, faRuler, faPencil } from '@fortawesome/free-solid-svg-icons';
+  import {
+    faGear, faLayerGroup, faLocationCrosshairs, faRuler, faPencil,
+    faGlobe, faMap, faExpand, faCompress,
+  } from '@fortawesome/free-solid-svg-icons';
   import { routePlanner } from './stores/routePlanner.svelte';
   import { waypoints } from './stores/waypoints.svelte';
   import { saveRoute, updateRoute } from './lib/signalk-api';
@@ -43,6 +46,8 @@
   import { vesselState } from './stores/vessel';
   import { settings, type SettingsTab } from './stores/settings.svelte';
   import { followMode } from './stores/follow.svelte';
+  import { rotateMode } from './stores/rotateMode.svelte';
+  import { mapView } from './stores/mapView.svelte';
   import { charts } from './stores/charts.svelte';
   import { ais } from './stores/ais.svelte';
   import { fetchVesselInfo } from './lib/signalk-api';
@@ -65,8 +70,9 @@
     | { type: 'ais';    hot: ArrayBuffer; ids: string[]; cold: AisColdData[] }
     | { type: 'error';  message: string };
 
-  let mapComp = $state<ReturnType<typeof Map> | null>(null);
-  let settingsComp = $state<ReturnType<typeof Settings> | null>(null);
+  let mapComp          = $state<ReturnType<typeof Map>      | null>(null);
+  let settingsComp     = $state<ReturnType<typeof Settings>  | null>(null);
+  let chartPickerComp  = $state<ReturnType<typeof ChartPicker> | null>(null);
   let connected = $state(false);
   let error = $state<string | null>(null);
   let worker: Worker | null = null;
@@ -315,6 +321,14 @@
     // eslint-disable-next-line @typescript-eslint/no-unsafe-call
     settingsComp?.openTo(tab);
   }
+  function handleOpenSettingsModal(): void {
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-call
+    settingsComp?.open();
+  }
+  function handleOpenChartPicker(): void {
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-call
+    chartPickerComp?.open();
+  }
   function handleFlyToVessel(): void {
     // eslint-disable-next-line @typescript-eslint/no-unsafe-call
     mapComp?.flyToVessel();
@@ -323,61 +337,87 @@
     // eslint-disable-next-line @typescript-eslint/no-unsafe-call
     mapComp?.addRuler();
   }
+  function handleToggleProjection(): void {
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-call
+    mapComp?.setProjection(mapView.projection === 'mercator' ? 'globe' : 'mercator');
+  }
+  function handleToggleFullscreen(): void {
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-call
+    mapComp?.toggleFullscreen();
+  }
 </script>
 
 <div style="position: relative; width: 100%; height: 100%;">
   <Map bind:this={mapComp} openSettings={handleOpenSettings} />
   <Settings bind:this={settingsComp} />
-  <ChartPicker />
+  <ChartPicker bind:this={chartPickerComp} />
 
-  <div style="
-    position: absolute; top: 10px; left: 10px; z-index: 10;
-    background: rgba(0,0,0,0.7); color: white;
-    padding: 6px 12px; border-radius: 6px; font: 12px monospace;
-    display: flex; gap: 8px; align-items: center;
-  ">
+  <!-- Signal K connection status (top-left, above toolbar) -->
+  <div class="sk-status">
     <span style="color: {connected ? '#4ade80' : '#f87171'}">● Signal K</span>
     {#if error}<span style="color: #f87171">⚠ {error}</span>{/if}
   </div>
 
-  <button
-    title={followMode.following ? 'Stop following vessel' : 'Follow vessel'}
-    disabled={!$vesselState.position}
-    onclick={handleFlyToVessel}
-    style="
-      position: absolute; top: 120px; left: 10px; z-index: 10;
-      background: {followMode.following ? 'rgba(255,255,255,0.9)' : 'rgba(0,0,0,0.7)'};
-      border: none;
-      color: {followMode.following ? '#111827' : 'white'};
-      padding: 6px 10px; border-radius: 6px; cursor: pointer;
-      font-size: 16px; transition: background 0.15s, color 0.15s;
-      opacity: {$vesselState.position ? 1 : 0.35};
-    "
-  ><FaIcon icon={faLocationCrosshairs} /></button>
+  <!-- Consolidated map toolbar -->
+  <div class="map-toolbar">
+    <button
+      class="map-btn"
+      title="Settings"
+      onclick={handleOpenSettingsModal}
+    ><FaIcon icon={faGear} /></button>
 
-  <button
-    title="Add ruler"
-    onclick={handleAddRuler}
-    style="
-      position: absolute; top: 158px; left: 10px; z-index: 10;
-      background: rgba(0,0,0,0.7); border: 1px solid transparent; color: white;
-      padding: 6px 10px; border-radius: 6px; cursor: pointer;
-      font-size: 16px;
-    "
-  ><FaIcon icon={faRuler} /></button>
+    <button
+      class="map-btn"
+      title="Charts &amp; layers"
+      onclick={handleOpenChartPicker}
+    ><FaIcon icon={faLayerGroup} /></button>
 
-  <!-- Route planner toggle button -->
-  <button
-    title={routePlanner.active ? 'Exit route planner' : 'Route planner / measurement'}
-    onclick={() => { if (!routePlanner.active) routePlanner.enter(); }}
-    style="
-      position: absolute; top: 325px; left: 10px; z-index: 10;
-      background: {routePlanner.active ? 'rgba(100,200,255,0.9)' : 'rgba(0,0,0,0.7)'};
-      border: none; color: {routePlanner.active ? '#0a1a2e' : 'white'};
-      padding: 6px 10px; border-radius: 6px; cursor: pointer;
-      font-size: 16px; transition: background 0.15s, color 0.15s;
-    "
-  ><FaIcon icon={faPencil} /></button>
+    <div class="map-toolbar-divider"></div>
+
+    <button
+      class="map-btn"
+      class:map-btn--active={followMode.following}
+      title={followMode.following ? 'Stop following vessel' : 'Follow vessel'}
+      disabled={!$vesselState.position}
+      onclick={handleFlyToVessel}
+    ><FaIcon icon={faLocationCrosshairs} /></button>
+
+    <div class="map-toolbar-divider"></div>
+
+    <button
+      class="map-btn"
+      title="Add ruler"
+      onclick={handleAddRuler}
+    ><FaIcon icon={faRuler} /></button>
+
+    <button
+      class="map-btn"
+      class:map-btn--active={routePlanner.active}
+      title={routePlanner.active ? 'Exit route planner' : 'Route planner'}
+      onclick={() => { if (!routePlanner.active) routePlanner.enter(); }}
+    ><FaIcon icon={faPencil} /></button>
+
+    <div class="map-toolbar-divider"></div>
+
+    <button
+      class="map-btn map-btn--label"
+      class:map-btn--highlight={rotateMode.mode === 'manual'}
+      title="Rotation mode: {rotateMode.label}"
+      onclick={() => { rotateMode.toggle($vesselState.cog !== null, $vesselState.heading !== null, route.nextPoint !== null); }}
+    >{rotateMode.label}</button>
+
+    <button
+      class="map-btn"
+      title="Switch to {mapView.projection === 'mercator' ? 'Globe' : 'Mercator'}"
+      onclick={handleToggleProjection}
+    ><FaIcon icon={mapView.projection === 'mercator' ? faGlobe : faMap} /></button>
+
+    <button
+      class="map-btn"
+      title="{mapView.isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}"
+      onclick={handleToggleFullscreen}
+    ><FaIcon icon={mapView.isFullscreen ? faCompress : faExpand} /></button>
+  </div>
 
   <!-- Route planner HUD -->
   {#if routePlanner.active && routePlanner.waypoints.length > 0}
@@ -454,3 +494,55 @@
   {/if}
 </div>
 
+<style>
+  .sk-status {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    z-index: 10;
+    background: rgba(0,0,0,0.7);
+    color: white;
+    padding: 6px 12px;
+    border-radius: 6px;
+    font: 12px monospace;
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+
+  .map-toolbar {
+    position: absolute;
+    top: 44px;
+    left: 10px;
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  .map-btn {
+    background: rgba(0,0,0,0.7);
+    border: none;
+    color: white;
+    padding: 6px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 16px;
+    transition: background 0.15s, color 0.15s;
+    min-width: 36px;
+    text-align: center;
+  }
+  .map-btn:hover:not(:disabled)  { background: rgba(40,40,80,0.9); }
+  .map-btn:disabled              { opacity: 0.35; cursor: default; }
+  .map-btn--active               { background: rgba(255,255,255,0.9); color: #111827; }
+  .map-btn--active:hover:not(:disabled) { background: rgba(220,220,240,0.95); }
+  .map-btn--highlight            { color: #f59e0b; }
+  /* Label-only buttons (rotation mode) use a slightly smaller font */
+  .map-btn--label                { font-size: 12px; font-weight: 700; letter-spacing: 0.03em; }
+
+  .map-toolbar-divider {
+    height: 1px;
+    background: rgba(255,255,255,0.15);
+    margin: 2px 0;
+  }
+</style>

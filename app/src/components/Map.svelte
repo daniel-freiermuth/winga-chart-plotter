@@ -1,7 +1,5 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
-  import FaIcon from '../lib/FaIcon.svelte';
-  import { faGlobe, faMap, faExpand, faCompress } from '@fortawesome/free-solid-svg-icons';
   import maplibregl from 'maplibre-gl';
   import 'maplibre-gl/dist/maplibre-gl.css';
   import type * as GeoJSON from 'geojson';
@@ -33,8 +31,7 @@
   import { VesselIconLayer, ANCHOR_DOT_GEOMETRY, AGROUND_CIRCLE_GEOMETRY, MOORING_BARS_GEOMETRY, FISHING_GEAR_GEOMETRY, NUC_GEOMETRY, RESTRICTED_MANOEUVRING_GEOMETRY, DRAUGHT_GEOMETRY, MOB_GEOMETRY } from '../layers/VesselIconLayer';
   import { extrapolatePos } from '../lib/deadReckoning';
   import { SvelteMap, SvelteSet } from 'svelte/reactivity';
-
-  type ProjectionId = 'mercator' | 'globe';
+  import { mapView } from '../stores/mapView.svelte';
 
   const { openSettings = () => { /* noop */ } }: { openSettings?: (tab: SettingsTab) => void } = $props();
 
@@ -53,10 +50,9 @@
 
   let mapContainer: HTMLDivElement;
   let map: maplibregl.Map | undefined;
-  let isFullscreen = $state(!!document.fullscreenElement);
   let onFsChange = () => { /* noop */ };
 
-  function toggleFullscreen() {
+  export function toggleFullscreen() {
     if (!document.fullscreenElement) {
       document.documentElement.requestFullscreen().catch(() => { /* noop */ });
     } else {
@@ -81,7 +77,6 @@
   let aisTrackFadeStop = $state(0);
   let _aisTrackGen     = 0; // incremented to cancel in-flight fetches on popup close
   let mapBearing  = $state(0);
-  let projection  = $state<ProjectionId>('mercator');
 
   // When we switch mercator→globe, MapLibre creates a fresh VerticalPerspectiveProjection
   // whose GPU latitude-error correction starts at 0. Over 500 ms the correction converges,
@@ -119,16 +114,16 @@
   let _aisThrottleId: ReturnType<typeof setTimeout> | null = null;
   let _pendingAisSetData: (() => void) | null = null;
 
-  function setProjection(id: ProjectionId) {
+  export function setProjection(id: import('../stores/mapView.svelte').ProjectionId) {
     // Phase 0 — cache the converged latitude correction before leaving globe mode.
-    if (id !== 'globe' && projection === 'globe') {
+    if (id !== 'globe' && mapView.projection === 'globe') {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
       const vp = (map as any)?.style?.projection?._verticalPerspectiveProjection;
       // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
       if (vp) _cachedGlobeCorrection = vp._errorCorrectionUsable as number;
     }
 
-    projection = id;
+    mapView.projection = id;
     map?.setProjection({ type: id });
 
     if (id === 'globe' && _cachedGlobeCorrection !== null) {
@@ -655,6 +650,7 @@
   });
 
   onMount(() => {
+    mapView.isFullscreen = !!document.fullscreenElement;
     map = new maplibregl.Map({
       container: mapContainer,
       style: DEFAULT_STYLE,
@@ -956,7 +952,7 @@
     mapContainer.addEventListener('pointerup',   handleRulerPointerUp,   { capture: true });
     mapContainer.addEventListener('pointercancel', handleRulerPointerUp, { capture: true });
 
-    onFsChange = () => { isFullscreen = !!document.fullscreenElement; };
+    onFsChange = () => { mapView.isFullscreen = !!document.fullscreenElement; };
     document.addEventListener('fullscreenchange', onFsChange);
 
     map.on('zoom',   () => { mapZoom    = map?.getZoom()    ?? mapZoom; });
@@ -2532,7 +2528,7 @@
     }]} : EMPTY_FC;
     const hdgFC: GeoJSON.FeatureCollection = state.heading !== null ? { type: 'FeatureCollection', features: [{
       type: 'Feature',
-      geometry: { type: 'LineString', coordinates: (projection === 'globe' ? gcCoords : rhumbCoords)(longitude, latitude, state.heading, lineDistM(ap.heading, state.sog)) },
+      geometry: { type: 'LineString', coordinates: (mapView.projection === 'globe' ? gcCoords : rhumbCoords)(longitude, latitude, state.heading, lineDistM(ap.heading, state.sog)) },
       properties: {},
     }]} : EMPTY_FC;
 
@@ -2829,25 +2825,6 @@
   </div>
 {/if}
 
-<div class="projection-picker">
-  <button
-    class="proj-btn"
-    class:proj-btn--manual={rotateMode.mode === 'manual'}
-    title="Rotation mode: {rotateMode.label}"
-    onclick={() => { rotateMode.toggle($vesselState.cog !== null, $vesselState.heading !== null, route.nextPoint !== null); }}
-  >{rotateMode.label}</button>
-  <button
-    class="proj-btn"
-    title="Switch to {projection === 'mercator' ? 'Globe' : 'Mercator'}"
-    onclick={() => { setProjection(projection === 'mercator' ? 'globe' : 'mercator'); }}
-  ><FaIcon icon={projection === 'mercator' ? faGlobe : faMap} /></button>
-  <button
-    class="proj-btn"
-    title="{isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}"
-    onclick={toggleFullscreen}
-  ><FaIcon icon={isFullscreen ? faCompress : faExpand} /></button>
-</div>
-
 <!-- North indicator: visible whenever map bearing is non-zero.
      The needle always points toward true North.  Clicking snaps back to North-Up. -->
 <button
@@ -2910,29 +2887,6 @@
     transition: background 0.15s;
   }
   .ruler-popup-remove:hover { background: #c53030; }
-
-  .projection-picker {
-    position: absolute;
-    top: 200px;
-    left: 10px;
-    z-index: 10;
-    display: flex;
-    flex-direction: column;
-    gap: 3px;
-    align-items: flex-start;
-  }
-  .proj-btn {
-    background: rgba(0,0,0,0.7);
-    border: none;
-    color: white;
-    padding: 6px 10px;
-    border-radius: 6px;
-    cursor: pointer;
-    font-size: 16px;
-    transition: background 0.15s;
-  }
-  .proj-btn:hover { background: rgba(40,40,80,0.9); }
-  .proj-btn--manual { color: #f59e0b; }
 
   .north-indicator {
     position: absolute;
