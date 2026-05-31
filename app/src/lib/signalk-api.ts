@@ -367,3 +367,22 @@ export async function clearCourse(
   });
   if (!res.ok) throw new Error(`Clear course failed: ${res.status} ${res.statusText}`);
 }
+
+/**
+ * Activate a route as the active course.
+ *
+ *   PUT /signalk/v2/api/vessels/self/navigation/course/activeRoute
+ *   { "href": "/resources/routes/<uuid>" }
+ */
+export async function activateRoute(
+  serverBase: string,
+  routeUuid: string,
+  authHeaders: Record<string, string>,
+): Promise<void> {
+  const res = await fetch(`${serverBase}/signalk/v2/api/vessels/self/navigation/course/activeRoute`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...authHeaders },
+    body: JSON.stringify({ href: `/resources/routes/${routeUuid}` }),
+  });
+  if (!res.ok) throw new Error(`Activate route failed: ${res.status} ${res.statusText}`);
+}

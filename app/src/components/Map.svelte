@@ -26,7 +26,7 @@
   import { gcLine, gcBearingDeg } from '../lib/geoMath';
   import { fetchAndResolveStyle } from '../lib/resolveStyle';
   import { auth } from '../stores/auth.svelte';
-  import { fetchAisVesselTrack, navigateToPoint, clearCourse } from '../lib/signalk-api';
+  import { fetchAisVesselTrack, navigateToPoint, clearCourse, activateRoute } from '../lib/signalk-api';
   import { AisHullLayer, AisHullDecorationLayer, AisHullBorderLayer, HULL_ANCHOR_DOT, HULL_MOORING_BARS, HULL_AGROUND_RING, HULL_FISHING_GEAR, HULL_NUC, HULL_RESTRICTED, HULL_DRAUGHT } from '../layers/AisHullLayer';
   import { VesselIconLayer, ANCHOR_DOT_GEOMETRY, AGROUND_CIRCLE_GEOMETRY, MOORING_BARS_GEOMETRY, FISHING_GEAR_GEOMETRY, NUC_GEOMETRY, RESTRICTED_MANOEUVRING_GEOMETRY, DRAUGHT_GEOMETRY, MOB_GEOMETRY } from '../layers/VesselIconLayer';
   import { extrapolatePos } from '../lib/deadReckoning';
@@ -862,16 +862,19 @@
       map.on('mouseleave', id, () => { if (map) map.getCanvas().style.cursor = ''; });
     }
 
-    // All-routes click — show route name, stub Activate button, and link to route appearance settings.
+    // All-routes click — show route name, Activate button, and link to route appearance settings.
     map.on('click', 'all-routes-line', (e) => {
       const f = e.features?.[0];
       if (!f) return;
       const name = f.properties?.name as string ?? '';
+      const uuid = f.properties?.uuid as string ?? '';
+      const canActivate = auth.isLoggedIn && uuid !== '';
       const html = `
         <div class="ais-popup">
           ${name ? `<div class="ais-popup-title">${name}</div>` : ''}
           <div class="ais-links" style="margin-top:0">
-            <button class="popup-settings-btn" disabled title="Route activation requires authentication — coming soon">Activate route</button>
+            <button class="popup-settings-btn activate-route-btn"
+              ${canActivate ? `data-uuid="${uuid}"` : 'disabled title="Login required to activate route"'}>Activate route</button>
             <button class="popup-settings-btn" data-settings="routes">Route style</button>
           </div>
         </div>`;
@@ -880,10 +883,16 @@
         .setHTML(html)
         .addTo(map!);
       popup.getElement().addEventListener('click', (ev) => {
-        const btn = (ev.target as HTMLElement).closest<HTMLElement>('[data-settings]');
-        if (!btn) return;
-        popup.remove();
-        openSettings(btn.dataset.settings!);
+        const el = ev.target as HTMLElement;
+        const settingsBtn = el.closest<HTMLElement>('[data-settings]');
+        if (settingsBtn) { popup.remove(); openSettings(settingsBtn.dataset.settings!); return; }
+        const activateBtn = el.closest<HTMLButtonElement>('.activate-route-btn');
+        if (activateBtn && !activateBtn.disabled && activateBtn.dataset.uuid) {
+          popup.remove();
+          activateRoute(settings.signalkHttpUrl, activateBtn.dataset.uuid, auth.authHeaders).catch(err => {
+            console.error('[route] Failed to activate route:', err);
+          });
+        }
       });
       e.preventDefault();
     });
