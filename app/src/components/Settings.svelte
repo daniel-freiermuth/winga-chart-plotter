@@ -513,6 +513,19 @@
         </div>
       </div>
 
+      <p class="section-title">Route planner</p>
+      <div class="row">
+        <label>Color</label>
+        <div class="field"><ColorInput bind:value={settings.appearance.planner.color} oninput={applyAppearance} /></div>
+      </div>
+      <div class="row">
+        <label>Width</label>
+        <div class="field">
+          <input type="number" bind:value={settings.appearance.planner.width} min="1" max="16" step="0.5" oninput={applyAppearance} />
+          <span class="unit">px</span>
+        </div>
+      </div>
+
       <p class="section-title">Ruler</p>
       <div class="row">
         <label>Color</label>

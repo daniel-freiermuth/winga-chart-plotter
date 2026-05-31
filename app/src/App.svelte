@@ -2,7 +2,43 @@
   import { onMount, onDestroy } from 'svelte';
   import Map from './components/Map.svelte';
   import FaIcon from './lib/FaIcon.svelte';
-  import { faLocationCrosshairs, faRuler } from '@fortawesome/free-solid-svg-icons';
+  import { faLocationCrosshairs, faRuler, faPencil } from '@fortawesome/free-solid-svg-icons';
+  import { routePlanner } from './stores/routePlanner.svelte';
+  import { saveRoute } from './lib/signalk-api';
+
+  let plannerRouteName = $state('');
+  let plannerSaving = $state(false);
+  let plannerDiscardConfirm = $state(false);
+
+  // Clear name and confirmation state whenever planner activates.
+  $effect(() => {
+    if (routePlanner.active) {
+      plannerRouteName = '';
+      plannerDiscardConfirm = false;
+    }
+  });
+
+  function handleDiscard() {
+    if (plannerRouteName.trim()) {
+      plannerDiscardConfirm = true;
+    } else {
+      routePlanner.exit();
+    }
+  }
+
+  async function handleSaveRoute() {
+    if (!plannerRouteName.trim()) return;
+    plannerSaving = true;
+    try {
+      await saveRoute(settings.signalkHttpUrl, plannerRouteName.trim(), routePlanner.waypoints.map(w => [w.lon, w.lat]), auth.authHeaders);
+      routePlanner.exit();
+      plannerRouteName = '';
+    } catch (e) {
+      console.error('[planner] Failed to save route:', e);
+    } finally {
+      plannerSaving = false;
+    }
+  }
   import Settings from './components/Settings.svelte';
   import ChartPicker from './components/ChartPicker.svelte';
   import { vesselState } from './stores/vessel';
@@ -302,5 +338,89 @@
       font-size: 16px;
     "
   ><FaIcon icon={faRuler} /></button>
+
+  <!-- Route planner toggle button -->
+  <button
+    title={routePlanner.active ? 'Exit route planner' : 'Route planner / measurement'}
+    onclick={() => routePlanner.toggle()}
+    style="
+      position: absolute; top: 325px; left: 10px; z-index: 10;
+      background: {routePlanner.active ? 'rgba(100,200,255,0.9)' : 'rgba(0,0,0,0.7)'};
+      border: none; color: {routePlanner.active ? '#0a1a2e' : 'white'};
+      padding: 6px 10px; border-radius: 6px; cursor: pointer;
+      font-size: 16px; transition: background 0.15s, color 0.15s;
+    "
+  ><FaIcon icon={faPencil} /></button>
+
+  <!-- Route planner HUD -->
+  {#if routePlanner.active && routePlanner.waypoints.length > 0}
+    <div style="
+      position: absolute; bottom: 32px; left: 50%; transform: translateX(-50%);
+      z-index: 20; background: rgba(0,0,0,0.82); color: white;
+      border-radius: 10px; padding: 12px 16px; min-width: 260px; max-width: 380px;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+      display: flex; flex-direction: column; gap: 10px;
+      font-size: 14px;
+    ">
+      <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px;">
+        <span style="color: #64c8ff; font-weight: 600; font-size: 15px;">
+          {routePlanner.totalDistanceNm.toFixed(2)} NM
+        </span>
+        <span style="color: #aaa; font-size: 13px;">
+          {routePlanner.waypoints.length} waypoint{routePlanner.waypoints.length !== 1 ? 's' : ''}
+        </span>
+      </div>
+
+      {#if auth.isLoggedIn}
+        <div style="display: flex; gap: 6px; align-items: center;">
+          <input
+            type="text"
+            placeholder="Route name…"
+            bind:value={plannerRouteName}
+            style="
+              flex: 1; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.25);
+              border-radius: 6px; color: white; padding: 5px 8px; font-size: 13px; outline: none;
+            "
+          />
+          <button
+            title="Save as route"
+            disabled={plannerSaving || !plannerRouteName.trim()}
+            onclick={handleSaveRoute}
+            style="
+              background: rgba(100,200,100,0.8); border: none; outline: none; color: white;
+              padding: 5px 10px; border-radius: 6px; cursor: pointer; font-size: 13px;
+              opacity: {plannerSaving || !plannerRouteName.trim() ? 0.4 : 1};
+            "
+          >{plannerSaving ? '…' : 'Save'}</button>
+        </div>
+      {/if}
+
+      {#if plannerDiscardConfirm}
+        <div style="background: rgba(255,80,80,0.15); border: 1px solid rgba(255,80,80,0.4); border-radius: 8px; padding: 8px 10px; display: flex; flex-direction: column; gap: 8px;">
+          <span style="font-size: 13px; color: #fca5a5;">Discard route and all waypoints?</span>
+          <div style="display: flex; gap: 8px; justify-content: flex-end;">
+            <button
+              onclick={() => plannerDiscardConfirm = false}
+              style="background: rgba(255,255,255,0.12); border: none; outline: none; color: #ccc;
+                     padding: 4px 12px; border-radius: 6px; cursor: pointer; font-size: 13px;">Cancel</button>
+            <button
+              onclick={() => { routePlanner.exit(); plannerDiscardConfirm = false; }}
+              style="background: rgba(255,80,80,0.7); border: none; outline: none; color: white;
+                     padding: 4px 12px; border-radius: 6px; cursor: pointer; font-size: 13px;">Discard</button>
+          </div>
+        </div>
+      {:else}
+        <div style="display: flex; justify-content: flex-end;">
+          <button
+            onclick={handleDiscard}
+            title="Discard and exit route planner"
+            style="
+              background: rgba(255,255,255,0.12); border: none; outline: none; color: #ccc;
+              padding: 5px 14px; border-radius: 6px; cursor: pointer; font-size: 13px;
+            ">Discard</button>
+        </div>
+      {/if}
+    </div>
+  {/if}
 </div>
 

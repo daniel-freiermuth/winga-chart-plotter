@@ -32,6 +32,11 @@ export interface RulerAppearance {
   width: number;  // screen pixels
 }
 
+export interface PlannerAppearance {
+  color: string;
+  width: number;  // screen pixels (route line)
+}
+
 export interface RouteLineAppearance {
   color: string;
   width: number;  // screen pixels
@@ -61,6 +66,7 @@ export interface AppearanceSettings {
   gc:          LineAppearance;
   ais:         AisAppearance;
   ruler:       RulerAppearance;
+  planner:     PlannerAppearance;
   route:       RouteAppearance;
   track:       TrackAppearance;
 }
@@ -91,6 +97,7 @@ const DEFAULTS: SettingsData = {
       track: { show: true, color: '#f59e0b', width: 2, style: 'solid' },
     },
     ruler: { color: '#ffdc32', width: 2 },
+    planner: { color: '#64c8ff', width: 6 },
     route: {
       bearing:   { color: '#ff6d00', width: 2,   style: 'dashed' },
       segment:   { color: '#e040fb', width: 2.5, style: 'solid'  },
@@ -140,6 +147,7 @@ function load(): SettingsData {
               track: { ...DEFAULTS.appearance.ais.track, ...(p.appearance?.ais?.track ?? {}) },
             },
             ruler: { ...DEFAULTS.appearance.ruler, ...(p.appearance?.ruler ?? {}) },
+            planner: { ...DEFAULTS.appearance.planner, ...(p.appearance?.planner ?? {}) },
             route: {
               bearing:   { ...DEFAULTS.appearance.route.bearing,   ...(p.appearance?.route?.bearing   ?? {}) },
               segment:   { ...DEFAULTS.appearance.route.segment,   ...(p.appearance?.route?.segment   ?? {}) },

@@ -20,13 +20,14 @@
   import { PathStyleExtension } from '@deck.gl/extensions';
   import type { Layer } from '@deck.gl/core';
   import { rulers, rulerBearingText, rulerDistanceText, type Ruler, type RulerEndpoint } from '../stores/rulers.svelte';
+  import { routePlanner } from '../stores/routePlanner.svelte';
   import { route } from '../stores/route.svelte';
   import { routes } from '../stores/routes.svelte';
   import { track } from '../stores/track.svelte';
-  import { gcLine, gcBearingDeg } from '../lib/geoMath';
+  import { gcLine, gcBearingDeg, gcDistanceNm } from '../lib/geoMath';
   import { fetchAndResolveStyle } from '../lib/resolveStyle';
   import { auth } from '../stores/auth.svelte';
-  import { fetchAisVesselTrack, navigateToPoint, clearCourse, activateRoute } from '../lib/signalk-api';
+  import { fetchAisVesselTrack, navigateToPoint, clearCourse, activateRoute, saveRoute } from '../lib/signalk-api';
   import { AisHullLayer, AisHullDecorationLayer, AisHullBorderLayer, HULL_ANCHOR_DOT, HULL_MOORING_BARS, HULL_AGROUND_RING, HULL_FISHING_GEAR, HULL_NUC, HULL_RESTRICTED, HULL_DRAUGHT } from '../layers/AisHullLayer';
   import { VesselIconLayer, ANCHOR_DOT_GEOMETRY, AGROUND_CIRCLE_GEOMETRY, MOORING_BARS_GEOMETRY, FISHING_GEAR_GEOMETRY, NUC_GEOMETRY, RESTRICTED_MANOEUVRING_GEOMETRY, DRAUGHT_GEOMETRY, MOB_GEOMETRY } from '../layers/VesselIconLayer';
   import { extrapolatePos } from '../lib/deadReckoning';
@@ -473,6 +474,11 @@
   // Ruler label popup: shown when user clicks a label; holds screen position and ruler id.
   let rulerPopup = $state<{ rulerId: string; x: number; y: number } | null>(null);
 
+  // Route planner drag state.
+  let plannerDrag: { idx: number } | null = null;
+  // Waypoint index targeted by a right-click (set in pointerdown, consumed in contextmenu).
+  let plannerRightClickIdx: number | null = null;
+
   function setHandleHover(hovering: boolean) {
     if (hovering === isHoveringHandle) return;
     isHoveringHandle = hovering;
@@ -492,6 +498,28 @@
     const rect = mapContainer.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
+
+    // Planner handles take priority when planner is active.
+    if (routePlanner.active) {
+      const plannerPick = overlay.pickObject({ x, y, radius: 12, layerIds: ['planner-handles'] });
+      if (plannerPick?.object !== null && plannerPick?.object !== undefined) {
+        type PlannerHandle = { idx: number };
+        const d = plannerPick.object as PlannerHandle;
+        if (e.button === 2) {
+          // Right-click on a handle → store for deletion in the contextmenu handler.
+          plannerRightClickIdx = d.idx;
+          e.stopPropagation();
+          return;
+        }
+        plannerDrag = { idx: d.idx };
+        map.dragPan.disable();
+        mapContainer.style.cursor = 'grabbing';
+        mapContainer.setPointerCapture(e.pointerId);
+        e.stopPropagation();
+        return;
+      }
+    }
+
     // Check label click — opens the remove popup.
     const labelPick = overlay.pickObject({ x, y, radius: 14, layerIds: ['ruler-labels'] });
     if (labelPick?.object) {
@@ -519,10 +547,19 @@
     const rect = mapContainer.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
+
+    if (plannerDrag) {
+      const coord = map.unproject([x, y]);
+      routePlanner.moveWaypoint(plannerDrag.idx, coord.lng, coord.lat);
+      e.stopPropagation();
+      return;
+    }
+
     if (!rulerDrag) {
       // Hover detection via pickObject (avoids deck.gl layer recreation race on drag).
       if (overlay) {
-        const hoverPick = overlay.pickObject({ x, y, radius: 10, layerIds: ['ruler-handles'] });
+        const handleLayers = ['ruler-handles', ...(routePlanner.active ? ['planner-handles'] : [])];
+        const hoverPick = overlay.pickObject({ x, y, radius: 10, layerIds: handleLayers });
         setHandleHover(!!hoverPick?.object);
       }
       return;
@@ -533,6 +570,14 @@
   }
 
   function handleRulerPointerUp(e: PointerEvent) {
+    if (plannerDrag) {
+      plannerDrag = null;
+      mapContainer.style.cursor = isHoveringHandle ? 'grab' : '';
+      if (!isHoveringHandle) map?.dragPan.enable();
+      mapContainer.releasePointerCapture(e.pointerId);
+      return;
+    }
+
     if (!rulerDrag || !map) return;
     const rect = mapContainer.getBoundingClientRect();
     const x = e.clientX - rect.left;
@@ -574,9 +619,10 @@
   // ruler layers rebuilt in rafTick (need map.project() for pixel distance checks).
   let aisLayerGroup: Layer[] = [];
   let rulerLayerGroup: Layer[] = [];
+  let plannerLayerGroup: Layer[] = [];
 
   function flushLayers() {
-    overlay?.setProps({ layers: [...aisLayerGroup, ...rulerLayerGroup, ...ownVesselLayerGroup] });
+    overlay?.setProps({ layers: [...aisLayerGroup, ...rulerLayerGroup, ...plannerLayerGroup, ...ownVesselLayerGroup] });
   }
 
   let rafId = 0;
@@ -785,6 +831,96 @@
           rulerPopup = null;
           flushLayers();
         }
+
+        // --- Route planner layers ---
+        {
+          const wpts = routePlanner.waypoints;
+          if (routePlanner.active) {
+            type PlannerHandle = { idx: number; lon: number; lat: number };
+
+            // Build per-segment label data: midpoint + bearing + distance for each leg.
+            type PlannerLabelDatum = { lon: number; lat: number; text: string };
+            const LABEL_MIN_PX = 60;
+            const segmentLabels: PlannerLabelDatum[] = [];
+            const paths: [number, number][][] = [];
+
+            for (let i = 1; i < wpts.length; i++) {
+              const a = wpts[i - 1];
+              const b = wpts[i];
+              const pts = gcLine(a.lon, a.lat, b.lon, b.lat);
+              paths.push(pts);
+              if (map) {
+                const pA = map.project([a.lon, a.lat]);
+                const pB = map.project([b.lon, b.lat]);
+                if (Math.hypot(pB.x - pA.x, pB.y - pA.y) >= LABEL_MIN_PX) {
+                  const mid = pts[Math.floor(pts.length / 2)];
+                  const dist = gcDistanceNm(a.lon, a.lat, b.lon, b.lat);
+                  const brg  = gcBearingDeg(a.lon, a.lat, b.lon, b.lat);
+                  const distStr = dist < 10 ? dist.toFixed(2) : dist.toFixed(1);
+                  segmentLabels.push({
+                    lon: mid[0], lat: mid[1],
+                    text: `${distStr} NM · ${brg.toFixed(0).padStart(3, '0')}° T`,
+                  });
+                }
+              }
+            }
+
+            const handleData: PlannerHandle[] = wpts.map((w, idx) => ({ idx, lon: w.lon, lat: w.lat }));
+
+            // Typed segment data so clicking a line returns the segment index.
+            type PlannerSegment = { segIdx: number; path: [number, number][] };
+            const segData: PlannerSegment[] = paths.map((path, segIdx) => ({ segIdx, path }));
+
+            plannerLayerGroup = [
+              new PathLayer<PlannerSegment>({
+                id: 'planner-line',
+                data: segData,
+                getPath: (d) => d.path,
+                getColor: hexToRgba(settings.appearance.planner.color, 210),
+                getWidth: settings.appearance.planner.width,
+                widthUnits: 'pixels',
+                widthMinPixels: 1,
+                pickable: true,
+                updateTriggers: { getPath: [wpts] },
+              }),
+              new ScatterplotLayer<PlannerHandle>({
+                id: 'planner-handles',
+                data: handleData,
+                getPosition: (d) => [d.lon, d.lat, 0],
+                getRadius: 8,
+                radiusUnits: 'pixels',
+                getFillColor: hexToRgba(settings.appearance.planner.color, 220),
+                getLineColor: [255, 255, 255, 200] as [number, number, number, number],
+                lineWidthUnits: 'pixels',
+                getLineWidth: 1.5,
+                stroked: true,
+                pickable: true,
+                updateTriggers: { getPosition: [wpts] },
+              }),
+              new TextLayer<PlannerLabelDatum>({
+                id: 'planner-labels',
+                data: segmentLabels,
+                getText: (d) => d.text,
+                getPosition: (d) => [d.lon, d.lat, 0],
+                getSize: 13,
+                getColor: hexToRgba(settings.appearance.planner.color, 230),
+                getBackgroundColor: [0, 0, 0, 160] as [number, number, number, number],
+                background: true,
+                backgroundPadding: [4, 2, 4, 2] as [number, number, number, number],
+                getTextAnchor: 'middle' as const,
+                getAlignmentBaseline: 'center' as const,
+                fontFamily: 'monospace',
+                characterSet: [...'0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz °·.,\'-/TN'],
+                pickable: false,
+                updateTriggers: { getText: [wpts], getPosition: [wpts] },
+              }),
+            ];
+            flushLayers();
+          } else if (plannerLayerGroup.length > 0) {
+            plannerLayerGroup = [];
+            flushLayers();
+          }
+        }
       }
       scheduleRafTick();
     }
@@ -903,6 +1039,25 @@
       if (!overlay) return;
       const { x, y } = e.point;
 
+      // In planner mode: handle click adds or inserts a waypoint.
+      if (routePlanner.active) {
+        const handlePick = overlay.pickObject({ x, y, radius: 12, layerIds: ['planner-handles'] });
+        if (handlePick?.object) {
+          // Clicked on an existing handle — no action (drag is handled by pointerdown).
+          return;
+        }
+        // Check if the click landed on a segment line → insert between the two endpoints.
+        const segPick = overlay.pickObject({ x, y, radius: 8, layerIds: ['planner-line'] });
+        if (segPick?.object) {
+          type PlannerSeg = { segIdx: number };
+          const { segIdx } = segPick.object as PlannerSeg;
+          routePlanner.insertWaypoint(segIdx + 1, e.lngLat.lng, e.lngLat.lat);
+        } else {
+          routePlanner.addWaypoint(e.lngLat.lng, e.lngLat.lat);
+        }
+        return;
+      }
+
       // Own vessel is the topmost deck.gl layer — check it first.
       const ownPicked = overlay.pickMultipleObjects({ x, y, radius: 5, layerIds: ['own-vessel-icon'] });
       if (ownPicked.length > 0) {
@@ -948,16 +1103,25 @@
       openDisambigPopup(coordinate, uniqueHits.map(h => h.idx));
     });
 
-    // Right-click (desktop) → navigate popup.
+    // Right-click (desktop) → remove planner waypoint, or show navigate popup.
     map.on('contextmenu', (e) => {
+      if (overlay && routePlanner.active) {
+        if (plannerRightClickIdx !== null) {
+          routePlanner.removeWaypoint(plannerRightClickIdx);
+          plannerRightClickIdx = null;
+        }
+        // Always suppress navigate popup while planner is active.
+        return;
+      }
+      plannerRightClickIdx = null;
       showNavigatePopup(e.lngLat);
     });
 
-    // Long-press (touch) → navigate popup.
+    // Long-press (touch) → remove planner waypoint, or show navigate popup.
     // MapLibre does not synthesise contextmenu on long-press reliably, so handle it manually.
     {
       let longPressTimer: ReturnType<typeof setTimeout> | null = null;
-      let longPressLngLat: maplibregl.LngLat | null = null;
+      let longPressEvent: { lngLat: maplibregl.LngLat; x: number; y: number } | null = null;
       const LONG_PRESS_MS = 500;
       const MOVE_THRESHOLD_PX = 10;
       let startX = 0;
@@ -965,7 +1129,7 @@
 
       const cancelLongPress = () => {
         if (longPressTimer !== null) { clearTimeout(longPressTimer); longPressTimer = null; }
-        longPressLngLat = null;
+        longPressEvent = null;
       };
 
       map.on('touchstart', (e) => {
@@ -973,9 +1137,22 @@
         const touch = e.originalEvent.touches[0];
         startX = touch.clientX;
         startY = touch.clientY;
-        longPressLngLat = e.lngLat;
+        const rect = mapContainer.getBoundingClientRect();
+        longPressEvent = { lngLat: e.lngLat, x: touch.clientX - rect.left, y: touch.clientY - rect.top };
         longPressTimer = setTimeout(() => {
-          if (longPressLngLat) showNavigatePopup(longPressLngLat);
+          if (!longPressEvent) return;
+          const { lngLat, x, y } = longPressEvent;
+          if (overlay && routePlanner.active) {
+            const pick = overlay.pickObject({ x, y, radius: 20, layerIds: ['planner-handles'] });
+            if (pick?.object !== null && pick?.object !== undefined) {
+              type PlannerHandle = { idx: number };
+              routePlanner.removeWaypoint((pick.object as PlannerHandle).idx);
+            }
+            // Long-press on empty space while drawing → do nothing (no undo).
+            longPressTimer = null;
+            return;
+          }
+          showNavigatePopup(lngLat);
           longPressTimer = null;
         }, LONG_PRESS_MS);
       });

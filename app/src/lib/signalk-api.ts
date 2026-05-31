@@ -386,3 +386,53 @@ export async function activateRoute(
   });
   if (!res.ok) throw new Error(`Activate route failed: ${res.status} ${res.statusText}`);
 }
+
+/**
+ * Save a planned path as a new named route in Signal K.
+ *
+ *   POST /signalk/v2/api/resources/routes
+ *
+ * Returns the UUID of the newly created route.
+ */
+export async function saveRoute(
+  serverBase: string,
+  name: string,
+  waypoints: { lon: number; lat: number }[],
+  authHeaders: Record<string, string>,
+): Promise<string> {
+  // Compute total distance in metres for the route metadata.
+  let distanceM = 0;
+  for (let i = 1; i < waypoints.length; i++) {
+    const R_M = 1852 * 3440.065;
+    const φ1 = (waypoints[i - 1].lat * Math.PI) / 180;
+    const φ2 = (waypoints[i].lat * Math.PI) / 180;
+    const Δφ = ((waypoints[i].lat - waypoints[i - 1].lat) * Math.PI) / 180;
+    const Δλ = ((waypoints[i].lon - waypoints[i - 1].lon) * Math.PI) / 180;
+    const a = Math.sin(Δφ / 2) ** 2 + Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) ** 2;
+    distanceM += 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)) * R_M;
+  }
+
+  const body = {
+    name,
+    description: '',
+    distance: Math.round(distanceM),
+    feature: {
+      type: 'Feature',
+      geometry: {
+        type: 'LineString',
+        coordinates: waypoints.map(w => [w.lon, w.lat]),
+      },
+      properties: {},
+    },
+  };
+
+  const res = await fetch(`${serverBase}/signalk/v2/api/resources/routes`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`Save route failed: ${res.status} ${res.statusText}`);
+  const data = await res.json() as { id?: string; uuid?: string } | string;
+  if (typeof data === 'string') return data;
+  return (data.id ?? data.uuid ?? '');
+}
