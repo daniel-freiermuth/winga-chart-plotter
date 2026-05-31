@@ -2800,7 +2800,7 @@
           map.easeTo({ center: [pos.longitude, pos.latitude], bearing, duration: 600 });
         } else {
           // Continuous tracking: quadratic ease-out — fast during active rotation, decelerates when compass settles.
-          map.easeTo({ center: [pos.longitude, pos.latitude], bearing, duration: 200, easing: t => t * (2 - t) });
+          map.easeTo({ center: [pos.longitude, pos.latitude], bearing, duration: 200 });
         }
       } else if (posChanged || rmChanged) {
         // Other modes: move camera only when position or rotation mode changes.
