@@ -1,5 +1,44 @@
+diff --git a/node_modules/@deck.gl/core/dist/dist.dev.js b/node_modules/@deck.gl/core/dist/dist.dev.js
+index e9a4882..5072555 100644
+--- a/node_modules/@deck.gl/core/dist/dist.dev.js
++++ b/node_modules/@deck.gl/core/dist/dist.dev.js
+@@ -25887,7 +25887,7 @@ var<uniform> layer: LayerUniforms;
+ `
+   );
+   var uniformBlock = `layout(std140) uniform layerUniforms {
+-  uniform float opacity;
++  float opacity;
+ } layer;
+ `;
+   var layerUniforms = {
+diff --git a/node_modules/@deck.gl/core/dist/index.cjs b/node_modules/@deck.gl/core/dist/index.cjs
+index 2a965c5..0d7be10 100644
+--- a/node_modules/@deck.gl/core/dist/index.cjs
++++ b/node_modules/@deck.gl/core/dist/index.cjs
+@@ -270,7 +270,7 @@ var<uniform> layer: LayerUniforms;
+ `
+ );
+ var uniformBlock = `layout(std140) uniform layerUniforms {
+-  uniform float opacity;
++  float opacity;
+ } layer;
+ `;
+ var layerUniforms = {
+diff --git a/node_modules/@deck.gl/core/dist/shaderlib/misc/layer-uniforms.js b/node_modules/@deck.gl/core/dist/shaderlib/misc/layer-uniforms.js
+index 9ad93fb..9cb176e 100644
+--- a/node_modules/@deck.gl/core/dist/shaderlib/misc/layer-uniforms.js
++++ b/node_modules/@deck.gl/core/dist/shaderlib/misc/layer-uniforms.js
+@@ -11,7 +11,7 @@ var<uniform> layer: LayerUniforms;
+ `;
+ const uniformBlock = `\
+ layout(std140) uniform layerUniforms {
+-  uniform float opacity;
++  float opacity;
+ } layer;
+ `;
+ export const layerUniforms = {
 diff --git a/node_modules/@deck.gl/core/dist/viewports/globe-viewport.js b/node_modules/@deck.gl/core/dist/viewports/globe-viewport.js
-index 57b1e4c..dd029b3 100644
+index 57b1e4c..99b51c3 100644
 --- a/node_modules/@deck.gl/core/dist/viewports/globe-viewport.js
 +++ b/node_modules/@deck.gl/core/dist/viewports/globe-viewport.js
 @@ -25,7 +25,7 @@ function getDistanceScales() {
@@ -11,7 +50,7 @@ index 57b1e4c..dd029b3 100644
          // Matches Maplibre defaults
          // https://github.com/maplibre/maplibre-gl-js/blob/f8ab4b48d59ab8fe7b068b102538793bbdd4c848/src/geo/projection/globe_transform.ts#L632-L633
          nearZMultiplier = 0.5, farZMultiplier = 1, resolution = 10 } = opts;
-@@ -45,8 +45,25 @@ class GlobeViewport extends Viewport {
+@@ -45,8 +45,35 @@ class GlobeViewport extends Viewport {
          const scale = Math.pow(2, zoom - zoomAdjust(latitude));
          const nearZ = opts.nearZ ?? nearZMultiplier;
          const farZ = opts.farZ ?? (altitude + (GLOBE_RADIUS * 2 * scale) / height) * farZMultiplier;
@@ -20,15 +59,21 @@ index 57b1e4c..dd029b3 100644
 +        // Calculate view matrix.
 +        // Bearing rotates the camera around the globe's Y axis (vertical at centre).
 +        // Pitch tilts the camera backward along the bearing's right axis:
++        //   right = (cb, 0, −sb), so rotating forward by pitch gives:
++        //   new_forward = (−sb·sp, cp, −cb·sp)
++        //   eye = −alt·new_forward = (sb·sp, −cp, cb·sp)·alt  — wait, that's wrong.
 +        //
 +        // Correct derivation (rotate camera around right axis by +pitch):
 +        //   forward_original = (0, 1, 0)
 +        //   right = (cb, 0, −sb)
-+        //   right × forward = (sb, 0, cb)
++        //   right × forward = (sb, 0, cb)   [note: this is the up direction]
 +        //   forward' = forward·cos(pitch) + (right × forward)·sin(pitch)
 +        //            = (sb·sp, cp, cb·sp)
 +        //   eye = −alt · forward' = (−sb·sp·alt, −cp·alt, −cb·sp·alt)
-+        //   right × up_original = (cb,0,−sb)×(sb,0,cb) = (0,−1,0)
++        //   up  = up_original·cos(pitch) + (right × up_original)·sin(pitch)
++        //       = (sb, 0, cb)·cos(pitch) + (right × (sb,0,cb))·sin(pitch)
++        //   right × (sb,0,cb) = (cb,0,−sb)×(sb,0,cb) = (0·cb−(−sb)·0, (−sb)·sb−cb·cb, cb·0−0·sb)
++        //                     = (0, −1, 0)
 +        //   up = (sb·cp, −sp, cb·cp)
 +        //
 +        // At pitch=0: eye=(0,−alt,0), up=(sb,0,cb). At bearing=pitch=0: matches original defaults.
