@@ -454,3 +454,20 @@ export async function updateRoute(
   });
   if (!res.ok) throw new Error(`Update route failed: ${res.status} ${res.statusText}`);
 }
+
+/**
+ * DELETE /signalk/v2/api/resources/routes/:uuid
+ *
+ * Permanently removes a route from the Signal K server.
+ */
+export async function deleteRoute(
+  serverBase: string,
+  uuid: string,
+  authHeaders: Record<string, string>,
+): Promise<void> {
+  const res = await fetch(`${serverBase}/signalk/v2/api/resources/routes/${uuid}`, {
+    method: 'DELETE',
+    headers: { ...authHeaders },
+  });
+  if (!res.ok) throw new Error(`Delete route failed: ${res.status} ${res.statusText}`);
+}

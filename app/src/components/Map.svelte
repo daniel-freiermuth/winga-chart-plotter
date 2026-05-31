@@ -27,7 +27,7 @@
   import { gcLine, gcBearingDeg, gcDistanceNm } from '../lib/geoMath';
   import { fetchAndResolveStyle } from '../lib/resolveStyle';
   import { auth } from '../stores/auth.svelte';
-  import { fetchAisVesselTrack, navigateToPoint, clearCourse, activateRoute, saveRoute } from '../lib/signalk-api';
+  import { fetchAisVesselTrack, navigateToPoint, clearCourse, activateRoute, saveRoute, deleteRoute } from '../lib/signalk-api';
   import { AisHullLayer, AisHullDecorationLayer, AisHullBorderLayer, HULL_ANCHOR_DOT, HULL_MOORING_BARS, HULL_AGROUND_RING, HULL_FISHING_GEAR, HULL_NUC, HULL_RESTRICTED, HULL_DRAUGHT } from '../layers/AisHullLayer';
   import { VesselIconLayer, ANCHOR_DOT_GEOMETRY, AGROUND_CIRCLE_GEOMETRY, MOORING_BARS_GEOMETRY, FISHING_GEAR_GEOMETRY, NUC_GEOMETRY, RESTRICTED_MANOEUVRING_GEOMETRY, DRAUGHT_GEOMETRY, MOB_GEOMETRY } from '../layers/VesselIconLayer';
   import { extrapolatePos } from '../lib/deadReckoning';
@@ -1006,6 +1006,7 @@
       const uuid = f.properties?.uuid as string ?? '';
       const canActivate = auth.isLoggedIn && uuid !== '';
       const canEdit     = auth.isLoggedIn && uuid !== '';
+      const canDelete   = auth.isLoggedIn && uuid !== '';
       const html = `
         <div class="ais-popup">
           ${name ? `<div class="ais-popup-title">${name}</div>` : ''}
@@ -1014,6 +1015,8 @@
               ${canActivate ? `data-uuid="${uuid}"` : 'disabled title="Login required to activate route"'}>Activate route</button>
             <button class="popup-settings-btn edit-route-btn"
               ${canEdit ? `data-uuid="${uuid}"` : 'disabled title="Login required to edit route"'}>Edit route</button>
+            <button class="popup-settings-btn delete-route-btn"
+              ${canDelete ? `data-uuid="${uuid}" data-name="${name}"` : 'disabled title="Login required to delete route"'}>Delete route</button>
             <button class="popup-settings-btn" data-settings="routes">Route style</button>
           </div>
         </div>`;
@@ -1041,6 +1044,19 @@
             const coords = r.geometry.geometry.coordinates as [number, number][];
             routePlanner.loadRoute(r.uuid, r.name, coords.map(([lon, lat]) => ({ lon, lat })));
           }
+          return;
+        }
+        const deleteBtn = el.closest<HTMLButtonElement>('.delete-route-btn');
+        if (deleteBtn && !deleteBtn.disabled && deleteBtn.dataset.uuid) {
+          const routeUuid = deleteBtn.dataset.uuid;
+          const routeName = deleteBtn.dataset.name || 'this route';
+          if (!confirm(`Delete "${routeName}"? This cannot be undone.`)) return;
+          popup.remove();
+          deleteRoute(settings.signalkHttpUrl, routeUuid, auth.authHeaders)
+            .then(() => routes.load(settings.signalkHttpUrl))
+            .catch(err => {
+              console.error('[route] Failed to delete route:', err);
+            });
         }
       });
       e.preventDefault();
