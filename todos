@@ -53,15 +53,17 @@
     - phade out
   - AIS
 - [x] Course chart rotation mode
+- [x] Keep screen on
+- [-] Introduce abstraction layer for data source?
+- [x] Android, move between tabs and apps. Should be back at exactly same
+- [x] Appearance settings next to the things itself
+- [x] Browser compass, performance
+  - Browser GPS heading kills performance?
+- [x] No route effect when using browser GPS
+- [x] all routes
+- [x] Change Heading line and style by click on own vessel?
+- [-] No or only one real GPS request?
 
-- Browser compass, performance
-- all routes
-- SHOM proxy
-- No route effect when using browser GPS
-- Keep screen on
-- No or only one real GPS request?
-- Browser GPS heading kills performance?
-- Introduce abstraction layer for data source?
 - Login
 - Performance a bit weird
   - Sometimes taking interactions
@@ -69,31 +71,38 @@
   - … or zoom or just little zoom on button-press
 - set course
   - cog, course
+- SHOM proxy
 - Ad-hoc navigation
 - tracks, routes
     - Draw route
     - History APIv1 & v2
     - Just set course
     - Waypoints
-- look-ahead mode
-- KIP integration
-- MOB button
-- patch signalk crate?
-- Notificatios
-- Regression Testing! 
+- look-ahead mode, offset from middle
 - More vector charts
   - o-charts
   - create s57 crate?
   - from NV charts somehow?
+- KIP integration
+- Does fps setting actually work? I still see smooth animations
+- MOB button, requires login
+- Plugins in WCP?
+  - MOB button
+  - Anchor
+  - Tracks
+  - Routes
+  - AIS
+  - Vessel
+  - Active route
+- patch signalk crate?
+- Notificatios
+- Regression Testing! 
 - GRIB files
-- Android, move between tabs and apps. Should be back at exactly same
-- Appearance settings next to the things itself
 - Own vessel -> drop waypoint
 - Windy?
   - https://ims.windy.com/im/v3.0/forecast/ecmwf-hres/2026052400/2026052409/wm_grid_257/5/4/2/wind-surface.jpg
   - https://node.windy.com/citytile/v1.0/ecmwf-hres/9/270/156?hours=362&labelsVersion=v2.0&refTime=2026-05-24T00:00:00Z&step=3&pr=1&sc=6&token2=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJtYWdpYyI6NTUzLCJpYXQiOjE3Nzk2MTIxMTgsImV4cCI6MTc3OTc4NDkxOH0.9ALhlYh8t8ijAdzghEF7mAatsNB9gs-UuRdAymA3Jls&uid=8296cabd-a025-197e-b06b-9c8fea9a2681&v=50.0.3&poc=24
   - Measurements
-- Change Heading line and style by click on own vessel?
 - Achor watch
 
 # Bugs
