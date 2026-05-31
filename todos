@@ -1,46 +1,3 @@
-- [x] Head-Up, by head, cog or course
-    - N, H, WPT, COG, MAN
-	  - only pixel length
-- [x] publish npm
-- [x] publish github
-- AIS
-  - [x] moored, anchoring, -> state
-  - [x] adapt icon
-  - [x] callsign
-  - [x] time life-updated
-  - [x] border in same color as fill, but half-way to black/white, depending on what is further
-  - different ais vessel types -> different shapes? or colors?
-- [x] aisstream fix
-- [x] Eniro charts
-  - down, now mvt -> S57
-- [x] CMap API
-  - need different URL
-- [x] slower dead reckoning
-  - configurable?
-  - beneficial to even skip deck.gl?
-- [x] tiles with -y
-  - NV charts
-- [x] Check all Charts
-- [x] Flatter 3D
-- [x] SignalK deployment on npm as WebApp
-- [x] S57
-  - eniro delivers mvt!!
-- [x] PWA
-  - [x] not working from webapp
-  - [x] name
-  - [x] icon
-  - [x] tab name
-- Come-back behavior
-  - [x] Tab switch mobile
-  - [x] App switch mobile
-  - [x] lock phone
-  - Reload laptop
-  - fresh start. remember last position
-- [x] draw next leg
-- [x] version info
-- [x] Close ruler with popup
-- [x] more color choices mobile
-- [x] Also border around polygons
 - [x] deep links into settings
 - [x] Sub settings: AIS, Our boat
   -> link from popups on ais and own vessel
@@ -69,30 +26,14 @@
   - … or zoom or just little zoom on button-press
 - [x] Login
 - [x] Does fps setting actually work? I still see smooth animations
-
-
-
-
-
-- set course
+- [x] Own vessel on top
+- [x] set course
   - cog, course
-- Ad-hoc navigation
-- Own vessel on top
-- tracks, routes
-    - Draw route
-    - History APIv1 & v2
-    - Just set course
-    - Waypoints
-- look-ahead mode, offset from middle
-- Debug tablet performance
-- More vector charts
-  - o-charts
-  - create s57 crate?
-  - from NV charts somehow?
-- MOB button, requires login
-- SHOM proxy
-- KIP integration
-- Plugins in WCP?
+- [x] Ad-hoc navigation
+- [x] Stop navigation
+- [x] only show populated AIS data in popup
+- [x] enable route
+- [-] Plugins in WCP?
   - MOB button
   - Anchor
   - Tracks
@@ -100,11 +41,37 @@
   - AIS
   - Vessel
   - Active route
+- [x] draw route
+- [x] edit route
+- [x] delete route
+- [x] Drop waypoint
+- [x] delete waypoint
+- [x] tracks, routes
+    - Draw route
+    - History APIv1 & v2
+    - Just set course
+    - Waypoints
+- [x] Own vessel -> drop waypoint
+
+
+
+- Organize hit for multiple layers
+- Run checkers and check for errors
+- organize buttons at left
+- MOB button, requires login
+- look-ahead mode, offset from middle
+- More vector charts
+  - o-charts
+  - create s57 crate?
+  - from NV charts somehow?
+- Debug tablet performance
+- SHOM proxy
+- KIP integration
+- Enable history on tablet and server
 - patch signalk crate?
 - Notificatios
 - Regression Testing! 
 - GRIB files
-- Own vessel -> drop waypoint
 - Windy?
   - https://ims.windy.com/im/v3.0/forecast/ecmwf-hres/2026052400/2026052409/wm_grid_257/5/4/2/wind-surface.jpg
   - https://node.windy.com/citytile/v1.0/ecmwf-hres/9/270/156?hours=362&labelsVersion=v2.0&refTime=2026-05-24T00:00:00Z&step=3&pr=1&sc=6&token2=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJtYWdpYyI6NTUzLCJpYXQiOjE3Nzk2MTIxMTgsImV4cCI6MTc3OTc4NDkxOH0.9ALhlYh8t8ijAdzghEF7mAatsNB9gs-UuRdAymA3Jls&uid=8296cabd-a025-197e-b06b-9c8fea9a2681&v=50.0.3&poc=24
