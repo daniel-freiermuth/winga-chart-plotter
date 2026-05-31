@@ -2760,10 +2760,12 @@
   // Follow + rotation mode: combined into one effect so we never issue two competing
   // easeTo/flyTo calls in the same reactive flush.
   //
-  // Follow + rotation mode: combined into one effect so we never issue two competing
-  // easeTo/flyTo calls in the same reactive flush.
-  //
   // HDG follow: easeTo at compass rate — short duration so frames chain into smooth rotation.
+  //   - Initial snap (mode just switched): longer ease-out so the map glides to heading bearing.
+  //   - Continuous tracking: quadratic ease-out (t*(2-t)). During active rotation the DeviceOrientation
+  //     API fires at ~50Hz so each 200ms animation is interrupted after ~20ms — always in the fast early
+  //     phase, keeping the map lag-free. When the compass stabilises the final frame plays out fully and
+  //     the ease-out gives a smooth deceleration instead of an abrupt stop.
   // Other follow modes: easeTo/flyTo only when position or mode changes (~1Hz GPS rate).
   // Non-follow: easeTo for bearing — short animation, touch-safe.
   $effect(() => {
@@ -2793,8 +2795,13 @@
 
     if (pos && following) {
       if (rm === 'heading' && bearing !== undefined) {
-        // HDG follow: rotate and re-centre at compass rate — short duration chains into smooth rotation.
-        map.easeTo({ center: [pos.longitude, pos.latitude], bearing, duration: 200, easing: t => t });
+        if (rmChanged) {
+          // Initial snap: glide smoothly to the heading bearing (MapLibre default ease-out).
+          map.easeTo({ center: [pos.longitude, pos.latitude], bearing, duration: 600 });
+        } else {
+          // Continuous tracking: quadratic ease-out — fast during active rotation, decelerates when compass settles.
+          map.easeTo({ center: [pos.longitude, pos.latitude], bearing, duration: 200, easing: t => t * (2 - t) });
+        }
       } else if (posChanged || rmChanged) {
         // Other modes: move camera only when position or rotation mode changes.
         const center = map.getCenter();
