@@ -117,7 +117,7 @@ A professional, high-quality sea chart plotting application for sailing — desi
 - Chart tile cache management
 - S-57 parsing (future)
 
-**TypeScript role:** UI shell only — event handling, DOM, settings panels. No navigation math in TS.
+**TypeScript role:** UI shell only — event handling, DOM, settings panels. Some geo math (GC line densification, bearing, haversine distance) lives in `app/src/lib/geoMath.ts` for rendering convenience; no navigation decisions or Signal K parsing in TS.
 
 ---
 
@@ -210,20 +210,103 @@ S-57 (.000) → Rust parser → GeoJSON/MVT → MapLibre
 
 | Layer | Technology | Notes |
 |---|---|---|
-| Chart rendering | MapLibre GL JS | WebGL, vector + raster |
+| Chart rendering | MapLibre GL JS | WebGL, vector + raster, globe + mercator |
 | AIS / overlays | deck.gl | GPU layers on top of MapLibre |
-| Business logic | Rust → WASM | Projection, routing, AIS, Signal K |
-| UI shell | Svelte + TypeScript | Minimal, no nav math |
-| Native shell | Tauri 2 | Android + Windows packaging |
-| Data protocol | Signal K | WebSocket + REST |
-| Offline charts | PMTiles / MBTiles | Single-file chart regions |
+| Business logic | Rust → WASM | Signal K parsing, AIS management, coordinate math |
+| UI shell | Svelte 5 + TypeScript | Minimal; geo math helpers in `lib/geoMath.ts` |
+| Native shell | Tauri 2 | Android + Windows packaging (not yet wired) |
+| Data protocol | Signal K | WebSocket delta stream + REST resources API |
+| Offline charts | Service Worker tile cache | PWA; Rust/Tauri disk cache planned |
 | Projections | MapLibre Globe + Mercator | Globe for correctness; Rust proj crate ready for future EPSG support |
 
 ---
 
-## Open Questions
+### ADR-008: Position source selection — no formal abstraction (yet)
 
-- [ ] S-57 parsing: write our own Rust parser, or use/wrap an existing C++ parser (e.g. from GDAL via FFI)?
+**Current architecture:**
+
+```
+SK WebSocket worker ──▶ App.svelte (message handler) ──▶ stores (vesselState, route, …) ──▶ Map.svelte
+Browser GPS effect  ──▶ App.svelte                   ──▶ stores
+```
+
+The stores (`vesselState`, `route`, `ais`, `track`) are the informal boundary between data sources and visualization. There is no explicit source-selection layer; `App.svelte`'s message handler and `$effect` blocks decide what to write into each store.
+
+**Current source rules (inline in App.svelte):**
+- In geo mode: vessel position/COG/SOG from browser GPS; route/course from SK is suppressed (`undefined`)
+- In SK mode: all data from SK WebSocket
+- AIS and track always come from SK regardless of geo mode
+
+**Known limitation:**  
+Policy is scattered across `App.svelte`. Adding a second source (NMEA USB dongle, second SK server, GRIB wind) requires touching the message handler inline.
+
+**Future direction:**  
+If sources multiply, extract a source-selector/merger layer that receives all source streams and publishes a single resolved state into the stores. Rules (which source wins per field) would be explicit and testable.
+
+---
+
+## Implemented Features (as of 2026-05)
+
+### Navigation display
+- Own-vessel position, COG vector, heading line — all with configurable appearance
+- Dead-reckoning animation for AIS targets between updates
+- Vessel track (breadcrumb trail) — fetched from SK REST history + live append
+  - Fade-out at track start (oldest point) over min(0.5 nm, 10% of track length)
+  - Antimeridian-safe, great-circle densified segments
+- Active route display — fetched from SK REST on route change
+  - Bearing line (vessel → next waypoint), active leg, remaining waypoints
+  - Great-circle densified, antimeridian-safe (multi-crossing)
+- Scale bar in nautical miles
+
+### AIS
+- Real-time AIS targets via SK WebSocket — hull polygon + icon + COG vector
+- Dead-reckoning animation between position updates
+- Vessel name labels
+- Tap-to-popup: name, MMSI, COG, SOG, type, links to vessel tracking platforms
+- AIS vessel tracks — GC densified, antimeridian-safe
+- Configurable appearance: color, size, COG length, track visibility
+
+### Chart sources
+- Signal K chart list via REST API (`/signalk/v1/api/resources/charts`)
+- Raster tile sources (XYZ/TMS)
+- Vector tile sources (MVT/S-57 via style URL)
+- WMS via WMTS/GetMap URL template
+- Chart picker UI with layer ordering
+- Sticky chart layer selection (remembered across sessions)
+
+### Map interaction
+- Globe and Mercator projections (toggle)
+- Pan, pinch-zoom, rotate — full touch support
+- Rulers: tap-to-measure great-circle distances with popup label
+- Disambiguation popup for overlapping features
+- Follow-vessel mode (centering)
+- Map rotation modes: N-up, COG-up, HDG-up, BRG-up (bearing to active waypoint)
+  - BRG mode only available when a next waypoint exists; auto-falls back to COG when route cleared
+  - Manual mode when user rotates by gesture; button click resumes auto mode
+
+### Settings
+- Signal K server connection (protocol, host, port)
+- Browser GPS mode: uses device GPS instead of SK position
+  - Live accuracy indicator (GPS / WiFi / cell tower) with colour-coded badge
+  - Approximate-permission warning (Android 12+)
+  - `maximumAge: 0` — never uses cached position
+  - Route/course data suppressed when in browser GPS mode
+- Device compass (DeviceOrientation API) for heading when in GPS mode
+- Appearance: vessel color/size, line styles for heading/COG/GC vectors
+- AIS appearance: vessel color/size, COG length, track style
+- Route appearance: bearing/segment/remaining line styles
+- Track appearance: color, width, style, history duration (log scale)
+- FPS target (performance tuning)
+- Deep-link support to open specific settings tab
+
+### Platform
+- PWA (Progressive Web App) — installable, works offline
+- Screen Wake Lock — prevents display dimming during navigation
+- Service Worker tile cache
+
+---
+
+## Open Questions
 - [ ] S-52 symbology: implement IHO standard symbols, or start with simplified/custom nautical style?
 - [ ] Signal K connection: direct WebSocket from browser, or proxied through Tauri Rust backend?
 - [ ] AIS source: from Signal K only, or also direct UDP/TCP NMEA input?
@@ -286,4 +369,4 @@ Tauri is packaging, not a dependency.
 
 ---
 
-*Last updated: 2026-05-24 — refined ADR-001 after fair OL WebGL comparison*
+*Last updated: 2026-05-30 — added Implemented Features section, updated stack summary, ADR-008 (source selection)*
