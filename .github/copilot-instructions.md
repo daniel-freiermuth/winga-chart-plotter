@@ -21,6 +21,7 @@ A professional sea chart plotting application for sailing, built on Signal K.
 - No hardcoded `EPSG:3857` in business logic.
 - Tile sources always use the `{z}/{x}/{y}` URL interface regardless of backend (remote, cached, local server).
 - TypeScript calls into WASM for any computation involving geo data, Signal K values, or routing.
+- Make sure that all the checkers and linters are green
 
 ## Code style
 
