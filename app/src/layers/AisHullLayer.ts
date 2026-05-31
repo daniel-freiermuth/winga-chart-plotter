@@ -229,6 +229,8 @@ export interface AisHullLayerProps<DataT = number> extends LayerProps {
   uploadTimestamp?: number;
   /** If true, draw() calls setNeedsRedraw() to keep animating each frame. */
   selfAnimate?: boolean;
+  /** Minimum ms between animation redraws when selfAnimate is true. 0 = every frame. */
+  animationIntervalMs?: number;
   settingsIconSize?: number;
   opacity?: number;
 }
@@ -243,10 +245,11 @@ const defaultProps: DefaultProps<AisHullLayerProps<number>> = {
   getLength:      { type: 'accessor', value: 50 },
   getBeam:        { type: 'accessor', value: 10 },
   getColor:       { type: 'accessor', value: [0, 100, 200, 220] },
-  uploadTimestamp: 0,
-  selfAnimate: false,
-  settingsIconSize: 1,
-  opacity: 1,
+  uploadTimestamp:   0,
+  selfAnimate:       false,
+  animationIntervalMs: 0,
+  settingsIconSize:  1,
+  opacity:           1,
 };
 
 // ---------------------------------------------------------------------------
@@ -256,6 +259,8 @@ const defaultProps: DefaultProps<AisHullLayerProps<number>> = {
 export class AisHullLayer<DataT = number> extends Layer<AisHullLayerProps<DataT>> {
   static override layerName = 'AisHullLayer';
   static override defaultProps = defaultProps;
+
+  private _animateTimerId: ReturnType<typeof setTimeout> | null = null;
 
   override getShaders() {
     return super.getShaders({
@@ -304,11 +309,10 @@ export class AisHullLayer<DataT = number> extends Layer<AisHullLayerProps<DataT>
   }
 
   override draw({ uniforms: _uniforms }: { uniforms: Record<string, unknown> }) {
-    const { uploadTimestamp, selfAnimate, settingsIconSize, opacity } = this.props;
-    // Compute elapsed time in draw() so the uniform changes every frame without
-    // creating new layer instances or triggering prop reconciliation.
+    const { uploadTimestamp, selfAnimate, animationIntervalMs, settingsIconSize, opacity } = this.props;
+    const now = Date.now();
     const timeSinceUpload = selfAnimate
-      ? Math.max(0, (Date.now() - (uploadTimestamp ?? 0)) / 1000)
+      ? Math.max(0, (now - (uploadTimestamp ?? 0)) / 1000)
       : 0;
     // Read zoom from the live viewport — no need to pass it as a prop or rebuild
     // layer instances on zoom changes.
@@ -323,9 +327,25 @@ export class AisHullLayer<DataT = number> extends Layer<AisHullLayerProps<DataT>
       },
     });
     model.draw(this.context.renderPass);
-    // Self-drive the animation loop: signal deck.gl that this layer needs another
-    // frame without any external setProps() call.
-    if (selfAnimate) this.setNeedsRedraw();
+    if (selfAnimate) {
+      const intervalMs = animationIntervalMs ?? 0;
+      if (intervalMs <= 17) {
+        this.setNeedsRedraw();
+      } else if (this._animateTimerId === null) {
+        this._animateTimerId = setTimeout(() => {
+          this._animateTimerId = null;
+          this.setNeedsRedraw();
+        }, intervalMs);
+      }
+    }
+  }
+
+  override finalizeState(context: Parameters<Layer['finalizeState']>[0]) {
+    if (this._animateTimerId !== null) {
+      clearTimeout(this._animateTimerId);
+      this._animateTimerId = null;
+    }
+    super.finalizeState(context);
   }
 
   _getModel() {
@@ -674,6 +694,8 @@ export interface AisHullDecorationLayerProps<DataT = number> extends LayerProps 
   getBeam?:        Accessor<DataT, number>;
   uploadTimestamp?: number;
   selfAnimate?:    boolean;
+  /** Minimum ms between animation redraws when selfAnimate is true. 0 = every frame. */
+  animationIntervalMs?: number;
   settingsIconSize?: number;
   decoration:      HullDecorationGeometry;
 }
@@ -687,9 +709,10 @@ const decorationDefaultProps: DefaultProps<AisHullDecorationLayerProps<number>> 
   getAgeAtUpload: { type: 'accessor', value: 0 },
   getLength:      { type: 'accessor', value: 50 },
   getBeam:        { type: 'accessor', value: 10 },
-  uploadTimestamp: 0,
-  selfAnimate: false,
-  settingsIconSize: 1,
+  uploadTimestamp:     0,
+  selfAnimate:         false,
+  animationIntervalMs: 0,
+  settingsIconSize:    1,
   decoration: { type: 'object', value: HULL_ANCHOR_DOT } as never,
 };
 
@@ -702,6 +725,8 @@ export class AisHullDecorationLayer<DataT = number>
 {
   static override layerName = 'AisHullDecorationLayer';
   static override defaultProps = decorationDefaultProps;
+
+  private _animateTimerId: ReturnType<typeof setTimeout> | null = null;
 
   override getShaders() {
     return super.getShaders({
@@ -749,9 +774,10 @@ export class AisHullDecorationLayer<DataT = number>
   }
 
   override draw({ uniforms: _uniforms }: { uniforms: Record<string, unknown> }) {
-    const { uploadTimestamp, selfAnimate, settingsIconSize } = this.props;
+    const { uploadTimestamp, selfAnimate, animationIntervalMs, settingsIconSize } = this.props;
+    const now = Date.now();
     const timeSinceUpload = selfAnimate
-      ? Math.max(0, (Date.now() - (uploadTimestamp ?? 0)) / 1000)
+      ? Math.max(0, (now - (uploadTimestamp ?? 0)) / 1000)
       : 0;
     const zoom = this.context.viewport.zoom;
     const model = this.state['model'] as Model;
@@ -759,7 +785,25 @@ export class AisHullDecorationLayer<DataT = number>
       aisHull: { timeSinceUpload, zoom, settingsIconSize: settingsIconSize ?? 1, opacity: 1 },
     });
     model.draw(this.context.renderPass);
-    if (selfAnimate) this.setNeedsRedraw();
+    if (selfAnimate) {
+      const intervalMs = animationIntervalMs ?? 0;
+      if (intervalMs <= 17) {
+        this.setNeedsRedraw();
+      } else if (this._animateTimerId === null) {
+        this._animateTimerId = setTimeout(() => {
+          this._animateTimerId = null;
+          this.setNeedsRedraw();
+        }, intervalMs);
+      }
+    }
+  }
+
+  override finalizeState(context: Parameters<Layer['finalizeState']>[0]) {
+    if (this._animateTimerId !== null) {
+      clearTimeout(this._animateTimerId);
+      this._animateTimerId = null;
+    }
+    super.finalizeState(context);
   }
 
   _getModel() {
@@ -879,6 +923,8 @@ export interface AisHullBorderLayerProps<DataT = number> extends LayerProps {
   getBorderColor?:  Accessor<DataT, [number, number, number, number]>;
   uploadTimestamp?: number;
   selfAnimate?:     boolean;
+  /** Minimum ms between animation redraws when selfAnimate is true. 0 = every frame. */
+  animationIntervalMs?: number;
   settingsIconSize?: number;
   opacity?:         number;
 }
@@ -893,10 +939,11 @@ const borderDefaultProps: DefaultProps<AisHullBorderLayerProps<number>> = {
   getLength:      { type: 'accessor', value: 50 },
   getBeam:        { type: 'accessor', value: 10 },
   getBorderColor: { type: 'accessor', value: [0, 0, 0, 200] },
-  uploadTimestamp: 0,
-  selfAnimate: false,
-  settingsIconSize: 1,
-  opacity: 1,
+  uploadTimestamp:     0,
+  selfAnimate:         false,
+  animationIntervalMs: 0,
+  settingsIconSize:    1,
+  opacity:             1,
 };
 
 export class AisHullBorderLayer<DataT = number>
@@ -904,6 +951,8 @@ export class AisHullBorderLayer<DataT = number>
 {
   static override layerName = 'AisHullBorderLayer';
   static override defaultProps = borderDefaultProps;
+
+  private _animateTimerId: ReturnType<typeof setTimeout> | null = null;
 
   override getShaders() {
     return super.getShaders({
@@ -953,9 +1002,10 @@ export class AisHullBorderLayer<DataT = number>
   }
 
   override draw({ uniforms: _uniforms }: { uniforms: Record<string, unknown> }) {
-    const { uploadTimestamp, selfAnimate, settingsIconSize, opacity } = this.props;
+    const { uploadTimestamp, selfAnimate, animationIntervalMs, settingsIconSize, opacity } = this.props;
+    const now = Date.now();
     const timeSinceUpload = selfAnimate
-      ? Math.max(0, (Date.now() - (uploadTimestamp ?? 0)) / 1000)
+      ? Math.max(0, (now - (uploadTimestamp ?? 0)) / 1000)
       : 0;
     const zoom = this.context.viewport.zoom;
     const model = this.state['model'] as Model;
@@ -968,7 +1018,25 @@ export class AisHullBorderLayer<DataT = number>
       },
     });
     model.draw(this.context.renderPass);
-    if (selfAnimate) this.setNeedsRedraw();
+    if (selfAnimate) {
+      const intervalMs = animationIntervalMs ?? 0;
+      if (intervalMs <= 17) {
+        this.setNeedsRedraw();
+      } else if (this._animateTimerId === null) {
+        this._animateTimerId = setTimeout(() => {
+          this._animateTimerId = null;
+          this.setNeedsRedraw();
+        }, intervalMs);
+      }
+    }
+  }
+
+  override finalizeState(context: Parameters<Layer['finalizeState']>[0]) {
+    if (this._animateTimerId !== null) {
+      clearTimeout(this._animateTimerId);
+      this._animateTimerId = null;
+    }
+    super.finalizeState(context);
   }
 
   _getModel() {

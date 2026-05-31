@@ -496,6 +496,8 @@ export interface AisIconLayerProps<DataT = number> extends LayerProps {
   uploadTimestamp?: number;
   /** If true, draw() calls setNeedsRedraw() to keep animating each frame. */
   selfAnimate?: boolean;
+  /** Minimum ms between animation redraws when selfAnimate is true. 0 = every frame. */
+  animationIntervalMs?: number;
   settingsIconSize?: number;
   opacity?:         number;
 }
@@ -510,7 +512,8 @@ const defaultProps: DefaultProps<AisIconLayerProps<number>> = {
   getLength:      { type: 'accessor', value: 0 },
   getColor:       { type: 'accessor', value: [255, 255, 255, 255] },
   uploadTimestamp:  0,
-  selfAnimate:      false,
+  selfAnimate:         false,
+  animationIntervalMs: 0,
   settingsIconSize: 1,
   opacity:          1,
 };
@@ -522,6 +525,8 @@ const defaultProps: DefaultProps<AisIconLayerProps<number>> = {
 export class AisIconLayer<DataT = number> extends Layer<AisIconLayerProps<DataT>> {
   static override layerName = 'AisIconLayer';
   static override defaultProps = defaultProps;
+
+  private _animateTimerId: ReturnType<typeof setTimeout> | null = null;
 
   override getShaders() {
     return super.getShaders({
@@ -571,9 +576,10 @@ export class AisIconLayer<DataT = number> extends Layer<AisIconLayerProps<DataT>
   }
 
   override draw({ uniforms: _uniforms }: { uniforms: Record<string, unknown> }) {
-    const { uploadTimestamp, selfAnimate, settingsIconSize, opacity } = this.props;
+    const { uploadTimestamp, selfAnimate, animationIntervalMs, settingsIconSize, opacity } = this.props;
+    const now = Date.now();
     const timeSinceUpload = selfAnimate
-      ? Math.max(0, (Date.now() - (uploadTimestamp ?? 0)) / 1000)
+      ? Math.max(0, (now - (uploadTimestamp ?? 0)) / 1000)
       : 0;
     // Read zoom from the live viewport — no prop needed, no layer rebuild on zoom change.
     const zoom = this.context.viewport.zoom;
@@ -587,7 +593,27 @@ export class AisIconLayer<DataT = number> extends Layer<AisIconLayerProps<DataT>
       },
     });
     model.draw(this.context.renderPass);
-    if (selfAnimate) this.setNeedsRedraw();
+    if (selfAnimate) {
+      const intervalMs = animationIntervalMs ?? 0;
+      if (intervalMs <= 17) {
+        // Native fps: request next frame immediately.
+        this.setNeedsRedraw();
+      } else if (this._animateTimerId === null) {
+        // Throttled: schedule next redraw after interval, then let rAF fire draw().
+        this._animateTimerId = setTimeout(() => {
+          this._animateTimerId = null;
+          this.setNeedsRedraw();
+        }, intervalMs);
+      }
+    }
+  }
+
+  override finalizeState(context: Parameters<Layer['finalizeState']>[0]) {
+    if (this._animateTimerId !== null) {
+      clearTimeout(this._animateTimerId);
+      this._animateTimerId = null;
+    }
+    super.finalizeState(context);
   }
 
   _getModel() {

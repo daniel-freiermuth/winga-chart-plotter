@@ -100,8 +100,10 @@
   let _lastNonFollowBearing: number | undefined = undefined;
 
   // Own-vessel setData coalescing: multiple Signal K field updates (lat, lon, COG, SOG, heading)
-  // arrive per epoch and each triggers the $effect. We batch them into one setData per rAF frame.
+  // arrive per epoch and each triggers the $effect. We batch them into one setData per rAF frame
+  // so a burst of field updates causes exactly one MapLibre repaint.
   let _vesselRafId: number | null = null;
+  let _vesselCancelFn: (() => void) | null = null;
   let _pendingVesselSetData: (() => void) | null = null;
 
   // AIS-label setData throttle: individual vessel updates trigger rebuilds of the whole
@@ -1101,6 +1103,7 @@
   onDestroy(() => {
     cancelAnimationFrame(rafId);
     clearTimeout(rafId);
+    _vesselCancelFn?.();
     overlay?.finalize();
     document.removeEventListener('fullscreenchange', onFsChange);
     mapContainer.removeEventListener('pointerdown',   handleRulerPointerDown, { capture: true });
@@ -1580,6 +1583,7 @@
           getColor:       ghostVesselColor,
           uploadTimestamp: now,
           selfAnimate: true,
+          animationIntervalMs: 1000 / settings.targetFps,
           settingsIconSize,
           pickable: true,
         })
@@ -1788,6 +1792,7 @@
           getColor:       vesselColor,
           uploadTimestamp: now,
           selfAnimate: true,
+          animationIntervalMs: 1000 / settings.targetFps,
           settingsIconSize,
           opacity: 0.75,
           pickable: true,
@@ -1831,6 +1836,7 @@
             getBeam:        (i) => getBeam(i, 10),
             uploadTimestamp: now,
             selfAnimate: animate,
+            animationIntervalMs: animate ? 1000 / settings.targetFps : 0,
             settingsIconSize,
             decoration,
           })
@@ -1852,6 +1858,7 @@
             getBorderColor: () => color,
             uploadTimestamp: now,
             selfAnimate: animate,
+            animationIntervalMs: animate ? 1000 / settings.targetFps : 0,
             settingsIconSize,
             opacity,
           })
@@ -2076,9 +2083,11 @@
     if (_vesselRafId === null) {
       _vesselRafId = requestAnimationFrame(() => {
         _vesselRafId = null;
+        _vesselCancelFn = null;
         _pendingVesselSetData?.();
         _pendingVesselSetData = null;
       });
+      _vesselCancelFn = () => cancelAnimationFrame(_vesselRafId!);
     }
   });
 
@@ -2297,8 +2306,7 @@
 
     if (pos && following) {
       if (rm === 'heading' && bearing !== undefined) {
-        // HDG follow: rotate and re-centre at compass rate (60fps).
-        // jumpTo is synchronous — no animation lifecycle, no touch interference.
+        // HDG follow: rotate and re-centre at compass rate — instant, no animation lifecycle, touch-safe.
         map.jumpTo({ center: [pos.longitude, pos.latitude], bearing });
       } else if (posChanged || rmChanged) {
         // Other modes: move camera only when position or rotation mode changes.
