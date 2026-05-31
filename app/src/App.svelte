@@ -538,7 +538,7 @@
   .map-btn--active:hover:not(:disabled) { background: rgba(220,220,240,0.95); }
   .map-btn--highlight            { color: #f59e0b; }
   /* Label-only buttons (rotation mode): fixed width so the toolbar doesn't jump */
-  .map-btn--label                { font-size: 12px; font-weight: 700; letter-spacing: 0.03em; width: 36px; }
+  .map-btn--label                { font-size: 12px; font-weight: 700; letter-spacing: 0.03em; width: 40px; display: flex; align-items: center; justify-content: center; padding-left: 0; padding-right: 0; }
 
   .map-toolbar-divider {
     height: 1px;
