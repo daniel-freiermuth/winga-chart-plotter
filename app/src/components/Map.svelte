@@ -27,8 +27,8 @@
   import { fetchAndResolveStyle } from '../lib/resolveStyle';
   import { fetchAisVesselTrack } from '../lib/signalk-api';
   import { AisHullLayer, AisHullDecorationLayer, AisHullBorderLayer, HULL_ANCHOR_DOT, HULL_MOORING_BARS, HULL_AGROUND_RING, HULL_FISHING_GEAR, HULL_NUC, HULL_RESTRICTED, HULL_DRAUGHT } from '../layers/AisHullLayer';
-  import { AisIconLayer, ANCHOR_DOT_GEOMETRY, AGROUND_CIRCLE_GEOMETRY, MOORING_BARS_GEOMETRY, FISHING_GEAR_GEOMETRY, NUC_GEOMETRY, RESTRICTED_MANOEUVRING_GEOMETRY, DRAUGHT_GEOMETRY, MOB_GEOMETRY } from '../layers/AisIconLayer';
-  import { makeVesselIconData, extrapolatePos } from '../lib/deadReckoning';
+  import { VesselIconLayer, ANCHOR_DOT_GEOMETRY, AGROUND_CIRCLE_GEOMETRY, MOORING_BARS_GEOMETRY, FISHING_GEAR_GEOMETRY, NUC_GEOMETRY, RESTRICTED_MANOEUVRING_GEOMETRY, DRAUGHT_GEOMETRY, MOB_GEOMETRY } from '../layers/VesselIconLayer';
+  import { extrapolatePos } from '../lib/deadReckoning';
 
   type ProjectionId = 'mercator' | 'globe';
 
@@ -106,6 +106,9 @@
   let _vesselCancelFn: (() => void) | null = null;
   let _pendingVesselSetData: (() => void) | null = null;
 
+  // Own vessel deck.gl layer group — rendered last (on top of all AIS layers).
+  let ownVesselLayerGroup: Layer[] = [];
+
   // AIS-label setData throttle: individual vessel updates trigger rebuilds of the whole
   // FeatureCollection. Limit to 1 Hz — labels don't need sub-second precision.
   let _aisLastUpdateMs = 0;
@@ -157,7 +160,6 @@
     }
   }
 
-  const VESSEL_SOURCE   = 'vessel';
   const COG_SOURCE      = 'vessel-cog';
   const HDG_SOURCE      = 'vessel-hdg';
   const GC_SOURCE       = 'vessel-gc';
@@ -573,7 +575,7 @@
   let rulerLayerGroup: Layer[] = [];
 
   function flushLayers() {
-    overlay?.setProps({ layers: [...aisLayerGroup, ...rulerLayerGroup] });
+    overlay?.setProps({ layers: [...aisLayerGroup, ...rulerLayerGroup, ...ownVesselLayerGroup] });
   }
 
   let rafId = 0;
@@ -821,28 +823,11 @@
       if (e.originalEvent) rotateMode.setManual();
     });
 
-    // Own vessel click — show a small popup with a link to vessel settings.
-    map.on('click', 'vessel-icon', (e) => {
-      e.preventDefault();
-      const coord = e.lngLat;
-      const popup = new maplibregl.Popup({ closeButton: false, offset: 14, className: 'vessel-self-popup' })
-        .setLngLat(coord)
-        .setHTML('<button class="vessel-self-settings-btn">Own vessel settings</button>')
-        .addTo(map!);
-      popup.getElement().addEventListener('click', (ev) => {
-        const btn = (ev.target as HTMLElement).closest('.vessel-self-settings-btn');
-        if (!btn) return;
-        popup.remove();
-        openSettings('vessel');
-      });
-    });
-    map.on('mouseenter', 'vessel-icon', () => { if (map) map.getCanvas().style.cursor = 'pointer'; });
-    map.on('mouseleave', 'vessel-icon', () => { if (map) map.getCanvas().style.cursor = ''; });
+    // Own vessel click — handled in the generic map.on('click') via deck.gl picking.
 
     // Route click — show popup with route name and link to route settings.
     const routeClickLayers = ['route-full', 'route-leg', 'route-bearing', 'route-waypoints'];
     map.on('click', routeClickLayers, (e) => {
-      if (map?.queryRenderedFeatures(e.point, { layers: ['vessel-icon'] }).length) return;
       const name = route.routeName;
       const html = `
         <div class="ais-popup">
@@ -869,7 +854,6 @@
 
     // All-routes click — show route name, stub Activate button, and link to route appearance settings.
     map.on('click', 'all-routes-line', (e) => {
-      if (map?.queryRenderedFeatures(e.point, { layers: ['vessel-icon'] }).length) return;
       const f = e.features?.[0];
       if (!f) return;
       const name = f.properties?.name as string ?? '';
@@ -897,10 +881,25 @@
     map.on('mouseleave', 'all-routes-line', () => { if (map) map.getCanvas().style.cursor = ''; });
 
     map.on('click', (e) => {
-      // Don't open AIS popup if the own-vessel icon was clicked (handled above).
-      if (map?.queryRenderedFeatures(e.point, { layers: ['vessel-icon'] }).length) return;
       if (!overlay) return;
       const { x, y } = e.point;
+
+      // Own vessel is the topmost deck.gl layer — check it first.
+      const ownPicked = overlay.pickMultipleObjects({ x, y, radius: 5, layerIds: ['own-vessel-icon'] });
+      if (ownPicked.length > 0) {
+        const popup = new maplibregl.Popup({ closeButton: false, offset: 14, className: 'vessel-self-popup' })
+          .setLngLat(e.lngLat)
+          .setHTML('<button class="vessel-self-settings-btn">Own vessel settings</button>')
+          .addTo(map!);
+        popup.getElement().addEventListener('click', (ev) => {
+          const btn = (ev.target as HTMLElement).closest('.vessel-self-settings-btn');
+          if (!btn) return;
+          popup.remove();
+          openSettings('vessel');
+        });
+        return;
+      }
+
       const aisLayerIds = ['ais-confirmed-icon', 'ais-hull-ghost', 'ais-hull-confirmed', 'ais-ghost-icon', 'ais-mob-icon'];
       const allPicked = overlay.pickMultipleObjects({ x, y, radius: 5, layerIds: aisLayerIds });
 
@@ -936,12 +935,7 @@
       const m = map;
       if (!m) return;
       const ap = settings.appearance;
-      // Image manager is not cleared by diff-mode style transitions — guard against duplicates.
-      if (!m.hasImage('vessel-icon')) {
-        m.addImage('vessel-icon', { width: 64, height: 64, data: makeVesselIconData(64, ap.vesselColor).data });
-      }
 
-      if (!m.getSource(VESSEL_SOURCE)) m.addSource(VESSEL_SOURCE, { type: 'geojson', data: EMPTY_FC });
       if (!m.getSource(COG_SOURCE))    m.addSource(COG_SOURCE,    { type: 'geojson', data: EMPTY_FC });
       if (!m.getSource(HDG_SOURCE))    m.addSource(HDG_SOURCE,    { type: 'geojson', data: EMPTY_FC });
       if (!m.getSource(GC_SOURCE))     m.addSource(GC_SOURCE,     { type: 'geojson', data: EMPTY_FC });
@@ -980,16 +974,7 @@
       if (!m.getLayer('vessel-hdg-line')) m.addLayer({ id: 'vessel-hdg-line', type: 'line', source: HDG_SOURCE,
         paint: { 'line-color': ap.heading.color, 'line-width': ap.heading.width } });
 
-      if (!m.getLayer('vessel-icon')) m.addLayer({ id: 'vessel-icon', type: 'symbol', source: VESSEL_SOURCE,
-        layout: {
-          'icon-image': 'vessel-icon',
-          'icon-size': ap.vesselSize / 64,
-          'icon-rotate': ['get', 'bearing_deg'],
-          'icon-rotation-alignment': 'map',
-          'icon-allow-overlap': true,
-          'icon-ignore-placement': true,
-        },
-      });
+      // Own vessel icon is rendered by deck.gl (see ownVesselLayerGroup / position $effect below).
 
       // Track layer — below all vessel/route layers, above chart tiles.
       // Inserted before 'vessel-gc-line' first so subsequent route insertions land above it.
@@ -1064,7 +1049,7 @@
         paint: { 'line-color': '#ff6d00', 'line-width': 2, 'line-dasharray': [4, 3] },
       }, 'vessel-gc-line');
 
-      // Waypoint markers: above lines but below the own-vessel icon.
+      // Waypoint markers: above route lines, below deck.gl layers (own vessel + AIS).
       if (!m.getLayer('route-waypoints')) m.addLayer({
         id: 'route-waypoints', type: 'circle', source: ROUTE_WPT_SRC,
         paint: {
@@ -1074,7 +1059,7 @@
           'circle-stroke-color': '#fff',
           'circle-stroke-width': 1.5,
         },
-      }, 'vessel-icon');
+      });
 
       mapZoom    = map.getZoom();
       mapBearing = map.getBearing();
@@ -1366,12 +1351,6 @@
   });
 
 
-  $effect(() => {
-    if (!map || !mapLoaded) return;
-    const iconData = makeVesselIconData(64, settings.appearance.vesselColor);
-    map.updateImage('vessel-icon', { width: 64, height: 64, data: iconData.data });
-  });
-
   // Update ais-label text color when AIS appearance settings change.
   // Hull, icon, and COG rendering are handled by the deck.gl effect below.
   $effect(() => {
@@ -1570,7 +1549,7 @@
     const getLenForIcon = (i: number) => hullSet.has(i) ? getLen(i, 0) : 0;
 
     const ghostIconLayer = ghostIndices.length > 0
-      ? new AisIconLayer({
+      ? new VesselIconLayer({
           id: 'ais-ghost-icon',
           data: ghostIndices,
           getPosition:    getPos,
@@ -1590,7 +1569,7 @@
       : null;
 
     // Arrow layer — all vessels, always.
-    const confirmedIconLayer = new AisIconLayer({
+    const confirmedIconLayer = new VesselIconLayer({
       id: 'ais-confirmed-icon',
       data: visIndices,
       getPosition:    getPos,
@@ -1609,7 +1588,7 @@
 
     // Anchor-dot overlay — nav state only, arrow already drawn above.
     const anchoredIconLayer = anchoredIndices.length > 0
-      ? new AisIconLayer({
+      ? new VesselIconLayer({
           id: 'ais-anchored-icon',
           data: anchoredIndices,
           getPosition:    getPos,
@@ -1630,7 +1609,7 @@
 
     // Mooring-bars overlay — nav state only, arrow already drawn above.
     const mooredIconLayer = mooredIndices.length > 0
-      ? new AisIconLayer({
+      ? new VesselIconLayer({
           id: 'ais-moored-icon',
           data: mooredIndices,
           getPosition:    getPos,
@@ -1651,7 +1630,7 @@
 
     // Aground circle overlay — nav state only, arrow already drawn above.
     const agroundIconLayer = agroundIndices.length > 0
-      ? new AisIconLayer({
+      ? new VesselIconLayer({
           id: 'ais-aground-icon',
           data: agroundIndices,
           getPosition:    getPos,
@@ -1672,7 +1651,7 @@
 
     // Fishing gear overlay — nav state "fishing" / "engagedInFishing".
     const fishingIconLayer = fishingIndices.length > 0
-      ? new AisIconLayer({
+      ? new VesselIconLayer({
           id: 'ais-fishing-icon',
           data: fishingIndices,
           getPosition:    getPos,
@@ -1693,7 +1672,7 @@
 
     // NUC overlay — nav state 2.
     const nucIconLayer = nucIndices.length > 0
-      ? new AisIconLayer({
+      ? new VesselIconLayer({
           id: 'ais-nuc-icon',
           data: nucIndices,
           getPosition:    getPos,
@@ -1714,7 +1693,7 @@
 
     // Restricted manoeuvrability overlay — nav state 3.
     const restrictedIconLayer = restrictedIndices.length > 0
-      ? new AisIconLayer({
+      ? new VesselIconLayer({
           id: 'ais-restricted-icon',
           data: restrictedIndices,
           getPosition:    getPos,
@@ -1735,7 +1714,7 @@
 
     // Constrained by draught overlay — nav state 4.
     const draughtIconLayer = draughtIndices.length > 0
-      ? new AisIconLayer({
+      ? new VesselIconLayer({
           id: 'ais-draught-icon',
           data: draughtIndices,
           getPosition:    getPos,
@@ -1758,7 +1737,7 @@
     // getLength = 0 disables cross-fade → icon always visible regardless of zoom.
     // getHeading = 0 keeps the swimmer north-up (no meaningful orientation for a beacon).
     const mobIconLayer = sarIndices.length > 0
-      ? new AisIconLayer({
+      ? new VesselIconLayer({
           id: 'ais-mob-icon',
           data: sarIndices,
           getPosition:    getPos,
@@ -1982,7 +1961,7 @@
     map.setPaintProperty('vessel-hdg-line',    'line-color',     ap.heading.color);
     map.setPaintProperty('vessel-hdg-line',    'line-width',     ap.heading.width);
     map.setPaintProperty('vessel-hdg-line',    'line-dasharray', dashArray(ap.heading.style, ap.heading.width) ?? undefined);
-    map.setLayoutProperty('vessel-icon',       'icon-size',       ap.vesselSize / 64);
+    // Own vessel icon size/color are handled reactively in the position $effect (deck.gl layer).
     // Track: solid style uses line-gradient for the fade effect (incompatible with line-dasharray).
     // Non-solid styles fall back to line-color + line-dasharray (no fade).
     if (ap.track.style === 'solid') {
@@ -2037,13 +2016,32 @@
     }
 
     const orientRad  = state.heading ?? state.cog ?? null;
-    const bearingDeg = orientRad !== null ? (orientRad * 180) / Math.PI : 0;
 
-    // Compute GeoJSON eagerly (cheap CPU work) so the closure captures the current values.
-    const vesselFC: GeoJSON.FeatureCollection = {
-      type: 'FeatureCollection',
-      features: [{ type: 'Feature', geometry: { type: 'Point', coordinates: [longitude, latitude] }, properties: { bearing_deg: bearingDeg } }],
-    };
+    // Own vessel deck.gl layer — rendered as the topmost layer (on top of all AIS).
+    // Rebuilt each effect run so position, heading, color, and size stay current.
+    // VesselIconLayer handles globe mode, map-aligned rotation, and picking correctly.
+    const ownVesselColor = hexToRgba(ap.vesselColor, 255);
+    const ownVesselSize  = ap.vesselSize / 64;
+    ownVesselLayerGroup = [
+      new VesselIconLayer<number>({
+        id: 'own-vessel-icon',
+        data: [0],
+        getPosition:    () => [longitude, latitude, 0],
+        getSog:         () => 0,
+        getCog:         () => 0,
+        getHeading:     () => orientRad ?? 0,
+        getRot:         () => 0,
+        getAgeAtUpload: () => 0,
+        getLength:      () => 0,
+        getColor:       () => ownVesselColor,
+        uploadTimestamp: 0,
+        selfAnimate: false,
+        settingsIconSize: ownVesselSize,
+        pickable: true,
+      }),
+    ];
+    flushLayers();
+
     const cogFC: GeoJSON.FeatureCollection = state.cog !== null ? { type: 'FeatureCollection', features: [{
       type: 'Feature',
       geometry: { type: 'LineString', coordinates: rhumbCoords(longitude, latitude, state.cog, lineDistM(ap.cog, state.sog)) },
@@ -2065,15 +2063,12 @@
     // Coalesce: multiple store updates (lat, lon, COG, SOG, heading) can fire this effect
     // in rapid succession. Only call setData once per animation frame.
     _pendingVesselSetData = () => {
-      const vesselSrc = m.getSource(VESSEL_SOURCE);
       const cogSrc    = m.getSource(COG_SOURCE);
       const gcSrc     = m.getSource(GC_SOURCE);
       const hdgSrc    = m.getSource(HDG_SOURCE);
-      if (!(vesselSrc instanceof maplibregl.GeoJSONSource)) return;
       if (!(cogSrc    instanceof maplibregl.GeoJSONSource)) return;
       if (!(gcSrc     instanceof maplibregl.GeoJSONSource)) return;
       if (!(hdgSrc    instanceof maplibregl.GeoJSONSource)) return;
-      vesselSrc.setData(vesselFC);
       cogSrc.setData(cogFC);
       gcSrc.setData(gcFC);
       hdgSrc.setData(hdgFC);

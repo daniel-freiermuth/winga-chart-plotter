@@ -1,5 +1,5 @@
 /**
- * AisIconLayer — custom deck.gl Layer that renders vessel arrow icons with GPU dead reckoning.
+ * VesselIconLayer — custom deck.gl Layer that renders vessel arrow icons with GPU dead reckoning.
  *
  * Per-frame cost: only the `timeSinceUpload` and `zoom` uniforms change.
  * GPU buffers (position, heading, sog, cog, …) are uploaded once per AIS tick.
@@ -479,7 +479,7 @@ export const MOB_GEOMETRY: IconGeometry = (() => {
 // Props
 // ---------------------------------------------------------------------------
 
-export interface AisIconLayerProps<DataT = number> extends LayerProps {
+export interface VesselIconLayerProps<DataT = number> extends LayerProps {
   data: DataT[] | { length: number };
   getPosition?:    Accessor<DataT, [number, number] | [number, number, number]>;
   getSog?:         Accessor<DataT, number>;
@@ -502,7 +502,7 @@ export interface AisIconLayerProps<DataT = number> extends LayerProps {
   opacity?:         number;
 }
 
-const defaultProps: DefaultProps<AisIconLayerProps<number>> = {
+const defaultProps: DefaultProps<VesselIconLayerProps<number>> = {
   getPosition:    { type: 'accessor', value: [0, 0] },
   getSog:         { type: 'accessor', value: 0 },
   getCog:         { type: 'accessor', value: 0 },
@@ -522,8 +522,8 @@ const defaultProps: DefaultProps<AisIconLayerProps<number>> = {
 // Layer class
 // ---------------------------------------------------------------------------
 
-export class AisIconLayer<DataT = number> extends Layer<AisIconLayerProps<DataT>> {
-  static override layerName = 'AisIconLayer';
+export class VesselIconLayer<DataT = number> extends Layer<VesselIconLayerProps<DataT>> {
+  static override layerName = 'VesselIconLayer';
   static override defaultProps = defaultProps;
 
   private _animateTimerId: ReturnType<typeof setTimeout> | null = null;
