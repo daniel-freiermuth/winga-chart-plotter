@@ -26,7 +26,7 @@
   import { gcLine, gcBearingDeg } from '../lib/geoMath';
   import { fetchAndResolveStyle } from '../lib/resolveStyle';
   import { auth } from '../stores/auth.svelte';
-  import { fetchAisVesselTrack, navigateToPoint } from '../lib/signalk-api';
+  import { fetchAisVesselTrack, navigateToPoint, clearCourse } from '../lib/signalk-api';
   import { AisHullLayer, AisHullDecorationLayer, AisHullBorderLayer, HULL_ANCHOR_DOT, HULL_MOORING_BARS, HULL_AGROUND_RING, HULL_FISHING_GEAR, HULL_NUC, HULL_RESTRICTED, HULL_DRAUGHT } from '../layers/AisHullLayer';
   import { VesselIconLayer, ANCHOR_DOT_GEOMETRY, AGROUND_CIRCLE_GEOMETRY, MOORING_BARS_GEOMETRY, FISHING_GEAR_GEOMETRY, NUC_GEOMETRY, RESTRICTED_MANOEUVRING_GEOMETRY, DRAUGHT_GEOMETRY, MOB_GEOMETRY } from '../layers/VesselIconLayer';
   import { extrapolatePos } from '../lib/deadReckoning';
@@ -830,22 +830,31 @@
     const routeClickLayers = ['route-full', 'route-leg', 'route-bearing', 'route-waypoints'];
     map.on('click', routeClickLayers, (e) => {
       const name = route.routeName;
+      const canStop = auth.isLoggedIn;
       const html = `
         <div class="ais-popup">
           ${name ? `<div class="ais-popup-title">${name}</div>` : ''}
           <div class="ais-links" style="margin-top:0">
+            <button class="popup-settings-btn stop-nav-btn"
+              ${canStop ? '' : 'disabled title="Login required"'}>Stop navigation</button>
             <button class="popup-settings-btn" data-settings="routes">Route settings</button>
           </div>
         </div>`;
-      const popup = new maplibregl.Popup({ closeButton: false, offset: 10, maxWidth: '220px' })
+      const popup = new maplibregl.Popup({ closeButton: false, offset: 10, maxWidth: 'none' })
         .setLngLat(e.lngLat)
         .setHTML(html)
         .addTo(map!);
       popup.getElement().addEventListener('click', (ev) => {
-        const btn = (ev.target as HTMLElement).closest<HTMLElement>('[data-settings]');
-        if (!btn) return;
-        popup.remove();
-        openSettings(btn.dataset.settings!);
+        const el = ev.target as HTMLElement;
+        const settingsBtn = el.closest<HTMLElement>('[data-settings]');
+        if (settingsBtn) { popup.remove(); openSettings(settingsBtn.dataset.settings!); return; }
+        const stopBtn = el.closest<HTMLButtonElement>('.stop-nav-btn');
+        if (stopBtn && !stopBtn.disabled) {
+          popup.remove();
+          clearCourse(settings.signalkHttpUrl, auth.authHeaders).catch(err => {
+            console.error('[navigate] Failed to clear course:', err);
+          });
+        }
       });
     });
     for (const id of routeClickLayers) {
@@ -866,7 +875,7 @@
             <button class="popup-settings-btn" data-settings="routes">Route style</button>
           </div>
         </div>`;
-      const popup = new maplibregl.Popup({ closeButton: false, offset: 10, maxWidth: '240px' })
+      const popup = new maplibregl.Popup({ closeButton: false, offset: 10, maxWidth: 'none' })
         .setLngLat(e.lngLat)
         .setHTML(html)
         .addTo(map!);
@@ -1218,7 +1227,7 @@
       aisAgeTimer = null;
     }
 
-    const popup = new maplibregl.Popup({ closeButton: true, maxWidth: '280px' })
+    const popup = new maplibregl.Popup({ closeButton: true, maxWidth: 'none' })
       .setLngLat(coordinate)
       .setHTML(buildAisPopupHtml(t))
       .addTo(map!);
@@ -1277,7 +1286,7 @@
         <ul class="ais-disambig-list">${items}</ul>
       </div>`;
 
-    const popup = new maplibregl.Popup({ closeButton: true, maxWidth: '220px' })
+    const popup = new maplibregl.Popup({ closeButton: true, maxWidth: 'none' })
       .setLngLat(coordinate)
       .setHTML(html)
       .addTo(map!);
@@ -1314,7 +1323,7 @@
     const serverBase = settings.signalkHttpUrl;
     const canNavigate = auth.isLoggedIn;
 
-    const popup = new maplibregl.Popup({ closeButton: true, maxWidth: '240px' })
+    const popup = new maplibregl.Popup({ closeButton: true, maxWidth: 'none' })
       .setLngLat(lngLat)
       .setHTML(`
         <div class="ais-popup navigate-popup">
@@ -2572,7 +2581,8 @@
   }
   :global(.ais-links) {
     display: flex;
-    gap: 8px;
+    flex-direction: column;
+    gap: 6px;
     margin-top: 8px;
     padding-top: 8px;
     border-top: 1px solid #333;
