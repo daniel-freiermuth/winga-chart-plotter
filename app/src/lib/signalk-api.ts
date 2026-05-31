@@ -579,9 +579,7 @@ export async function raiseMob(
     method: 'PUT',
     headers: { 'Content-Type': 'application/json', ...authHeaders },
     body: JSON.stringify({
-      method: ['visual', 'sound'],
-      state: 'emergency',
-      message: 'Man Overboard!',
+      value: { method: ['visual', 'sound'], state: 'emergency', message: 'Man Overboard!' },
     }),
   });
   if (!res.ok) throw new Error(`MOB raise failed: ${String(res.status)} ${res.statusText}`);
