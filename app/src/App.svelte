@@ -4,6 +4,7 @@
   import FaIcon from './lib/FaIcon.svelte';
   import { faLocationCrosshairs, faRuler, faPencil } from '@fortawesome/free-solid-svg-icons';
   import { routePlanner } from './stores/routePlanner.svelte';
+  import { waypoints } from './stores/waypoints.svelte';
   import { saveRoute, updateRoute } from './lib/signalk-api';
 
   let plannerSaving = $state(false);
@@ -251,6 +252,20 @@
   // Charts and vessel info only depend on the HTTP URL — no WASM needed on main thread.
   // Vessel info is re-fetched periodically: AIS static data (name, type, dimensions)
   // is broadcast by vessels every ~6 minutes, so Signal K may not have it at startup.
+  // Reload routes and waypoints periodically so changes from other UIs are reflected.
+  let resourcePollTimer: ReturnType<typeof setInterval> | null = null;
+  $effect(() => {
+    const httpUrl  = settings.signalkHttpUrl;
+    const interval = settings.resourcePollIntervalSeconds * 1000;
+    if (resourcePollTimer !== null) clearInterval(resourcePollTimer);
+    const pollResources = () => {
+      void routes.load(httpUrl);
+      void waypoints.load(httpUrl);
+    };
+    resourcePollTimer = setInterval(pollResources, interval);
+    return () => { if (resourcePollTimer !== null) clearInterval(resourcePollTimer); };
+  });
+
   const VESSEL_INFO_INTERVAL_MS = 3 * 60 * 1000;
   let lastHttpUrl = '';
   let vesselInfoTimer: ReturnType<typeof setInterval> | null = null;
@@ -260,6 +275,7 @@
     lastHttpUrl = httpUrl;
     void charts.load(httpUrl);
     void routes.load(httpUrl);
+    void waypoints.load(httpUrl);
     void auth.init(httpUrl);
 
     if (vesselInfoTimer !== null) clearInterval(vesselInfoTimer);

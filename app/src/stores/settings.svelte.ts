@@ -78,12 +78,14 @@ export interface SettingsData {
   useGeoLocation: boolean;
   appearance: AppearanceSettings;
   targetFps: number;
+  resourcePollIntervalSeconds: number;
 }
 
 const DEFAULTS: SettingsData = {
   ...detectSignalkOrigin(),
   useGeoLocation: false,
   targetFps: 60,
+  resourcePollIntervalSeconds: 5,
   appearance: {
     vesselColor: '#2563eb',
     vesselSize: 24,
@@ -135,6 +137,7 @@ function load(): SettingsData {
           ...DEFAULTS, ...p,
           useGeoLocation: typeof p.useGeoLocation === 'boolean' ? p.useGeoLocation : DEFAULTS.useGeoLocation,
           targetFps: typeof p.targetFps === 'number' && p.targetFps > 0 ? p.targetFps : DEFAULTS.targetFps,
+          resourcePollIntervalSeconds: typeof p.resourcePollIntervalSeconds === 'number' && p.resourcePollIntervalSeconds > 0 ? p.resourcePollIntervalSeconds : DEFAULTS.resourcePollIntervalSeconds,
           appearance: {
             ...DEFAULTS.appearance, ...(p.appearance ?? {}),
             heading: { ...DEFAULTS.appearance.heading, ...(p.appearance?.heading ?? {}) },
@@ -178,6 +181,7 @@ function createSettings() {
     get geoAccuracy(): number | null { return geoAccuracy; },
     get appearance(): AppearanceSettings { return data.appearance; },
     get targetFps(): number       { return data.targetFps; },
+    get resourcePollIntervalSeconds(): number { return data.resourcePollIntervalSeconds; },
     get signalkUrl(): string {
       return `${data.signalkProtocol}://${data.signalkHost}:${String(data.signalkPort)}${SIGNALK_PATH}`;
     },
@@ -195,6 +199,7 @@ function createSettings() {
       }
       if (next.appearance      !== undefined) data.appearance      = next.appearance;
       if (next.targetFps       !== undefined) data.targetFps       = next.targetFps;
+      if (next.resourcePollIntervalSeconds !== undefined) data.resourcePollIntervalSeconds = next.resourcePollIntervalSeconds;
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
     },
     setGeoError(msg: string) {

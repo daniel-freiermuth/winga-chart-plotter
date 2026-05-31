@@ -23,11 +23,12 @@
   import { routePlanner } from '../stores/routePlanner.svelte';
   import { route } from '../stores/route.svelte';
   import { routes } from '../stores/routes.svelte';
+  import { waypoints } from '../stores/waypoints.svelte';
   import { track } from '../stores/track.svelte';
   import { gcLine, gcBearingDeg, gcDistanceNm } from '../lib/geoMath';
   import { fetchAndResolveStyle } from '../lib/resolveStyle';
   import { auth } from '../stores/auth.svelte';
-  import { fetchAisVesselTrack, navigateToPoint, clearCourse, activateRoute, saveRoute, deleteRoute } from '../lib/signalk-api';
+  import { fetchAisVesselTrack, navigateToPoint, clearCourse, activateRoute, saveRoute, deleteRoute, saveWaypoint, updateWaypoint, deleteWaypoint } from '../lib/signalk-api';
   import { AisHullLayer, AisHullDecorationLayer, AisHullBorderLayer, HULL_ANCHOR_DOT, HULL_MOORING_BARS, HULL_AGROUND_RING, HULL_FISHING_GEAR, HULL_NUC, HULL_RESTRICTED, HULL_DRAUGHT } from '../layers/AisHullLayer';
   import { VesselIconLayer, ANCHOR_DOT_GEOMETRY, AGROUND_CIRCLE_GEOMETRY, MOORING_BARS_GEOMETRY, FISHING_GEAR_GEOMETRY, NUC_GEOMETRY, RESTRICTED_MANOEUVRING_GEOMETRY, DRAUGHT_GEOMETRY, MOB_GEOMETRY } from '../layers/VesselIconLayer';
   import { extrapolatePos } from '../lib/deadReckoning';
@@ -168,7 +169,8 @@
   const AIS_SOURCE      = 'ais-targets'; // kept for ais-label text layer
   const ROUTE_LINE_SRC  = 'route-lines';
   const ROUTE_WPT_SRC   = 'route-waypoints';
-  const ALL_ROUTES_SRC  = 'all-routes';
+  const ALL_ROUTES_SRC   = 'all-routes';
+  const ALL_WAYPOINTS_SRC = 'all-waypoints';
   const TRACK_SOURCE          = 'vessel-track';
   const TRACK_OVERFLOW_SOURCE = 'vessel-track-overflow';
   const AIS_TRACK_SOURCE          = 'ais-track';
@@ -478,6 +480,8 @@
   let plannerDrag: { idx: number } | null = null;
   // Waypoint index targeted by a right-click (set in pointerdown, consumed in contextmenu).
   let plannerRightClickIdx: number | null = null;
+  // Waypoint being relocated: next map click sets its new position.
+  let movingWaypoint: { uuid: string; name: string } | null = $state(null);
 
   function setHandleHover(hovering: boolean) {
     if (hovering === isHoveringHandle) return;
@@ -1064,9 +1068,92 @@
     map.on('mouseenter', 'all-routes-line', () => { if (map) map.getCanvas().style.cursor = 'pointer'; });
     map.on('mouseleave', 'all-routes-line', () => { if (map) map.getCanvas().style.cursor = ''; });
 
+    // Waypoint click — show popup with name, Edit, Navigate here, Delete.
+    map.on('click', 'all-waypoints-circle', (e) => {
+      const f = e.features?.[0];
+      if (!f) return;
+      const uuid = f.properties?.uuid as string ?? '';
+      const name = f.properties?.name as string ?? '';
+      const coords = (f.geometry as GeoJSON.Point).coordinates;
+      const lon = coords[0];
+      const lat = coords[1];
+      const canAct = auth.isLoggedIn && uuid !== '';
+      const html = `
+        <div class="ais-popup">
+          <div class="ais-popup-title">${name || 'Waypoint'}</div>
+          <div class="ais-popup-coords">${formatDm(lat, lon)}</div>
+          <div class="ais-links" style="margin-top:4px">
+            <button class="popup-settings-btn navigate-here-btn"
+              ${auth.isLoggedIn ? '' : 'disabled title="Login required"'}>Navigate here</button>
+            <button class="popup-settings-btn rename-waypoint-btn"
+              ${canAct ? `data-uuid="${uuid}" data-name="${name}" data-lat="${lat}" data-lon="${lon}"` : 'disabled title="Login required"'}>Rename</button>
+            <button class="popup-settings-btn move-waypoint-btn"
+              ${canAct ? `data-uuid="${uuid}" data-name="${name}"` : 'disabled title="Login required"'}>Move</button>
+            <button class="popup-settings-btn delete-waypoint-btn"
+              ${canAct ? `data-uuid="${uuid}" data-name="${name}"` : 'disabled title="Login required"'}>Delete</button>
+          </div>
+        </div>`;
+      const popup = new maplibregl.Popup({ closeButton: true, maxWidth: 'none' })
+        .setLngLat([lon, lat])
+        .setHTML(html)
+        .addTo(map!);
+      popup.getElement().addEventListener('click', (ev) => {
+        const el = ev.target as HTMLElement;
+        const navBtn = el.closest<HTMLButtonElement>('.navigate-here-btn');
+        if (navBtn && !navBtn.disabled) {
+          popup.remove();
+          navigateToPoint(settings.signalkHttpUrl, lat, lon, auth.authHeaders).catch(err => {
+            console.error('[waypoint] Failed to set course:', err);
+          });
+          return;
+        }
+        const editBtn = el.closest<HTMLButtonElement>('.rename-waypoint-btn');
+        if (editBtn && !editBtn.disabled) {
+          const newName = prompt('Rename waypoint:', editBtn.dataset.name ?? '');
+          if (newName === null) return;
+          popup.remove();
+          updateWaypoint(
+            settings.signalkHttpUrl, uuid, newName.trim() || name,
+            Number(editBtn.dataset.lat), Number(editBtn.dataset.lon), auth.authHeaders,
+          ).then(() => waypoints.load(settings.signalkHttpUrl))
+            .catch(err => console.error('[waypoint] Failed to update:', err));
+          return;
+        }
+        const moveBtn = el.closest<HTMLButtonElement>('.move-waypoint-btn');
+        if (moveBtn && !moveBtn.disabled) {
+          popup.remove();
+          movingWaypoint = { uuid: moveBtn.dataset.uuid!, name: moveBtn.dataset.name ?? '' };
+          mapContainer.style.cursor = 'crosshair';
+          return;
+        }
+        const delBtn = el.closest<HTMLButtonElement>('.delete-waypoint-btn');
+        if (delBtn && !delBtn.disabled) {
+          if (!confirm(`Delete waypoint "${delBtn.dataset.name || 'this waypoint'}"?`)) return;
+          popup.remove();
+          deleteWaypoint(settings.signalkHttpUrl, uuid, auth.authHeaders)
+            .then(() => waypoints.load(settings.signalkHttpUrl))
+            .catch(err => console.error('[waypoint] Failed to delete:', err));
+        }
+      });
+      e.preventDefault();
+    });
+    map.on('mouseenter', 'all-waypoints-circle', () => { if (map) map.getCanvas().style.cursor = 'pointer'; });
+    map.on('mouseleave', 'all-waypoints-circle', () => { if (map) map.getCanvas().style.cursor = ''; });
+
     map.on('click', (e) => {
       if (!overlay) return;
       const { x, y } = e.point;
+
+      // Moving waypoint mode: next click sets the new position.
+      if (movingWaypoint) {
+        const { uuid, name } = movingWaypoint;
+        movingWaypoint = null;
+        mapContainer.style.cursor = '';
+        updateWaypoint(settings.signalkHttpUrl, uuid, name, e.lngLat.lat, e.lngLat.lng, auth.authHeaders)
+          .then(() => waypoints.load(settings.signalkHttpUrl))
+          .catch(err => console.error('[waypoint] Failed to move:', err));
+        return;
+      }
 
       // In planner mode: handle click adds or inserts a waypoint.
       if (routePlanner.active) {
@@ -1090,15 +1177,24 @@
       // Own vessel is the topmost deck.gl layer — check it first.
       const ownPicked = overlay.pickMultipleObjects({ x, y, radius: 5, layerIds: ['own-vessel-icon'] });
       if (ownPicked.length > 0) {
+        const ownPos = get(vesselState).position;
+        const canWaypoint = auth.isLoggedIn && ownPos != null;
         const popup = new maplibregl.Popup({ closeButton: false, offset: 14, className: 'vessel-self-popup' })
           .setLngLat(e.lngLat)
-          .setHTML('<button class="vessel-self-settings-btn">Own vessel settings</button>')
+          .setHTML(`
+            <button class="vessel-self-settings-btn">Own vessel settings</button>
+            <button class="popup-settings-btn add-waypoint-here-btn"
+              ${canWaypoint ? `data-lat="${ownPos!.latitude}" data-lon="${ownPos!.longitude}"` : 'disabled title="Login required"'}>Add waypoint here</button>
+          `)
           .addTo(map!);
         popup.getElement().addEventListener('click', (ev) => {
-          const btn = (ev.target as HTMLElement).closest('.vessel-self-settings-btn');
-          if (!btn) return;
-          popup.remove();
-          openSettings('vessel');
+          const settingsBtn = (ev.target as HTMLElement).closest('.vessel-self-settings-btn');
+          if (settingsBtn) { popup.remove(); openSettings('vessel'); return; }
+          const wpBtn = (ev.target as HTMLElement).closest<HTMLButtonElement>('.add-waypoint-here-btn');
+          if (wpBtn && !wpBtn.disabled) {
+            popup.remove();
+            promptAndSaveWaypoint(Number(wpBtn.dataset.lat), Number(wpBtn.dataset.lon));
+          }
         });
         return;
       }
@@ -1211,7 +1307,8 @@
       if (!m.getSource(AIS_SOURCE))    m.addSource(AIS_SOURCE,    { type: 'geojson', data: EMPTY_FC }); // for ais-label only
       if (!m.getSource(ROUTE_LINE_SRC)) m.addSource(ROUTE_LINE_SRC, { type: 'geojson', data: EMPTY_FC });
       if (!m.getSource(ROUTE_WPT_SRC))  m.addSource(ROUTE_WPT_SRC,  { type: 'geojson', data: EMPTY_FC });
-      if (!m.getSource(ALL_ROUTES_SRC))  m.addSource(ALL_ROUTES_SRC,  { type: 'geojson', data: EMPTY_FC });
+      if (!m.getSource(ALL_ROUTES_SRC))   m.addSource(ALL_ROUTES_SRC,   { type: 'geojson', data: EMPTY_FC });
+      if (!m.getSource(ALL_WAYPOINTS_SRC)) m.addSource(ALL_WAYPOINTS_SRC, { type: 'geojson', data: EMPTY_FC });
       if (!m.getSource(TRACK_SOURCE))          m.addSource(TRACK_SOURCE,          { type: 'geojson', data: EMPTY_FC, lineMetrics: true });
       if (!m.getSource(TRACK_OVERFLOW_SOURCE)) m.addSource(TRACK_OVERFLOW_SOURCE, { type: 'geojson', data: EMPTY_FC });
       if (!m.getSource(AIS_TRACK_SOURCE))          m.addSource(AIS_TRACK_SOURCE,          { type: 'geojson', data: EMPTY_FC, lineMetrics: true });
@@ -1330,6 +1427,34 @@
         },
       });
 
+      // Server waypoints: small circles + labels.
+      if (!m.getLayer('all-waypoints-circle')) m.addLayer({
+        id: 'all-waypoints-circle', type: 'circle', source: ALL_WAYPOINTS_SRC,
+        paint: {
+          'circle-radius':       6,
+          'circle-color':        '#f59e0b',
+          'circle-opacity':      0.9,
+          'circle-stroke-color': '#fff',
+          'circle-stroke-width': 1.5,
+        },
+      });
+      if (!m.getLayer('all-waypoints-label')) m.addLayer({
+        id: 'all-waypoints-label', type: 'symbol', source: ALL_WAYPOINTS_SRC,
+        layout: {
+          'text-field':       ['get', 'name'],
+          'text-font':        ['Open Sans Regular', 'Arial Unicode MS Regular'],
+          'text-size':        11,
+          'text-offset':      [0, 1.2],
+          'text-anchor':      'top',
+          'text-optional':    true,
+        },
+        paint: {
+          'text-color':        '#f59e0b',
+          'text-halo-color':   '#000',
+          'text-halo-width':   1.2,
+        },
+      });
+
       mapZoom    = map.getZoom();
       mapBearing = map.getBearing();
       mapLoaded  = true;
@@ -1428,6 +1553,8 @@
         </table>
         ${lookupLinks}
         <div class="ais-links" style="margin-top:6px">
+          <button class="popup-settings-btn add-waypoint-here-btn"
+            data-lat="${t.position!.latitude}" data-lon="${t.position!.longitude}">Add waypoint here</button>
           <button class="popup-settings-btn" data-settings="ais">AIS settings</button>
         </div>
       </div>`;
@@ -1482,10 +1609,14 @@
     });
 
     popup.getElement().addEventListener('click', (ev) => {
-      const btn = (ev.target as HTMLElement).closest<HTMLElement>('[data-settings]');
-      if (!btn) return;
-      popup.remove();
-      openSettings(btn.dataset.settings!);
+      const el = ev.target as HTMLElement;
+      const settingsBtn = el.closest<HTMLElement>('[data-settings]');
+      if (settingsBtn) { popup.remove(); openSettings(settingsBtn.dataset.settings!); return; }
+      const wpBtn = el.closest<HTMLButtonElement>('.add-waypoint-here-btn');
+      if (wpBtn && !wpBtn.disabled) {
+        popup.remove();
+        promptAndSaveWaypoint(Number(wpBtn.dataset.lat), Number(wpBtn.dataset.lon));
+      }
     });
 
     return true;
@@ -1541,12 +1672,22 @@
     return `${dm(lat, true)}&emsp;${dm(lon, false)}`;
   }
 
+  /** Prompt for a name and save a waypoint at the given position. */
+  function promptAndSaveWaypoint(lat: number, lon: number): void {
+    const name = prompt('Waypoint name:', formatDm(lat, lon));
+    if (name === null) return; // cancelled
+    saveWaypoint(settings.signalkHttpUrl, name.trim() || formatDm(lat, lon), lat, lon, auth.authHeaders)
+      .then(() => waypoints.load(settings.signalkHttpUrl))
+      .catch(err => console.error('[waypoint] Failed to save:', err));
+  }
+
   /** Show a "Navigate here" popup at an empty-water click location. */
   function showNavigatePopup(lngLat: maplibregl.LngLat): void {
     if (!map) return;
     const { lat, lng: lon } = lngLat;
     const serverBase = settings.signalkHttpUrl;
     const canNavigate = auth.isLoggedIn;
+    const canWaypoint = auth.isLoggedIn;
 
     const popup = new maplibregl.Popup({ closeButton: true, maxWidth: 'none' })
       .setLngLat(lngLat)
@@ -1557,17 +1698,29 @@
             ${canNavigate ? '' : 'disabled title="Login required to set course"'}>
             Navigate here
           </button>
+          <button class="popup-settings-btn add-waypoint-here-btn"
+            ${canWaypoint ? `data-lat="${lat}" data-lon="${lon}"` : 'disabled title="Login required"'}>
+            Add waypoint here
+          </button>
         </div>
       `)
       .addTo(map);
 
     popup.getElement().addEventListener('click', (ev) => {
-      const btn = (ev.target as HTMLElement).closest<HTMLButtonElement>('.navigate-here-btn');
-      if (!btn || btn.disabled) return;
-      popup.remove();
-      navigateToPoint(serverBase, lat, lon, auth.authHeaders).catch(err => {
-        console.error('[navigate] Failed to set course:', err);
-      });
+      const el = ev.target as HTMLElement;
+      const navBtn = el.closest<HTMLButtonElement>('.navigate-here-btn');
+      if (navBtn && !navBtn.disabled) {
+        popup.remove();
+        navigateToPoint(serverBase, lat, lon, auth.authHeaders).catch(err => {
+          console.error('[navigate] Failed to set course:', err);
+        });
+        return;
+      }
+      const wpBtn = el.closest<HTMLButtonElement>('.add-waypoint-here-btn');
+      if (wpBtn && !wpBtn.disabled) {
+        popup.remove();
+        promptAndSaveWaypoint(lat, lon);
+      }
     });
   }
 
@@ -2576,6 +2729,23 @@
     src.setData({ type: 'FeatureCollection', features });
   });
 
+  // All server waypoints — rebuild GeoJSON source when the waypoint list changes.
+  $effect(() => {
+    const entries = waypoints.entries;
+    if (!map || !mapLoaded) return;
+    const src = map.getSource(ALL_WAYPOINTS_SRC);
+    if (!(src instanceof maplibregl.GeoJSONSource)) return;
+
+    src.setData({
+      type: 'FeatureCollection',
+      features: entries.map(w => ({
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: [w.lon, w.lat] },
+        properties: { uuid: w.uuid, name: w.name },
+      })),
+    });
+  });
+
   // Auto-fallback: if the current rotation mode becomes unavailable (e.g. route cleared),
   // drop back to COG → north.
   $effect(() => {
@@ -2646,6 +2816,13 @@
 </script>
 
 <div bind:this={mapContainer} style="width: 100%; height: 100%;"></div>
+
+{#if movingWaypoint}
+  <div class="move-waypoint-hint">
+    Tap new location for <strong>{movingWaypoint.name || 'waypoint'}</strong>
+    <button onclick={() => { movingWaypoint = null; mapContainer.style.cursor = ''; }}>Cancel</button>
+  </div>
+{/if}
 
 <div class="projection-picker">
   <button
@@ -2881,5 +3058,31 @@
     color: #9ca3af;
     margin-bottom: 8px;
     text-align: center;
+  }
+
+  .move-waypoint-hint {
+    position: absolute;
+    bottom: 32px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0, 0, 0, 0.75);
+    color: #fff;
+    padding: 8px 14px;
+    border-radius: 8px;
+    font-size: 13px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    pointer-events: auto;
+    z-index: 10;
+  }
+  .move-waypoint-hint button {
+    background: rgba(255,255,255,0.15);
+    border: 1px solid rgba(255,255,255,0.3);
+    color: #fff;
+    border-radius: 4px;
+    padding: 2px 8px;
+    cursor: pointer;
+    font-size: 12px;
   }
 </style>

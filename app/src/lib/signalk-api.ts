@@ -103,6 +103,23 @@ export async function fetchAllRoutes(serverBase: string): Promise<Record<string,
   return res.json() as Promise<Record<string, SkRouteEntry>>;
 }
 
+export interface SkWaypointEntry {
+  name?: string;
+  description?: string;
+  feature?: {
+    type: 'Feature';
+    geometry: { type: 'Point'; coordinates: [number, number] };
+    properties?: Record<string, unknown>;
+  };
+}
+
+/** Fetch all waypoints stored on the Signal K server. */
+export async function fetchAllWaypoints(serverBase: string): Promise<Record<string, SkWaypointEntry>> {
+  const res = await fetch(`${serverBase}/signalk/v2/api/resources/waypoints`);
+  if (!res.ok) throw new Error(`Waypoints API error: ${res.status} ${res.statusText}`);
+  return res.json() as Promise<Record<string, SkWaypointEntry>>;
+}
+
 export async function fetchCharts(serverBase: string): Promise<ChartRecord> {
   const res = await fetch(`${serverBase}/signalk/v2/api/resources/charts`);
   if (!res.ok) throw new Error(`Charts API error: ${String(res.status)} ${res.statusText}`);
@@ -470,4 +487,81 @@ export async function deleteRoute(
     headers: { ...authHeaders },
   });
   if (!res.ok) throw new Error(`Delete route failed: ${res.status} ${res.statusText}`);
+}
+
+/**
+ * POST /signalk/v2/api/resources/waypoints
+ *
+ * Creates a new named waypoint on the Signal K server.
+ * Returns the UUID of the newly created waypoint.
+ */
+export async function saveWaypoint(
+  serverBase: string,
+  name: string,
+  lat: number,
+  lon: number,
+  authHeaders: Record<string, string>,
+): Promise<string> {
+  const body = {
+    name,
+    feature: {
+      type: 'Feature',
+      geometry: { type: 'Point', coordinates: [lon, lat] },
+      properties: { name },
+    },
+  };
+  const res = await fetch(`${serverBase}/signalk/v2/api/resources/waypoints`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`Save waypoint failed: ${res.status} ${res.statusText}`);
+  const data = await res.json() as { id?: string } | string;
+  return typeof data === 'string' ? data : (data.id ?? '');
+}
+
+/**
+ * PUT /signalk/v2/api/resources/waypoints/:uuid
+ *
+ * Renames a waypoint (position unchanged).
+ */
+export async function updateWaypoint(
+  serverBase: string,
+  uuid: string,
+  name: string,
+  lat: number,
+  lon: number,
+  authHeaders: Record<string, string>,
+): Promise<void> {
+  const body = {
+    name,
+    feature: {
+      type: 'Feature',
+      geometry: { type: 'Point', coordinates: [lon, lat] },
+      properties: { name },
+    },
+  };
+  const res = await fetch(`${serverBase}/signalk/v2/api/resources/waypoints/${uuid}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...authHeaders },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`Update waypoint failed: ${res.status} ${res.statusText}`);
+}
+
+/**
+ * DELETE /signalk/v2/api/resources/waypoints/:uuid
+ *
+ * Permanently removes a waypoint from the Signal K server.
+ */
+export async function deleteWaypoint(
+  serverBase: string,
+  uuid: string,
+  authHeaders: Record<string, string>,
+): Promise<void> {
+  const res = await fetch(`${serverBase}/signalk/v2/api/resources/waypoints/${uuid}`, {
+    method: 'DELETE',
+    headers: { ...authHeaders },
+  });
+  if (!res.ok) throw new Error(`Delete waypoint failed: ${res.status} ${res.statusText}`);
 }

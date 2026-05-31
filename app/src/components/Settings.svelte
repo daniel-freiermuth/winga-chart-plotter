@@ -13,7 +13,7 @@
   let connDraft = $state({ protocol: settings.protocol, host: settings.host, port: settings.port });
   // Appearance and targetFps are edited directly — instant live preview.
   // Cancel reverts to this snapshot.
-  type SettingsSnapshot = { appearance: AppearanceSettings; targetFps: number };
+  type SettingsSnapshot = { appearance: AppearanceSettings; targetFps: number; resourcePollIntervalSeconds: number };
   let settingsSnapshot = '';
 
   // Login form local state — not part of the saved settings draft.
@@ -62,14 +62,14 @@
 
   function openModal() {
     connDraft = { protocol: settings.protocol, host: settings.host, port: settings.port };
-    settingsSnapshot = JSON.stringify({ appearance: settings.appearance, targetFps: settings.targetFps });
+    settingsSnapshot = JSON.stringify({ appearance: settings.appearance, targetFps: settings.targetFps, resourcePollIntervalSeconds: settings.resourcePollIntervalSeconds });
     tab  = 'connection';
     open = true;
   }
 
   export function openTo(t: typeof tab) {
     connDraft = { protocol: settings.protocol, host: settings.host, port: settings.port };
-    settingsSnapshot = JSON.stringify({ appearance: settings.appearance, targetFps: settings.targetFps });
+    settingsSnapshot = JSON.stringify({ appearance: settings.appearance, targetFps: settings.targetFps, resourcePollIntervalSeconds: settings.resourcePollIntervalSeconds });
     tab  = t;
     open = true;
   }
@@ -96,6 +96,7 @@
       useGeoLocation:  settings.useGeoLocation,
       appearance:      snap.appearance,
       targetFps:       snap.targetFps,
+      resourcePollIntervalSeconds: snap.resourcePollIntervalSeconds,
     });
     open = false;
   }
@@ -162,6 +163,22 @@
         </div>
       </div>
       <p class="hint">→ {connDraft.protocol}://{connDraft.host}:{connDraft.port}/signalk/v1/stream?subscribe=self</p>
+      <div class="row">
+        <label>Waypoint/route poll</label>
+        <div class="field" style="gap:6px">
+          <input
+            type="number"
+            min="1" max="3600" step="1"
+            style="width:5rem; text-align:right"
+            value={settings.resourcePollIntervalSeconds}
+            oninput={(e) => {
+              const v = parseInt((e.target as HTMLInputElement).value, 10);
+              if (v > 0) settings.apply({ resourcePollIntervalSeconds: v });
+            }}
+          />
+          <span style="font-size:13px">seconds</span>
+        </div>
+      </div>
 
       <p class="section-title">Position source</p>
       <div class="row">
