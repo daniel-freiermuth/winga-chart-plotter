@@ -1,5 +1,6 @@
 <script lang="ts">
   import { settings, type AppearanceSettings } from '../stores/settings.svelte';
+  import { auth } from '../stores/auth.svelte';
   import { fpsStore } from '../stores/fps.svelte';
   import FaIcon from '../lib/FaIcon.svelte';
   import ColorInput from '../lib/ColorInput.svelte';
@@ -14,6 +15,10 @@
   // Cancel reverts to this snapshot.
   type SettingsSnapshot = { appearance: AppearanceSettings; targetFps: number };
   let settingsSnapshot = '';
+
+  // Login form local state — not part of the saved settings draft.
+  let loginUser = $state('');
+  let loginPass = $state('');
 
   // Logarithmic slider helpers: range [0, 1000] ↔ fps [0.1, 60]
   function fpsToSlider(fps: number): number {
@@ -96,6 +101,12 @@
   }
 
   function close() { open = false; }
+
+  async function doLogin() {
+    const httpUrl = `http://${connDraft.host}:${connDraft.port}`;
+    await auth.login(httpUrl, loginUser, loginPass);
+    if (auth.isLoggedIn) loginPass = '';
+  }
 
   // Live-apply appearance as user edits
   function applyAppearance() {
@@ -204,6 +215,40 @@
       {/if}
       {#if settings.geoError && !settings.useGeoLocation}
         <p class="geo-error-note">⚠ {settings.geoError}</p>
+      {/if}
+
+      <p class="section-title">Authentication</p>
+      {#if auth.isLoggedIn}
+        <div class="auth-status">
+          <span class="auth-user">✓ Logged in as <strong>{auth.username}</strong></span>
+          <button class="btn btn-cancel btn-sm" onclick={() => auth.logout()}>Log out</button>
+        </div>
+      {:else}
+        <div class="row">
+          <label>Username</label>
+          <div class="field">
+            <input type="text" bind:value={loginUser} placeholder="admin" autocomplete="username" />
+          </div>
+        </div>
+        <div class="row">
+          <label>Password</label>
+          <div class="field">
+            <!-- svelte-ignore a11y_no_interactive_element_to_noninteractive_role -->
+            <input
+              type="password"
+              bind:value={loginPass}
+              placeholder="••••••••"
+              autocomplete="current-password"
+              onkeydown={(e) => { if (e.key === 'Enter') void doLogin(); }}
+            />
+            <button class="btn btn-save btn-sm" onclick={() => void doLogin()} disabled={auth.loading || !loginUser || !loginPass}>
+              {auth.loading ? 'Logging in…' : 'Log in'}
+            </button>
+          </div>
+        </div>
+        {#if auth.error}
+          <p class="geo-error-note">⚠ {auth.error}</p>
+        {/if}
       {/if}
     {/if}
 
@@ -538,6 +583,11 @@
   .unit { font-size: 12px; color: #666688; }
   .hint { font-size: 11px; color: #666688; margin: 2px 0 12px 84px; word-break: break-all; }
   .geo-error-note { font-size: 11px; color: #f87171; margin: -6px 0 10px 84px; }
+  .auth-status { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+  .auth-user { font-size: 13px; color: #a0a0c0; flex: 1; }
+  .auth-user strong { color: white; }
+  .btn-sm { padding: 4px 12px; font-size: 12px; }
+  input[type=password] { flex: 1; background: #2a2a3e; border: 1px solid #444466; color: white; padding: 6px 8px; border-radius: 6px; font-size: 13px; }
   .geo-accuracy-row {
     display: flex; align-items: center; gap: 7px;
     margin: -4px 0 8px 84px; font-size: 12px; color: #a0a0c0;

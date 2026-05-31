@@ -15,6 +15,7 @@
   import { route } from './stores/route.svelte';
   import { track } from './stores/track.svelte';
   import { routes } from './stores/routes.svelte';
+  import { auth } from './stores/auth.svelte';
 
   // Message types received from the SignalK worker.
   interface WsState {
@@ -225,6 +226,7 @@
     lastHttpUrl = httpUrl;
     void charts.load(httpUrl);
     void routes.load(httpUrl);
+    void auth.init(httpUrl);
 
     if (vesselInfoTimer !== null) clearInterval(vesselInfoTimer);
     const refresh = () => void fetchVesselInfo(httpUrl).then(info => ais.setInfoCache(info));
