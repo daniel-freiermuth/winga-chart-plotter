@@ -83,6 +83,7 @@ See [`KNOWLEDGE_BASE.md`](./KNOWLEDGE_BASE.md) for full architecture decisions, 
 - Great-circle lines for measurements, tracks and routes
 - Highly customizable appearance
 - 3D mode
+- Lookahead by move and lock
 - Process SignalK deltas as they arrive
 - Multiple, permanent and sticky rulers
 
