@@ -380,7 +380,28 @@
       onclick={handleOpenChartPicker}
     ><FaIcon icon={faLayerGroup} /></button>
 
+    <button
+      class="map-btn"
+      title="Switch to {mapView.projection === 'mercator' ? 'Globe' : 'Mercator'}"
+      onclick={handleToggleProjection}
+    ><FaIcon icon={mapView.projection === 'mercator' ? faGlobe : faMap} /></button>
+
     <div class="map-toolbar-divider"></div>
+
+    <button
+      class="map-btn"
+      title="{mapView.isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}"
+      onclick={handleToggleFullscreen}
+    ><FaIcon icon={mapView.isFullscreen ? faCompress : faExpand} /></button>
+
+    <div class="map-toolbar-divider"></div>
+
+    <button
+      class="map-btn map-btn--label"
+      class:map-btn--highlight={rotateMode.mode === 'manual'}
+      title="Rotation mode: {rotateMode.label}"
+      onclick={() => { rotateMode.toggle($vesselState.cog !== null, $vesselState.heading !== null, route.nextPoint !== null); }}
+    >{rotateMode.label}</button>
 
     <button
       class="map-btn"
@@ -394,37 +415,16 @@
 
     <button
       class="map-btn"
-      title="Add ruler"
-      onclick={handleAddRuler}
-    ><FaIcon icon={faRuler} /></button>
-
-    <button
-      class="map-btn"
       class:map-btn--active={routePlanner.active}
       title={routePlanner.active ? 'Exit route planner' : 'Route planner'}
       onclick={() => { if (!routePlanner.active) routePlanner.enter(); }}
     ><FaIcon icon={faPencil} /></button>
 
-    <div class="map-toolbar-divider"></div>
-
-    <button
-      class="map-btn map-btn--label"
-      class:map-btn--highlight={rotateMode.mode === 'manual'}
-      title="Rotation mode: {rotateMode.label}"
-      onclick={() => { rotateMode.toggle($vesselState.cog !== null, $vesselState.heading !== null, route.nextPoint !== null); }}
-    >{rotateMode.label}</button>
-
     <button
       class="map-btn"
-      title="Switch to {mapView.projection === 'mercator' ? 'Globe' : 'Mercator'}"
-      onclick={handleToggleProjection}
-    ><FaIcon icon={mapView.projection === 'mercator' ? faGlobe : faMap} /></button>
-
-    <button
-      class="map-btn"
-      title="{mapView.isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}"
-      onclick={handleToggleFullscreen}
-    ><FaIcon icon={mapView.isFullscreen ? faCompress : faExpand} /></button>
+      title="Add ruler"
+      onclick={handleAddRuler}
+    ><FaIcon icon={faRuler} /></button>
   </div>
 
   <!-- Route planner HUD -->
