@@ -2875,7 +2875,7 @@
         left: _activationPadding.left * W,
         right: _activationPadding.right * W
       };
-      if (posChanged || rmChanged || rm === 'heading') {
+      if (posChanged || rmChanged || rm === 'heading' || rm === 'cog') {
         const center = map.getCenter();
         const dist = Math.hypot(center.lng - pos.longitude, center.lat - pos.latitude);
         const bOpts = bearing !== undefined ? { bearing } : {};
