@@ -40,19 +40,17 @@ function createTrack() {
       _coords = [];
       _hasLast = false;
 
-      const startTime = historyHours > 0
-        ? new Date(Date.now() - historyHours * 3600 * 1000).toISOString()
-        : undefined;
-
-      try {
-        const historical = await fetchTrack(serverBase, startTime);
-        _coords = historical;  // raw coords from server, unwrapped at render time
-        if (historical.length > 0) {
-          [_lastLon, _lastLat] = historical[historical.length - 1] as [number, number];
-          _hasLast = true;
+      if (historyHours > 0) {
+        try {
+          const historical = await fetchTrack(serverBase, historyHours);
+          _coords = historical;  // raw coords from server, unwrapped at render time
+          if (historical.length > 0) {
+            [_lastLon, _lastLat] = historical[historical.length - 1] as [number, number];
+            _hasLast = true;
+          }
+        } catch (err) {
+          console.warn('[track] Could not fetch historical track:', err);
         }
-      } catch (err) {
-        console.warn('[track] Could not fetch historical track:', err);
       }
 
       _unsub = vesselState.subscribe(state => {

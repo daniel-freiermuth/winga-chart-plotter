@@ -1479,9 +1479,8 @@
     aisTrackRaw = [];
     const gen = ++_aisTrackGen;
     const historyHours = settings.appearance.track.historyHours;
-    const startTime = new Date(Date.now() - historyHours * 3_600_000).toISOString();
     const serverBase = settings.signalkHttpUrl;
-    fetchAisVesselTrack(serverBase, t.id, startTime).then(coords => {
+    fetchAisVesselTrack(serverBase, t.id, historyHours).then(coords => {
       if (gen === _aisTrackGen) aisTrackRaw = coords;
     }).catch(() => { /* server may not have history for this vessel — silently skip */ });
 

@@ -251,16 +251,11 @@ function dedupCoords(coords: [number, number][]): [number, number][] {
  * proximity so overlapping points are collapsed into one.
  *
  * Returns a flat array of [lon, lat] pairs in chronological order.
- * @param startTime ISO 8601 timestamp for the start of the history window (optional)
+ * @param historyHours Number of hours of history to fetch (default 24)
  */
-export async function fetchTrack(serverBase: string, startTime?: string): Promise<[number, number][]> {
-  const v2Params = new URLSearchParams({ paths: 'navigation.position' });
-  if (startTime) {
-    v2Params.set('from', startTime);
-  } else {
-    v2Params.set('duration', 'PT24H');
-  }
-  const v1Params = startTime ? `?startTime=${encodeURIComponent(startTime)}` : '';
+export async function fetchTrack(serverBase: string, historyHours = 24): Promise<[number, number][]> {
+  const startTime = new Date(Date.now() - historyHours * 3_600_000).toISOString();
+  const v2Params = new URLSearchParams({ paths: 'navigation.position', from: startTime });
 
   const [v2Result, v1Result] = await Promise.allSettled([
     fetch(`${serverBase}/signalk/v2/api/history/values?${v2Params.toString()}`).then(async res => {
@@ -276,7 +271,7 @@ export async function fetchTrack(serverBase: string, startTime?: string): Promis
       }
       return coords;
     }),
-    fetch(`${serverBase}/signalk/v1/api/vessels/self/track${v1Params}`).then(async res => {
+    fetch(`${serverBase}/signalk/v1/api/self/track?timespan=${historyHours}h`).then(async res => {
       if (!res.ok) return [] as [number, number][];
       return extractTrackCoords(await res.json() as unknown);
     }),
@@ -303,22 +298,17 @@ export async function fetchTrack(serverBase: string, startTime?: string): Promis
  * Returns a flat array of [lon, lat] pairs in chronological order.
  * Returns [] if neither source has data or the vessel ID is unknown.
  * @param vesselId Signal K vessel key, e.g. `urn:mrn:imo:mmsi:123456789`
- * @param startTime ISO 8601 start of history window (optional, defaults to 24 h)
+ * @param historyHours Number of hours of history to fetch (default 24)
  */
 export async function fetchAisVesselTrack(
   serverBase: string,
   vesselId: string,
-  startTime?: string,
+  historyHours = 24,
 ): Promise<[number, number][]> {
   const encodedId = encodeURIComponent(vesselId);
   const context   = `vessels.${vesselId}`;
-  const v2Params  = new URLSearchParams({ context, paths: 'navigation.position' });
-  if (startTime) {
-    v2Params.set('from', startTime);
-  } else {
-    v2Params.set('duration', 'PT24H');
-  }
-  const v1Params = startTime ? `?startTime=${encodeURIComponent(startTime)}` : '';
+  const startTime = new Date(Date.now() - historyHours * 3_600_000).toISOString();
+  const v2Params  = new URLSearchParams({ context, paths: 'navigation.position', from: startTime });
 
   const [v2Result, v1Result] = await Promise.allSettled([
     fetch(`${serverBase}/signalk/v2/api/history/values?${v2Params.toString()}`).then(async res => {
@@ -334,7 +324,7 @@ export async function fetchAisVesselTrack(
       }
       return coords;
     }),
-    fetch(`${serverBase}/signalk/v1/api/vessels/${encodedId}/track${v1Params}`).then(async res => {
+    fetch(`${serverBase}/signalk/v1/api/vessels/${encodedId}/track?timespan=${historyHours}h`).then(async res => {
       if (!res.ok) return [] as [number, number][];
       return extractTrackCoords(await res.json() as unknown);
     }),
