@@ -568,34 +568,16 @@ export async function deleteWaypoint(
 
 /**
  * Raise a Man Overboard alarm.
- *   PUT /signalk/v1/api/vessels/self/notifications/mob
- * (The v2 API does not expose a notifications endpoint.)
+ *   POST /signalk/v2/api/notifications/mob
  */
 export async function raiseMob(
   serverBase: string,
   authHeaders: Record<string, string>,
 ): Promise<void> {
-  const res = await fetch(`${serverBase}/signalk/v1/api/vessels/self/notifications/mob`, {
-    method: 'PUT',
+  const res = await fetch(`${serverBase}/signalk/v2/api/notifications/mob`, {
+    method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeaders },
-    body: JSON.stringify({
-      value: { method: ['visual', 'sound'], state: 'emergency', message: 'Man Overboard!' },
-    }),
+    body: JSON.stringify({ message: 'Man Overboard!' }),
   });
   if (!res.ok) throw new Error(`MOB raise failed: ${String(res.status)} ${res.statusText}`);
-}
-
-/**
- * Clear the Man Overboard alarm.
- *   DELETE /signalk/v1/api/vessels/self/notifications/mob
- */
-export async function clearMob(
-  serverBase: string,
-  authHeaders: Record<string, string>,
-): Promise<void> {
-  const res = await fetch(`${serverBase}/signalk/v1/api/vessels/self/notifications/mob`, {
-    method: 'DELETE',
-    headers: { ...authHeaders },
-  });
-  if (!res.ok) throw new Error(`MOB clear failed: ${String(res.status)} ${res.statusText}`);
 }
