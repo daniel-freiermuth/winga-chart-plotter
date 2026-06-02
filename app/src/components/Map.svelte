@@ -944,7 +944,7 @@
                 getText: (d) => d.text,
                 getPosition: (d) => [d.lon, d.lat, 0],
                 getSize: 13,
-                getColor: hexToRgba(settings.appearance.planner.color, 230),
+                getColor: [255, 240, 180, 230] as [number, number, number, number],
                 getBackgroundColor: [0, 0, 0, 160] as [number, number, number, number],
                 background: true,
                 backgroundPadding: [4, 2, 4, 2] as [number, number, number, number],
