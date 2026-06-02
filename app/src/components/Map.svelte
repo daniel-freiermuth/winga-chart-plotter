@@ -690,6 +690,7 @@
       zoom: 10,
       maxPitch: 85,
       bearingSnap: 0,
+      attributionControl: false,
     });
 
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
