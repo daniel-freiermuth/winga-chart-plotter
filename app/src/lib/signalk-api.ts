@@ -271,7 +271,7 @@ export async function fetchTrack(serverBase: string, historyHours = 24): Promise
       }
       return coords;
     }),
-    fetch(`${serverBase}/signalk/v1/api/self/track?timespan=${historyHours}h`).then(async res => {
+    fetch(`${serverBase}/signalk/v1/api/self/track?timespan=${String(historyHours)}h`).then(async res => {
       if (!res.ok) return [] as [number, number][];
       return extractTrackCoords(await res.json() as unknown);
     }),
@@ -324,7 +324,7 @@ export async function fetchAisVesselTrack(
       }
       return coords;
     }),
-    fetch(`${serverBase}/signalk/v1/api/vessels/${encodedId}/track?timespan=${historyHours}h`).then(async res => {
+    fetch(`${serverBase}/signalk/v1/api/vessels/${encodedId}/track?timespan=${String(historyHours)}h`).then(async res => {
       if (!res.ok) return [] as [number, number][];
       return extractTrackCoords(await res.json() as unknown);
     }),

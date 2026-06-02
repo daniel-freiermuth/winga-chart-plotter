@@ -60,10 +60,12 @@
     }
   }
 
+  interface CameraPadding { top: number; right: number; bottom: number; left: number }
+
   /** Computes MapLibre padding as fractions [0..1] of the viewport so that the vessel
    *  appears at its current screen pixel when passed to easeTo/flyTo as pixel values.
    *  Multiply top/bottom by H and left/right by W before passing to MapLibre. */
-  function calcVesselPaddingPercent(pos: { longitude: number; latitude: number }): maplibregl.PaddingOptions {
+  function calcVesselPaddingPercent(pos: { longitude: number; latitude: number }): CameraPadding {
     if (!map) return ZERO_PADDING;
     const W = mapContainer.clientWidth;
     const H = mapContainer.clientHeight;
@@ -76,7 +78,7 @@
     };
   }
 
-  const ZERO_PADDING: maplibregl.PaddingOptions = { top: 0, right: 0, bottom: 0, left: 0 };
+  const ZERO_PADDING: CameraPadding = { top: 0, right: 0, bottom: 0, left: 0 };
 
   export function flyToVessel() {
     if (followMode.following) {
@@ -134,7 +136,7 @@
   let _pendingPaddingReset = false;
   // When follow is activated with the vessel already in view, stores the MapLibre padding that
   // pins the vessel to its current screen pixel. 
-  let _activationPadding = ZERO_PADDING;
+  let _activationPadding: CameraPadding = ZERO_PADDING;
 
   // Own-vessel setData coalescing: multiple Signal K field updates (lat, lon, COG, SOG, heading)
   // arrive per epoch and each triggers the $effect. We batch them into one setData per rAF frame
@@ -1006,10 +1008,12 @@
       // Adjust center simultaneously so visible content doesn't shift.
       if (!followMode.following && _pendingPaddingReset) {
         _pendingPaddingReset = false;
+        const activeMap = map;
+        if (!activeMap) return;
         const W = mapContainer.clientWidth;
         const H = mapContainer.clientHeight;
-        map.jumpTo({
-          center: map.unproject([W / 2, H / 2] as [number, number]),
+        activeMap.jumpTo({
+          center: activeMap.unproject([W / 2, H / 2] as [number, number]),
           padding: ZERO_PADDING,
         });
       }
