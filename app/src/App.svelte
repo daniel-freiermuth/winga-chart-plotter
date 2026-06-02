@@ -428,7 +428,7 @@
   </div>
 
   <!-- Route planner HUD -->
-  {#if routePlanner.active && routePlanner.waypoints.length > 0}
+  {#if routePlanner.active}
     <div style="
       position: absolute; bottom: 32px; left: 50%; transform: translateX(-50%);
       z-index: 20; background: rgba(0,0,0,0.82); color: white;
