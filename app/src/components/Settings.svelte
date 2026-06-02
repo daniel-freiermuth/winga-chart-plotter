@@ -106,7 +106,8 @@
   function close() { isOpen = false; }
 
   async function doLogin() {
-    const httpUrl = `http://${connDraft.host}:${String(connDraft.port)}`;
+    const proto = connDraft.protocol === 'wss' ? 'https' : 'http';
+    const httpUrl = `${proto}://${connDraft.host}:${String(connDraft.port)}`;
     await auth.login(httpUrl, loginUser, loginPass);
     if (auth.isLoggedIn) loginPass = '';
   }

@@ -114,6 +114,46 @@ const DEFAULTS: SettingsData = {
 
 const SIGNALK_PATH     = '/signalk/v1/stream?subscribe=self';
 
+function isHttpsContext(): boolean {
+  return window.location.protocol === 'https:';
+}
+
+function normalizedProtocol(protocol: 'ws' | 'wss'): 'ws' | 'wss' {
+  // Browsers block insecure WebSocket from HTTPS pages, so upgrade automatically.
+  return isHttpsContext() ? 'wss' : protocol;
+}
+
+function normalizeConnection(input: Pick<SettingsData, 'signalkProtocol' | 'signalkHost' | 'signalkPort'>): Pick<SettingsData, 'signalkProtocol' | 'signalkHost' | 'signalkPort'> {
+  let host = input.signalkHost.trim();
+  let protocol = input.signalkProtocol;
+  let port = input.signalkPort;
+
+  // Accept pasted host values like "https://host:443" and split them safely.
+  if (host.includes('://')) {
+    try {
+      const parsed = new URL(host);
+      host = parsed.hostname;
+      if (parsed.protocol === 'https:' || parsed.protocol === 'wss:') protocol = 'wss';
+      if (parsed.protocol === 'http:' || parsed.protocol === 'ws:') protocol = 'ws';
+      if (parsed.port) {
+        const parsedPort = Number.parseInt(parsed.port, 10);
+        if (Number.isFinite(parsedPort)) port = parsedPort;
+      }
+    } catch {
+      // Keep host as-is if it is not a valid URL.
+    }
+  }
+
+  const coercedProtocol = normalizedProtocol(protocol);
+  const safePort = Number.isFinite(port) && port > 0 ? port : (coercedProtocol === 'wss' ? 443 : 80);
+
+  return {
+    signalkProtocol: coercedProtocol,
+    signalkHost: host,
+    signalkPort: safePort,
+  };
+}
+
 // When the app is served by the Signal K server itself (installed as a webapp),
 // the page origin IS the Signal K endpoint — no manual host configuration needed.
 // Detect this by checking if we're running on port 3000 (Signal K default) or
@@ -135,8 +175,14 @@ function load(): SettingsData {
       const parsed: unknown = JSON.parse(raw);
       if (typeof parsed === 'object' && parsed !== null) {
         const p = parsed as Partial<SettingsData>;
+        const normalizedConn = normalizeConnection({
+          signalkProtocol: p.signalkProtocol ?? DEFAULTS.signalkProtocol,
+          signalkHost: p.signalkHost ?? DEFAULTS.signalkHost,
+          signalkPort: p.signalkPort ?? DEFAULTS.signalkPort,
+        });
         return {
           ...DEFAULTS, ...p,
+          ...normalizedConn,
           useGeoLocation: typeof p.useGeoLocation === 'boolean' ? p.useGeoLocation : DEFAULTS.useGeoLocation,
           targetFps: typeof p.targetFps === 'number' && p.targetFps > 0 ? p.targetFps : DEFAULTS.targetFps,
           resourcePollIntervalSeconds: typeof p.resourcePollIntervalSeconds === 'number' && p.resourcePollIntervalSeconds > 0 ? p.resourcePollIntervalSeconds : DEFAULTS.resourcePollIntervalSeconds,
@@ -185,16 +231,22 @@ function createSettings() {
     get targetFps(): number       { return data.targetFps; },
     get resourcePollIntervalSeconds(): number { return data.resourcePollIntervalSeconds; },
     get signalkUrl(): string {
-      return `${data.signalkProtocol}://${data.signalkHost}:${String(data.signalkPort)}${SIGNALK_PATH}`;
+      const protocol = normalizedProtocol(data.signalkProtocol);
+      return `${protocol}://${data.signalkHost}:${String(data.signalkPort)}${SIGNALK_PATH}`;
     },
     get signalkHttpUrl(): string {
-      const proto = data.signalkProtocol === 'wss' ? 'https' : 'http';
+      const proto = normalizedProtocol(data.signalkProtocol) === 'wss' ? 'https' : 'http';
       return `${proto}://${data.signalkHost}:${String(data.signalkPort)}`;
     },
     apply(next: Partial<SettingsData>) {
-      if (next.signalkProtocol !== undefined) data.signalkProtocol = next.signalkProtocol;
-      if (next.signalkHost     !== undefined) data.signalkHost     = next.signalkHost;
-      if (next.signalkPort     !== undefined) data.signalkPort     = next.signalkPort;
+      const conn = normalizeConnection({
+        signalkProtocol: next.signalkProtocol ?? data.signalkProtocol,
+        signalkHost: next.signalkHost ?? data.signalkHost,
+        signalkPort: next.signalkPort ?? data.signalkPort,
+      });
+      data.signalkProtocol = conn.signalkProtocol;
+      data.signalkHost = conn.signalkHost;
+      data.signalkPort = conn.signalkPort;
       if (next.useGeoLocation  !== undefined) {
         data.useGeoLocation = next.useGeoLocation;
         if (next.useGeoLocation) { geoError = null; geoAccuracy = null; }
