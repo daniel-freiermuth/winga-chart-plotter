@@ -60,45 +60,40 @@
     }
   }
 
-  interface CameraPadding { top: number; right: number; bottom: number; left: number }
+  // t 0, l 0 -> center
+  // t 1, l 0 -> top middle
+  // t 0, l 1 -> middle left
+
+  interface CameraOffset { top: number; left: number }
+  const ZERO_OFFSET: CameraOffset = { top: 0, left: 0 };
 
   /** Computes MapLibre padding as fractions [0..1] of the viewport so that the vessel
    *  appears at its current screen pixel when passed to easeTo/flyTo as pixel values.
    *  Multiply top/bottom by H and left/right by W before passing to MapLibre. */
-  function calcVesselPaddingPercent(pos: { longitude: number; latitude: number }): CameraPadding {
-    if (!map) return ZERO_PADDING;
+  function calcVesselOffset(pos: { longitude: number; latitude: number }): CameraOffset {
+    if (!map) return ZERO_OFFSET;
     const W = mapContainer.clientWidth;
     const H = mapContainer.clientHeight;
     const px = map.project([pos.longitude, pos.latitude] as [number, number]);
     return {
-      left: Math.max(0, px.x/W * 2 - 1),
-      right: Math.max(0, 1 - px.x/W * 2),
-      top: Math.max(0, px.y/H * 2 - 1),
-      bottom: Math.max(0, 1 - px.y/H * 2),
+      left: px.x/W * 2 - 1,
+      top: px.y/H * 2 - 1,
     };
   }
 
-  const ZERO_PADDING: CameraPadding = { top: 0, right: 0, bottom: 0, left: 0 };
-
   export function flyToVessel() {
     if (followMode.following) {
-      _activationPadding = ZERO_PADDING;
-      // Button path: no drag in progress, easeTo smoothly resets the padding offset.
-      const W = mapContainer.clientWidth;
-      const H = mapContainer.clientHeight;
-      map?.easeTo({ center: map.unproject([W / 2, H / 2] as [number, number]), padding: ZERO_PADDING });
+      _centerOffset = ZERO_OFFSET;
       followMode.following = false;
       return;
     }
     const pos = get(vesselState).position;
     if (pos) {
-      const vesselPaddings = calcVesselPaddingPercent(pos);
-      const isInView = Object.values(vesselPaddings).every(p => p < 0.9);
-      // Vessel already visible: compute padding so its current pixel becomes the effective
-      // camera centre. jumpTo applies this instantly without any camera shift.
-      _activationPadding = isInView ? vesselPaddings : ZERO_PADDING;
+      const vesselOffset = calcVesselOffset(pos);
+      const isInView = Object.values(vesselOffset).every(o => o < 0.9 && o > -0.9);
+      _centerOffset = isInView ? vesselOffset : ZERO_OFFSET;
     } else {
-      _activationPadding = ZERO_PADDING;
+      _centerOffset = ZERO_OFFSET;
     }
     followMode.following = true;
   }
@@ -131,12 +126,9 @@
   let _lastRm = '';
   let _lastFollowing = false;
   let _lastNonFollowBearing: number | undefined = undefined;
-  // When follow is cancelled while pinned padding was active, we defer the camera padding
-  // reset to moveend so dragstart isn't disrupted by a synchronous camera call.
-  let _pendingPaddingReset = false;
-  // When follow is activated with the vessel already in view, stores the MapLibre padding that
-  // pins the vessel to its current screen pixel. 
-  let _activationPadding: CameraPadding = ZERO_PADDING;
+  // When follow is activated with the vessel already in view, stores the MapLibre center-offset
+  // that pins the vessel to its current screen pixel. 
+  let _centerOffset: CameraOffset = ZERO_OFFSET;
 
   // Own-vessel setData coalescing: multiple Signal K field updates (lat, lon, COG, SOG, heading)
   // arrive per epoch and each triggers the $effect. We batch them into one setData per rAF frame
@@ -1002,30 +994,12 @@
     map.on('movestart', (e: any) => { if (e.originalEvent) _isInteracting = true; });
     map.on('moveend',   () => {
       _isInteracting = false;
-      // If follow was cancelled while padding was active, reset MapLibre's camera padding here
-      // (after inertia settles) rather than on dragstart — any camera call inside dragstart
-      // confuses MapLibre's drag state machine and requires a second grab to pan.
-      // Adjust center simultaneously so visible content doesn't shift.
-      if (!followMode.following && _pendingPaddingReset) {
-        _pendingPaddingReset = false;
-        const activeMap = map;
-        if (!activeMap) return;
-        const W = mapContainer.clientWidth;
-        const H = mapContainer.clientHeight;
-        activeMap.jumpTo({
-          center: activeMap.unproject([W / 2, H / 2] as [number, number]),
-          padding: ZERO_PADDING,
-        });
-      }
     });
     // User dragging the map cancels follow mode. No camera operation here — any camera call
     // on dragstart interferes with the drag gesture and requires a second grab.
     map.on('dragstart', () => {
       if (!rulerDrag) {
-        if (_activationPadding !== ZERO_PADDING) {
-          _activationPadding = ZERO_PADDING;
-          _pendingPaddingReset = true;
-        }
+        _centerOffset = ZERO_OFFSET;
         followMode.following = false;
       }
     });
@@ -2853,7 +2827,7 @@
     // In pinned mode, seed the cache instead so posChanged stays false on this first tick
     // and we avoid a spurious flyTo (which would zoom out/in) at low zoom levels.
     if (following && !_lastFollowing) {
-      const isPinned = _activationPadding !== ZERO_PADDING;
+      const isPinned = _centerOffset !== ZERO_OFFSET;
       if (isPinned && pos) {
         _easedLon = pos.longitude;
         _easedLat = pos.latitude;
@@ -2872,20 +2846,18 @@
     if (pos && following) {
       const W = mapContainer.clientWidth;
       const H = mapContainer.clientHeight;
-      const padding = {
-        top: _activationPadding.top * H,
-        bottom: _activationPadding.bottom * H,
-        left: _activationPadding.left * W,
-        right: _activationPadding.right * W
-      };
+      const offset : [number, number] = [
+        _centerOffset.left * W/2,
+        _centerOffset.top * H/2,
+      ];
       if (posChanged || rmChanged || rm === 'heading' || rm === 'cog') {
         const center = map.getCenter();
         const dist = Math.hypot(center.lng - pos.longitude, center.lat - pos.latitude);
         const bOpts = bearing !== undefined ? { bearing } : {};
         if (dist > 1) {
-          map.flyTo({ center: [pos.longitude, pos.latitude], speed: 1.5, padding: padding, ...bOpts });
+          map.flyTo({ center: [pos.longitude, pos.latitude], speed: 1.5, offset, ...bOpts });
         } else {
-          map.easeTo({ center: [pos.longitude, pos.latitude], duration: 1000, padding: padding, ...bOpts });
+          map.easeTo({ center: [pos.longitude, pos.latitude], duration: 1000, offset, ...bOpts });
         }
       }
     } else if (bearing !== undefined && !_isInteracting) {
