@@ -56,6 +56,7 @@
   import { track } from './stores/track.svelte';
   import { routes } from './stores/routes.svelte';
   import { auth } from './stores/auth.svelte';
+  import { connection } from './stores/connection.svelte';
 
   // Message types received from the SignalK worker.
   interface WsState {
@@ -73,8 +74,6 @@
   let mapComp          = $state<ReturnType<typeof Map>      | null>(null);
   let settingsComp     = $state<ReturnType<typeof Settings>  | null>(null);
   let chartPickerComp  = $state<ReturnType<typeof ChartPicker> | null>(null);
-  let connected = $state(false);
-  let error = $state<string | null>(null);
   let worker: Worker | null = null;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let reconnectDelay = 2000; // ms, doubles on each failure up to 30s
@@ -212,7 +211,7 @@
         // Update course/route regardless of geo mode — route is always from SK.
         route.update(settings.signalkHttpUrl, settings.useGeoLocation ? undefined : msg.state.course);
       } else if (msg.type === 'status') {
-        connected = msg.status === 1;
+        connection.setConnected(msg.status === 1);
         if (msg.status === 1) {
           // Successfully connected — reset backoff.
           reconnectDelay = 2000;
@@ -223,21 +222,21 @@
           }
         } else if (msg.status === 2 || msg.status === 3) {
           // Disconnected or error — schedule reconnect.
-          if (msg.status === 3) error = 'Connection error';
+          if (msg.status === 3) connection.setError('Connection error');
           scheduleReconnect();
         }
-        if (msg.status === 2) error = null;
+        if (msg.status === 2) connection.setError(null);
       } else if (msg.type === 'ais') {
         ais.updateBinary(msg.hot, msg.ids, msg.cold);
       } else {
-        error = `Signal K client failed: ${msg.message}`;
+        connection.setError(`Signal K client failed: ${msg.message}`);
         console.error('[signalk] worker error', msg.message);
       }
     };
 
     // Reconnect immediately when the user returns to the page after backgrounding.
     const onVisible = () => {
-      if (document.visibilityState === 'visible' && !connected) {
+      if (document.visibilityState === 'visible' && !connection.connected) {
         if (reconnectTimer !== null) { clearTimeout(reconnectTimer); reconnectTimer = null; }
         const url = settings.signalkUrl;
         if (url) worker?.postMessage({ type: 'connect', url });
@@ -310,8 +309,8 @@
     const url = settings.signalkUrl;
     if (url === lastUrl) return;
     lastUrl = url;
-    connected = false;
-    error = null;
+    connection.setConnected(false);
+    connection.setError(null);
     reconnectDelay = 2000;
     if (reconnectTimer !== null) { clearTimeout(reconnectTimer); reconnectTimer = null; }
     worker?.postMessage({ type: 'connect', url });
@@ -360,17 +359,12 @@
   <Settings bind:this={settingsComp} />
   <ChartPicker bind:this={chartPickerComp} />
 
-  <!-- Signal K connection status (top-left, above toolbar) -->
-  <div class="sk-status">
-    <span style="color: {connected ? '#4ade80' : '#f87171'}">● Signal K</span>
-    {#if error}<span style="color: #f87171">⚠ {error}</span>{/if}
-  </div>
-
   <!-- Consolidated map toolbar -->
   <div class="map-toolbar">
     <button
       class="map-btn"
       title="Settings"
+      style="color: {connection.connected ? '#4ade80' : connection.error ? '#f87171' : '#f59e0b'}"
       onclick={handleOpenSettingsModal}
     ><FaIcon icon={faGear} /></button>
 
@@ -514,24 +508,9 @@
 </div>
 
 <style>
-  .sk-status {
-    position: absolute;
-    top: 10px;
-    left: 10px;
-    z-index: 10;
-    background: rgba(0,0,0,0.7);
-    color: white;
-    padding: 6px 12px;
-    border-radius: 6px;
-    font: 12px monospace;
-    display: flex;
-    gap: 8px;
-    align-items: center;
-  }
-
   .map-toolbar {
     position: absolute;
-    top: 44px;
+    top: 10px;
     left: 10px;
     z-index: 10;
     display: flex;

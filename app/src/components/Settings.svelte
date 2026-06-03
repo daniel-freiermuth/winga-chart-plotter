@@ -2,6 +2,7 @@
   import { settings, type AppearanceSettings, type SettingsTab } from '../stores/settings.svelte';
   import { auth } from '../stores/auth.svelte';
   import { fpsStore } from '../stores/fps.svelte';
+  import { connection } from '../stores/connection.svelte';
   import ColorInput from '../lib/ColorInput.svelte';
 
   let isOpen = $state(false);
@@ -140,6 +141,15 @@
     </div>
 
     {#if tab === 'connection'}
+      {#if !connection.connected}
+        <div class="conn-warning">
+          {#if connection.error}
+            ⚠ {connection.error}
+          {:else}
+            ⚠ Not connected to Signal K
+          {/if}
+        </div>
+      {/if}
       <p class="section-title">Signal K server</p>
       <div class="row">
         <span class="field-label">Protocol</span>
@@ -608,6 +618,11 @@
   .unit { font-size: 12px; color: #666688; }
   .hint { font-size: 11px; color: #666688; margin: 2px 0 12px 84px; word-break: break-all; }
   .geo-error-note { font-size: 11px; color: #f87171; margin: -6px 0 10px 84px; }
+  .conn-warning {
+    font-size: 12px; color: #f87171; background: rgba(248,113,113,0.1);
+    border: 1px solid rgba(248,113,113,0.3); border-radius: 6px;
+    padding: 8px 12px; margin-bottom: 12px;
+  }
   .auth-status { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
   .auth-user { font-size: 13px; color: #a0a0c0; flex: 1; }
   .auth-user strong { color: white; }
