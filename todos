@@ -58,6 +58,8 @@
 - [x] Heading rotation effect
 - [x] look-ahead mode, offset from middle
 - [x] MOB button, requires login
+- [x] Same height whan changing padding
+- [x] Background ruler
 
 
 
@@ -67,6 +69,7 @@
   - from NV charts somehow?
 - Chrome GL problem
 
+- Waypoint icons
 - Debug tablet performance
 - SHOM proxy
 - KIP integration
