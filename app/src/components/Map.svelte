@@ -967,8 +967,11 @@
     }
 
     function scheduleRafTick() {
+      // Rulers and route planner require full-rate updates for responsive interaction,
+      // regardless of the configured target FPS (which throttles only AIS animation).
+      const needsFullRate = rulers.rulers.length > 0 || routePlanner.active;
       const intervalMs = 1000 / settings.targetFps;
-      if (intervalMs <= 17) {
+      if (intervalMs <= 17 || needsFullRate) {
         rafId = requestAnimationFrame(rafTick);
       } else {
         rafId = setTimeout(rafTick, intervalMs) as unknown as number;
