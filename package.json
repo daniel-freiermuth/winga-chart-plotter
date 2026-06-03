@@ -2,7 +2,7 @@
   "name": "winga-chart-plotter-signalk",
   "version": "0.11.3",
   "description": "[Experimental] Sea chart plotting featuring WebGL",
-  "license": "MIT",
+  "license": "GPL-3.0-only",
   "keywords": [
     "signalk-webapp",
     "signalk-category-chart-plotters",
