@@ -256,7 +256,7 @@ function createSettings() {
       if (next.resourcePollIntervalSeconds !== undefined) data.resourcePollIntervalSeconds = next.resourcePollIntervalSeconds;
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
     },
-    setGeoError(msg: string) {
+    setGeoError(msg: string | null) {
       geoError = msg;
     },
     setGeoAccuracy(metres: number | null) {

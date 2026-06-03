@@ -84,37 +84,80 @@
   $effect(() => {
     if (!settings.useGeoLocation || !('geolocation' in navigator)) return;
 
-    const id = navigator.geolocation.watchPosition(
-      (pos) => {
-        const { longitude, latitude, speed, heading, accuracy } = pos.coords;
-        settings.setGeoAccuracy(accuracy);
-        vesselState.set({
-          position: { longitude, latitude },
-          // Geolocation heading is in degrees true [0, 360), undefined when stationary.
-          // Convert to radians, fall back to null so predictors are hidden when still.
-          cog: heading !== null && isFinite(heading) ? heading * (Math.PI / 180) : null,
-          sog: speed !== null && isFinite(speed) ? speed : null,
-          // Include latest compass heading so the vessel icon rotates.
-          heading: latestCompassHeadingRad,
-        });
-      },
-      (err) => {
-        console.warn('[geolocation] error', err.code, err.message);
-        settings.setGeoAccuracy(null);
-        if (err.code === GeolocationPositionError.PERMISSION_DENIED) {
-          settings.setGeoError('Location access denied — check browser/OS permissions');
-          settings.apply({ useGeoLocation: false });
-        } else if (err.code === GeolocationPositionError.POSITION_UNAVAILABLE) {
-          settings.setGeoError('Location unavailable — GPS signal lost');
-        } else {
-          settings.setGeoError(`Location error: ${err.message}`);
-        }
-      },
-      { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 },
-    );
+    let watchId: number | null = null;
+    let lastUpdateMs = Date.now();
+
+    function startWatch(): void {
+      lastUpdateMs = Date.now();
+      watchId = navigator.geolocation.watchPosition(
+        (pos) => {
+          lastUpdateMs = Date.now();
+          settings.setGeoError(null);
+          const { longitude, latitude, speed, heading, accuracy } = pos.coords;
+          settings.setGeoAccuracy(accuracy);
+          vesselState.set({
+            position: { longitude, latitude },
+            // Geolocation heading is in degrees true [0, 360), undefined when stationary.
+            // Convert to radians, fall back to null so predictors are hidden when still.
+            cog: heading !== null && isFinite(heading) ? heading * (Math.PI / 180) : null,
+            sog: speed !== null && isFinite(speed) ? speed : null,
+            // Include latest compass heading so the vessel icon rotates.
+            heading: latestCompassHeadingRad,
+          });
+        },
+        (err) => {
+          console.warn('[geolocation] error', err.code, err.message);
+          if (err.code === GeolocationPositionError.PERMISSION_DENIED) {
+            settings.setGeoAccuracy(null);
+            settings.setGeoError('Location access denied — check browser/OS permissions');
+            settings.apply({ useGeoLocation: false });
+          } else if (err.code === GeolocationPositionError.TIMEOUT) {
+            // Firefox Android can silently stall after a timeout — restart the watch.
+            console.warn('[geolocation] timeout, restarting watch');
+            if (watchId !== null) { navigator.geolocation.clearWatch(watchId); watchId = null; }
+            startWatch();
+          } else {
+            settings.setGeoAccuracy(null);
+            settings.setGeoError(
+              err.code === GeolocationPositionError.POSITION_UNAVAILABLE
+                ? 'Location unavailable — GPS signal lost'
+                : `Location error: ${err.message}`,
+            );
+          }
+        },
+        // timeout:Infinity avoids spurious TIMEOUT errors between GPS fixes;
+        // the watchdog below handles real stalls.
+        { enableHighAccuracy: true, maximumAge: 0, timeout: Infinity },
+      );
+    }
+
+    startWatch();
+
+    // Firefox Android sometimes silently stops the watch without any error callback.
+    // Restart if no update has arrived within STALE_MS.
+    const STALE_MS = 30_000;
+    const watchdog = setInterval(() => {
+      if (Date.now() - lastUpdateMs > STALE_MS) {
+        console.warn('[geolocation] watchdog: no updates for 30 s, restarting watch');
+        if (watchId !== null) { navigator.geolocation.clearWatch(watchId); watchId = null; }
+        startWatch();
+      }
+    }, STALE_MS / 2);
+
+    // The browser may suspend the watch when the page is hidden (screen off, tab switch).
+    // Re-start as soon as the user returns.
+    function onPageVisible(): void {
+      if (document.visibilityState === 'visible') {
+        if (watchId !== null) { navigator.geolocation.clearWatch(watchId); watchId = null; }
+        startWatch();
+      }
+    }
+    document.addEventListener('visibilitychange', onPageVisible);
 
     return () => {
-      navigator.geolocation.clearWatch(id);
+      if (watchId !== null) navigator.geolocation.clearWatch(watchId);
+      clearInterval(watchdog);
+      document.removeEventListener('visibilitychange', onPageVisible);
       settings.setGeoAccuracy(null);
       latestCompassHeadingRad = null;
     };
