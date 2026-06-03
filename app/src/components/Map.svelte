@@ -738,13 +738,18 @@
       if (overlay !== null) {
         const nowMs = Date.now();
 
-        // Build live snap targets every frame.
+        // Ruler layers — rebuilt every frame only when rulers exist, because label
+        // visibility uses map.project() which depends on the current viewport.
+        // AIS layers are self-animating (no setProps needed from here for them).
+        const currentRulers = rulers.rulers;
+
+        // Build live snap targets only when there are active rulers to snap to.
         // For moving vessels: two snap points — last-known (id) and dead-reckoned (id+':ghost').
         // For stationary vessels: one snap point at last-known position.
         // Own vessel always included.
-        const ownPosForSnap = get(vesselState).position;
-        {
+        if (currentRulers.length > 0) {
           const nowForSnap = nowMs;
+          const ownPosForSnap = get(vesselState).position;
           const snapPts: typeof liveSnapTargets = [];
           const S = AIS_HOT_STRIDE;
           if (aisHotSnapshot && aisIdsSnapshot.length > 0) {
@@ -770,13 +775,7 @@
           }
           liveSnapTargets = snapPts;
           rulers.syncSnapped(liveSnapTargets);
-        }
 
-        // Ruler layers — rebuilt every frame only when rulers exist, because label
-        // visibility uses map.project() which depends on the current viewport.
-        // AIS layers are self-animating (no setProps needed from here for them).
-        const currentRulers = rulers.rulers;
-        if (currentRulers.length > 0) {
           // --- Ruler layers ---
           interface HandleDatum { rulerId: string; endpoint: 'a' | 'b'; lon: number; lat: number; snapId?: string | undefined }
           interface LineDatum { ruler: Ruler }
