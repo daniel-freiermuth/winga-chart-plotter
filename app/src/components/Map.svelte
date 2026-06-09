@@ -655,6 +655,12 @@
   let aisHotSnapshot: Float64Array | null = null;
   let aisIdsSnapshot: string[] = [];
   let aisUploadTimestamp = 0;
+  // Reference to the last hotData array seen by the AIS deck.gl $effect.
+  // Used to detect whether the effect was triggered by new WS data (hotData changed)
+  // or by a cold-data-only change (e.g. setInfoCache every 3 min). Only update
+  // aisUploadTimestamp when hotData actually changes — otherwise dead-reckoned
+  // vessel positions snap backwards each time vessel info is refreshed.
+  let _lastAisHotData: Float64Array | null = null;
   // Layer groups composed into overlay.setProps() — AIS layers set on data tick,
   // ruler layers rebuilt in rafTick (need map.project() for pixel distance checks).
   let aisLayerGroup: Layer[] = [];
@@ -1931,6 +1937,13 @@
     const settingsIconSize = ap.vesselSize / 64;
     const now = Date.now();
 
+    // Only advance the upload timestamp when hotData itself changed (new WS batch).
+    // Cold-only updates (e.g. setInfoCache) must reuse the existing timestamp so that
+    // dead-reckoned ghost vessels don't snap back to their stored position.
+    const hotDataChanged = hotData !== _lastAisHotData;
+    _lastAisHotData = hotData;
+    const uploadTs = hotDataChanged ? now : (aisUploadTimestamp || now);
+
     // Capture COG line settings explicitly so Svelte 5 tracks them as dependencies
     // and the closures below always close over the current values.
     const cogColor         = ap.cog.color;
@@ -1941,9 +1954,10 @@
     if (!hotData || ids.length === 0) {
       aisLayerGroup = [];
       flushLayers();
-      aisHotSnapshot    = null;
-      aisIdsSnapshot    = [];
+      aisHotSnapshot     = null;
+      aisIdsSnapshot     = [];
       aisUploadTimestamp = 0;
+      _lastAisHotData    = null;
       return;
     }
 
@@ -2030,9 +2044,9 @@
     }
 
     // Snapshot for rafTick dead-reckoning (ruler snap).
-    aisHotSnapshot     = hotData;
-    aisIdsSnapshot     = ids;
-    aisUploadTimestamp = now;
+    aisHotSnapshot = hotData;
+    aisIdsSnapshot = ids;
+    if (hotDataChanged) aisUploadTimestamp = now;
 
     const vesselColor      = hexToRgba(ap.vesselColor, 220);
     const ghostVesselColor = hexToRgba(ap.vesselColor, 130);
@@ -2073,7 +2087,7 @@
           getAgeAtUpload: getAge,
           getLength:      getLenForIcon,
           getColor:       ghostVesselColor,
-          uploadTimestamp: now,
+          uploadTimestamp: uploadTs,
           selfAnimate: true,
           animationIntervalMs: 1000 / settings.targetFps,
           settingsIconSize,
@@ -2093,7 +2107,7 @@
       getAgeAtUpload: () => 0,
       getLength:      getLenForIcon,
       getColor:       vesselColor,
-      uploadTimestamp: now,
+      uploadTimestamp: uploadTs,
       selfAnimate: false,
       settingsIconSize,
       pickable: true,
@@ -2112,7 +2126,7 @@
           getAgeAtUpload: () => 0,
           getLength:      getLenForIcon,
           getColor:       vesselColor,
-          uploadTimestamp: now,
+          uploadTimestamp: uploadTs,
           selfAnimate: false,
           settingsIconSize,
           iconGeometry: ANCHOR_DOT_GEOMETRY,
@@ -2133,7 +2147,7 @@
           getAgeAtUpload: () => 0,
           getLength:      getLenForIcon,
           getColor:       vesselColor,
-          uploadTimestamp: now,
+          uploadTimestamp: uploadTs,
           selfAnimate: false,
           settingsIconSize,
           iconGeometry: MOORING_BARS_GEOMETRY,
@@ -2154,7 +2168,7 @@
           getAgeAtUpload: () => 0,
           getLength:      getLenForIcon,
           getColor:       vesselColor,
-          uploadTimestamp: now,
+          uploadTimestamp: uploadTs,
           selfAnimate: false,
           settingsIconSize,
           iconGeometry: AGROUND_CIRCLE_GEOMETRY,
@@ -2175,7 +2189,7 @@
           getAgeAtUpload: () => 0,
           getLength:      getLenForIcon,
           getColor:       vesselColor,
-          uploadTimestamp: now,
+          uploadTimestamp: uploadTs,
           selfAnimate: false,
           settingsIconSize,
           iconGeometry: FISHING_GEAR_GEOMETRY,
@@ -2196,7 +2210,7 @@
           getAgeAtUpload: () => 0,
           getLength:      getLenForIcon,
           getColor:       vesselColor,
-          uploadTimestamp: now,
+          uploadTimestamp: uploadTs,
           selfAnimate: false,
           settingsIconSize,
           iconGeometry: NUC_GEOMETRY,
@@ -2217,7 +2231,7 @@
           getAgeAtUpload: () => 0,
           getLength:      getLenForIcon,
           getColor:       vesselColor,
-          uploadTimestamp: now,
+          uploadTimestamp: uploadTs,
           selfAnimate: false,
           settingsIconSize,
           iconGeometry: RESTRICTED_MANOEUVRING_GEOMETRY,
@@ -2238,7 +2252,7 @@
           getAgeAtUpload: () => 0,
           getLength:      getLenForIcon,
           getColor:       vesselColor,
-          uploadTimestamp: now,
+          uploadTimestamp: uploadTs,
           selfAnimate: false,
           settingsIconSize,
           iconGeometry: DRAUGHT_GEOMETRY,
@@ -2261,7 +2275,7 @@
           getAgeAtUpload: () => 0,
           getLength:      () => 0,
           getColor:       () => [255, 40, 40, 220] as [number, number, number, number],
-          uploadTimestamp: now,
+          uploadTimestamp: uploadTs,
           selfAnimate: false,
           settingsIconSize,
           iconGeometry: MOB_GEOMETRY,
@@ -2282,7 +2296,7 @@
           getLength:      (i) => getLen(i, 50),
           getBeam:        (i) => getBeam(i, 10),
           getColor:       vesselColor,
-          uploadTimestamp: now,
+          uploadTimestamp: uploadTs,
           selfAnimate: true,
           animationIntervalMs: 1000 / settings.targetFps,
           settingsIconSize,
@@ -2304,7 +2318,7 @@
           getLength:      (i) => getLen(i, 50),
           getBeam:        (i) => getBeam(i, 10),
           getColor:       vesselColor,
-          uploadTimestamp: now,
+          uploadTimestamp: uploadTs,
           selfAnimate: false,
           settingsIconSize,
           opacity: 1,
@@ -2326,7 +2340,7 @@
             getAgeAtUpload: animate ? getAge : () => 0,
             getLength:      (i) => getLen(i, 50),
             getBeam:        (i) => getBeam(i, 10),
-            uploadTimestamp: now,
+            uploadTimestamp: uploadTs,
             selfAnimate: animate,
             animationIntervalMs: animate ? 1000 / settings.targetFps : 0,
             settingsIconSize,
@@ -2348,7 +2362,7 @@
             getLength:      (i) => getLen(i, 50),
             getBeam:        (i) => getBeam(i, 10),
             getBorderColor: () => color,
-            uploadTimestamp: now,
+            uploadTimestamp: uploadTs,
             selfAnimate: animate,
             animationIntervalMs: animate ? 1000 / settings.targetFps : 0,
             settingsIconSize,
