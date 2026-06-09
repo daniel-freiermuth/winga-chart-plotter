@@ -2091,6 +2091,7 @@
           selfAnimate: true,
           animationIntervalMs: 1000 / settings.targetFps,
           settingsIconSize,
+          drCapSeconds: cogLengthMinutes * 60,
           pickable: true,
         })
       : null;
@@ -2301,6 +2302,7 @@
           animationIntervalMs: 1000 / settings.targetFps,
           settingsIconSize,
           opacity: 0.75,
+          drCapSeconds: cogLengthMinutes * 60,
           pickable: true,
         })
       : null;

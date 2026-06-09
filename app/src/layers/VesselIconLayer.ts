@@ -23,6 +23,7 @@ import { Model, Geometry } from '@luma.gl/engine';
 const uniformBlock = /* glsl */`\
 uniform aisIconUniforms {
   float timeSinceUpload;
+  float drCapSeconds;
   float zoom;
   float settingsIconSize;
   float opacity;
@@ -35,6 +36,7 @@ const aisIconUniformModule = {
   fs: uniformBlock,
   uniformTypes: {
     timeSinceUpload: 'f32',
+    drCapSeconds: 'f32',
     zoom: 'f32',
     settingsIconSize: 'f32',
     opacity: 'f32',
@@ -74,7 +76,7 @@ void main(void) {
   // ------------------------------------------------------------------
   // 1. Dead-reckoning time delta
   // ------------------------------------------------------------------
-  float dt = min(instanceAgeAtUpload + aisIcon.timeSinceUpload, 180.0);
+  float dt = min(instanceAgeAtUpload + aisIcon.timeSinceUpload, aisIcon.drCapSeconds);
 
   // ------------------------------------------------------------------
   // 2. Dead-reckoned ENU offset from stored position (metres)
@@ -500,6 +502,8 @@ export interface VesselIconLayerProps<DataT = number> extends LayerProps {
   animationIntervalMs?: number;
   settingsIconSize?: number;
   opacity?:         number;
+  /** DR cap in seconds — ghost icon won't extrapolate beyond this. Defaults to cogLengthMinutes*60. */
+  drCapSeconds?: number;
 }
 
 const defaultProps: DefaultProps<VesselIconLayerProps> = {
@@ -516,6 +520,7 @@ const defaultProps: DefaultProps<VesselIconLayerProps> = {
   animationIntervalMs: 0,
   settingsIconSize: 1,
   opacity:          1,
+  drCapSeconds:     180,
 };
 
 // ---------------------------------------------------------------------------
@@ -578,7 +583,7 @@ export class VesselIconLayer<DataT = number> extends Layer<VesselIconLayerProps<
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   override draw({ uniforms: _uniforms }: { uniforms: Record<string, unknown> }) {
-    const { uploadTimestamp, selfAnimate, animationIntervalMs, settingsIconSize, opacity } = this.props;
+    const { uploadTimestamp, selfAnimate, animationIntervalMs, settingsIconSize, opacity, drCapSeconds } = this.props;
     const now = Date.now();
     const timeSinceUpload = selfAnimate
       ? Math.max(0, (now - (uploadTimestamp ?? 0)) / 1000)
@@ -589,6 +594,7 @@ export class VesselIconLayer<DataT = number> extends Layer<VesselIconLayerProps<
     model.shaderInputs.setProps({
       aisIcon: {
         timeSinceUpload,
+        drCapSeconds: drCapSeconds ?? 180,
         zoom,
         settingsIconSize: settingsIconSize ?? 1,
         opacity:         opacity,

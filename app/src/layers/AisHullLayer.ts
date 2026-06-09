@@ -23,6 +23,7 @@ import { Model, Geometry } from '@luma.gl/engine';
 const uniformBlock = /* glsl */`\
 uniform aisHullUniforms {
   float timeSinceUpload;
+  float drCapSeconds;
   float zoom;
   float settingsIconSize;
   float opacity;
@@ -35,6 +36,7 @@ const aisHullUniformModule = {
   fs: uniformBlock,
   uniformTypes: {
     timeSinceUpload: 'f32',
+    drCapSeconds: 'f32',
     zoom: 'f32',
     settingsIconSize: 'f32',
     opacity: 'f32',
@@ -68,7 +70,7 @@ void main(void) {
   // ------------------------------------------------------------------
   // 1. Time delta (float32-safe: both components are small seconds values)
   // ------------------------------------------------------------------
-  float dt = min(instanceAgeAtUpload + aisHull.timeSinceUpload, 180.0);
+  float dt = min(instanceAgeAtUpload + aisHull.timeSinceUpload, aisHull.drCapSeconds);
 
   // ------------------------------------------------------------------
   // 2. Dead-reckoned ENU offset from stored position (metres)
@@ -233,6 +235,8 @@ export interface AisHullLayerProps<DataT = number> extends LayerProps {
   animationIntervalMs?: number;
   settingsIconSize?: number;
   opacity?: number;
+  /** DR cap in seconds — ghost hull won't extrapolate beyond this. Defaults to cogLengthMinutes*60. */
+  drCapSeconds?: number;
 }
 
 const defaultProps: DefaultProps<AisHullLayerProps> = {
@@ -250,6 +254,7 @@ const defaultProps: DefaultProps<AisHullLayerProps> = {
   animationIntervalMs: 0,
   settingsIconSize:  1,
   opacity:           1,
+  drCapSeconds:      180,
 };
 
 // ---------------------------------------------------------------------------
@@ -311,7 +316,7 @@ export class AisHullLayer<DataT = number> extends Layer<AisHullLayerProps<DataT>
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   override draw({ uniforms: _uniforms }: { uniforms: Record<string, unknown> }) {
-    const { uploadTimestamp, selfAnimate, animationIntervalMs, settingsIconSize, opacity } = this.props;
+    const { uploadTimestamp, selfAnimate, animationIntervalMs, settingsIconSize, opacity, drCapSeconds } = this.props;
     const now = Date.now();
     const timeSinceUpload = selfAnimate
       ? Math.max(0, (now - (uploadTimestamp ?? 0)) / 1000)
@@ -323,6 +328,7 @@ export class AisHullLayer<DataT = number> extends Layer<AisHullLayerProps<DataT>
     model.shaderInputs.setProps({
       aisHull: {
         timeSinceUpload,
+        drCapSeconds: drCapSeconds ?? 180,
         zoom,
         settingsIconSize: settingsIconSize ?? 1,
         opacity: opacity,
@@ -432,7 +438,7 @@ in float instanceBeam;
 out float vOpacity;
 
 void main(void) {
-  float dt = min(instanceAgeAtUpload + aisHull.timeSinceUpload, 180.0);
+  float dt = min(instanceAgeAtUpload + aisHull.timeSinceUpload, aisHull.drCapSeconds);
 
   float dEast, dNorth;
   if (abs(instanceRot) > 1e-4) {
@@ -701,6 +707,8 @@ export interface AisHullDecorationLayerProps<DataT = number> extends LayerProps 
   animationIntervalMs?: number;
   settingsIconSize?: number;
   decoration:      HullDecorationGeometry;
+  /** DR cap in seconds — decoration won't extrapolate beyond this. */
+  drCapSeconds?: number;
 }
 
 const decorationDefaultProps: DefaultProps<AisHullDecorationLayerProps> = {
@@ -716,6 +724,7 @@ const decorationDefaultProps: DefaultProps<AisHullDecorationLayerProps> = {
   selfAnimate:         false,
   animationIntervalMs: 0,
   settingsIconSize:    1,
+  drCapSeconds:        180,
   decoration: { type: 'object', value: HULL_ANCHOR_DOT } as never,
 };
 
@@ -779,7 +788,7 @@ export class AisHullDecorationLayer<DataT = number>
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   override draw({ uniforms: _uniforms }: { uniforms: Record<string, unknown> }) {
-    const { uploadTimestamp, selfAnimate, animationIntervalMs, settingsIconSize } = this.props;
+    const { uploadTimestamp, selfAnimate, animationIntervalMs, settingsIconSize, drCapSeconds } = this.props;
     const now = Date.now();
     const timeSinceUpload = selfAnimate
       ? Math.max(0, (now - (uploadTimestamp ?? 0)) / 1000)
@@ -787,7 +796,7 @@ export class AisHullDecorationLayer<DataT = number>
     const zoom = this.context.viewport.zoom;
     const model = this.state['model'] as Model;
     model.shaderInputs.setProps({
-      aisHull: { timeSinceUpload, zoom, settingsIconSize: settingsIconSize ?? 1, opacity: 1 },
+      aisHull: { timeSinceUpload, drCapSeconds: drCapSeconds ?? 180, zoom, settingsIconSize: settingsIconSize ?? 1, opacity: 1 },
     });
     model.draw(this.context.renderPass);
     if (selfAnimate) {
@@ -855,7 +864,7 @@ in vec4 instanceBorderColor;   // unorm8 RGBA
 out vec4 vColor;
 
 void main(void) {
-  float dt = min(instanceAgeAtUpload + aisHull.timeSinceUpload, 180.0);
+  float dt = min(instanceAgeAtUpload + aisHull.timeSinceUpload, aisHull.drCapSeconds);
 
   float dEast, dNorth;
   if (abs(instanceRot) > 1e-4) {
@@ -933,6 +942,8 @@ export interface AisHullBorderLayerProps<DataT = number> extends LayerProps {
   animationIntervalMs?: number;
   settingsIconSize?: number;
   opacity?:         number;
+  /** DR cap in seconds — border hull won't extrapolate beyond this. */
+  drCapSeconds?: number;
 }
 
 const borderDefaultProps: DefaultProps<AisHullBorderLayerProps> = {
@@ -950,6 +961,7 @@ const borderDefaultProps: DefaultProps<AisHullBorderLayerProps> = {
   animationIntervalMs: 0,
   settingsIconSize:    1,
   opacity:             1,
+  drCapSeconds:        180,
 };
 
 export class AisHullBorderLayer<DataT = number>
@@ -1010,7 +1022,7 @@ export class AisHullBorderLayer<DataT = number>
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   override draw({ uniforms: _uniforms }: { uniforms: Record<string, unknown> }) {
-    const { uploadTimestamp, selfAnimate, animationIntervalMs, settingsIconSize, opacity } = this.props;
+    const { uploadTimestamp, selfAnimate, animationIntervalMs, settingsIconSize, opacity, drCapSeconds } = this.props;
     const now = Date.now();
     const timeSinceUpload = selfAnimate
       ? Math.max(0, (now - (uploadTimestamp ?? 0)) / 1000)
@@ -1020,6 +1032,7 @@ export class AisHullBorderLayer<DataT = number>
     model.shaderInputs.setProps({
       aisHull: {
         timeSinceUpload,
+        drCapSeconds: drCapSeconds ?? 180,
         zoom,
         settingsIconSize: settingsIconSize ?? 1,
         opacity: opacity,
