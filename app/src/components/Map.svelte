@@ -1785,8 +1785,39 @@
       chartSourceUrls.clear();
       activeStyleUrl = newStyleUrl;
       if (newStyleUrl) {
+        const chartUrl = styleChart?.url
+          ? (styleChart.url.startsWith('/') ? `${charts.serverBase}${styleChart.url}` : styleChart.url)
+          : null;
         fetchAndResolveStyle(newStyleUrl)
-          .then(resolved => m.setStyle(resolved as maplibregl.StyleSpecification, { diff: false }))
+          .then(resolved => {
+            // If chart.url is available, inject it as a source for any layer
+            // whose source is not already defined in the style. This means:
+            //   - style has sources.enc → use it (tile URL from style.json)
+            //   - style lacks sources.enc but chart.url is set → inject from SK
+            //   - both set → both exist (style wins for enc, SK url fills gaps)
+            if (chartUrl) {
+              const spec = resolved as maplibregl.StyleSpecification;
+              const sources: Record<string, maplibregl.SourceSpecification> = (spec.sources ?? {}) as Record<string, maplibregl.SourceSpecification>;
+              const definedSources = new Set(Object.keys(sources));
+              const referencedSources = new Set(
+                (spec.layers ?? [])
+                  .map((l: maplibregl.LayerSpecification) => ('source' in l ? l.source : undefined))
+                  .filter((s): s is string => typeof s === 'string')
+              );
+              for (const src of referencedSources) {
+                if (!definedSources.has(src)) {
+                  sources[src] = {
+                    type: 'vector',
+                    tiles: [chartUrl],
+                    minzoom: styleChart?.minzoom ?? 0,
+                    maxzoom: styleChart?.maxzoom ?? 22,
+                  };
+                }
+              }
+              spec.sources = sources;
+            }
+            m.setStyle(resolved as maplibregl.StyleSpecification, { diff: false });
+          })
           .catch((e: unknown) => {
             console.error('[map] Failed to load style', newStyleUrl, e);
             // setStyle() was never called, so the map's previous style is still intact.
