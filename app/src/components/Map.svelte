@@ -598,9 +598,13 @@
     if (!rulerDrag) {
       // Hover detection via pickObject (avoids deck.gl layer recreation race on drag).
       if (overlay) {
-        const handleLayers = ['ruler-handles', ...(routePlanner.active ? ['planner-handles'] : [])];
-        const hoverPick = overlay.pickObject({ x, y, radius: 10, layerIds: handleLayers });
-        setHandleHover(!!hoverPick?.object);
+        try {
+          const handleLayers = ['ruler-handles', ...(routePlanner.active ? ['planner-handles'] : [])];
+          const hoverPick = overlay.pickObject({ x, y, radius: 10, layerIds: handleLayers });
+          setHandleHover(!!hoverPick?.object);
+        } catch {
+          // deck.gl overlay may be in a transient invalid state during map style reload
+        }
       }
       return;
     }
@@ -1346,6 +1350,17 @@
 
     map.on('error', (e) => {
       console.error('[map] error', e.error ?? e);
+    });
+
+    // Some nautical chart styles reference sprite images that aren't present in
+    // the sprite sheet (e.g. depth-specific wreck variants at high zoom levels).
+    // Without this handler MapLibre logs an error for every missing image on
+    // every frame and refuses to render the symbol layer entirely.
+    // Adding a 1×1 transparent placeholder silences the error and lets all other
+    // symbols in the same layer render normally.
+    map.on('styleimagemissing', (e: { id: string }) => {
+      if (map?.hasImage(e.id)) return; // already added (re-entrant guard)
+      map?.addImage(e.id, { width: 1, height: 1, data: new Uint8Array(4) });
     });
   });
 
