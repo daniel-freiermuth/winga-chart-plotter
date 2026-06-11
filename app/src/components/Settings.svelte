@@ -82,7 +82,6 @@
       signalkProtocol: connDraft.protocol,
       signalkHost:     connDraft.host,
       signalkPort:     connDraft.port,
-      useGeoLocation:  settings.useGeoLocation,
       appearance:      settings.appearance,
       targetFps:       settings.targetFps,
     });
@@ -96,7 +95,6 @@
       signalkProtocol: settings.protocol,
       signalkHost:     settings.host,
       signalkPort:     settings.port,
-      useGeoLocation:  settings.useGeoLocation,
       appearance:      snap.appearance,
       targetFps:       snap.targetFps,
       resourcePollIntervalSeconds: snap.resourcePollIntervalSeconds,
@@ -119,7 +117,6 @@
       signalkProtocol: settings.protocol,
       signalkHost:     settings.host,
       signalkPort:     settings.port,
-      useGeoLocation:  settings.useGeoLocation,
       appearance:      settings.appearance,
       targetFps:       settings.targetFps,
     });
@@ -189,60 +186,6 @@
           <span style="font-size:13px">seconds</span>
         </div>
       </div>
-
-      <p class="section-title">Position source</p>
-      <div class="row">
-        <span class="field-label">Browser GPS</span>
-        <div class="field">
-          <label class="toggle">
-            <input
-              type="checkbox"
-              checked={settings.useGeoLocation}
-              onchange={(e) => {
-                const checked = (e.target as HTMLInputElement).checked;
-                // Request permission while still inside the user-gesture event — some
-                // mobile browsers suppress the prompt when called from an async context.
-                if (checked && 'geolocation' in navigator) {
-                  navigator.geolocation.getCurrentPosition(() => { /* noop */ }, () => { /* noop */ });
-                }
-                // iOS 13+ requires an explicit user-gesture permission for DeviceOrientationEvent.
-                if (checked && typeof (window.DeviceOrientationEvent as unknown as { requestPermission?: unknown }).requestPermission === 'function') {
-                  (window.DeviceOrientationEvent as unknown as { requestPermission: () => Promise<string> })
-                    .requestPermission()
-                    .then(r => { if (r !== 'granted') settings.setGeoError('Compass access denied — heading unavailable'); })
-                    .catch(() => { /* noop */ });
-                }
-                settings.apply({ useGeoLocation: checked });
-              }}
-            />
-            <span class="toggle-track"><span class="toggle-thumb"></span></span>
-          </label>
-          <span class="toggle-label">Use device GPS instead of Signal K position</span>
-        </div>
-      </div>
-      {#if settings.useGeoLocation}
-        {@const acc = settings.geoAccuracy}
-        {@const quality = acc === null ? 'waiting'
-                        : acc < 20    ? 'gps'
-                        : acc < 150   ? 'marginal'
-                        :               'poor'}
-        <div class="geo-accuracy-row">
-          <span class="geo-accuracy-dot geo-accuracy-dot--{quality}"></span>
-          {#if acc === null}
-            <span class="geo-accuracy-label">Waiting for fix…</span>
-          {:else}
-            <span class="geo-accuracy-label">
-              {acc < 20 ? 'GPS' : acc < 150 ? 'WiFi / marginal GPS' : 'Cell tower'} — ±{acc < 1000 ? acc.toFixed(0) + ' m' : (acc / 1000).toFixed(1) + ' km'}
-            </span>
-          {/if}
-        </div>
-        {#if acc !== null && acc > 150}
-          <p class="geo-error-note">⚠ Accuracy is poor — GPS may not be active. On Android 12+, check that you granted <em>precise</em> (not approximate) location permission.</p>
-        {/if}
-      {/if}
-      {#if settings.geoError && !settings.useGeoLocation}
-        <p class="geo-error-note">⚠ {settings.geoError}</p>
-      {/if}
 
       <p class="section-title">Authentication</p>
       {#if auth.isLoggedIn}
@@ -628,18 +571,6 @@
   .auth-user strong { color: white; }
   .btn-sm { padding: 4px 12px; font-size: 12px; }
   input[type=password] { flex: 1; background: #2a2a3e; border: 1px solid #444466; color: white; padding: 6px 8px; border-radius: 6px; font-size: 13px; }
-  .geo-accuracy-row {
-    display: flex; align-items: center; gap: 7px;
-    margin: -4px 0 8px 84px; font-size: 12px; color: #a0a0c0;
-  }
-  .geo-accuracy-dot {
-    width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0;
-  }
-  .geo-accuracy-dot--waiting  { background: #666688; }
-  .geo-accuracy-dot--gps      { background: #22c55e; }
-  .geo-accuracy-dot--marginal { background: #f59e0b; }
-  .geo-accuracy-dot--poor     { background: #f87171; }
-
   input[type=text], input[type=number], select {
     background: #2a2a3e; border: 1px solid #444466; color: white;
     padding: 6px 8px; border-radius: 6px; font-size: 13px; box-sizing: border-box;

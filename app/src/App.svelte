@@ -78,148 +78,6 @@
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let reconnectDelay = 2000; // ms, doubles on each failure up to 30s
 
-  // Latest compass heading from DeviceOrientation API, shared between the two effects below.
-  let latestCompassHeadingRad: number | null = null;
-
-  $effect(() => {
-    if (!settings.useGeoLocation || !('geolocation' in navigator)) return;
-
-    let watchId: number | null = null;
-    let lastUpdateMs = Date.now();
-
-    function startWatch(): void {
-      lastUpdateMs = Date.now();
-      watchId = navigator.geolocation.watchPosition(
-        (pos) => {
-          lastUpdateMs = Date.now();
-          settings.setGeoError(null);
-          const { longitude, latitude, speed, heading, accuracy } = pos.coords;
-          settings.setGeoAccuracy(accuracy);
-          vesselState.set({
-            position: { longitude, latitude },
-            // Geolocation heading is in degrees true [0, 360), undefined when stationary.
-            // Convert to radians, fall back to null so predictors are hidden when still.
-            cog: heading !== null && isFinite(heading) ? heading * (Math.PI / 180) : null,
-            sog: speed !== null && isFinite(speed) ? speed : null,
-            // Include latest compass heading so the vessel icon rotates.
-            heading: latestCompassHeadingRad,
-          });
-        },
-        (err) => {
-          console.warn('[geolocation] error', err.code, err.message);
-          if (err.code === GeolocationPositionError.PERMISSION_DENIED) {
-            settings.setGeoAccuracy(null);
-            settings.setGeoError('Location access denied — check browser/OS permissions');
-            settings.apply({ useGeoLocation: false });
-          } else if (err.code === GeolocationPositionError.TIMEOUT) {
-            // Firefox Android can silently stall after a timeout — restart the watch.
-            console.warn('[geolocation] timeout, restarting watch');
-            if (watchId !== null) { navigator.geolocation.clearWatch(watchId); watchId = null; }
-            startWatch();
-          } else {
-            settings.setGeoAccuracy(null);
-            settings.setGeoError(
-              err.code === GeolocationPositionError.POSITION_UNAVAILABLE
-                ? 'Location unavailable — GPS signal lost'
-                : `Location error: ${err.message}`,
-            );
-          }
-        },
-        // timeout:Infinity avoids spurious TIMEOUT errors between GPS fixes;
-        // the watchdog below handles real stalls.
-        { enableHighAccuracy: true, maximumAge: 0, timeout: Infinity },
-      );
-    }
-
-    startWatch();
-
-    // Firefox Android sometimes silently stops the watch without any error callback.
-    // Restart if no update has arrived within STALE_MS.
-    const STALE_MS = 30_000;
-    const watchdog = setInterval(() => {
-      if (Date.now() - lastUpdateMs > STALE_MS) {
-        console.warn('[geolocation] watchdog: no updates for 30 s, restarting watch');
-        if (watchId !== null) { navigator.geolocation.clearWatch(watchId); watchId = null; }
-        startWatch();
-      }
-    }, STALE_MS / 2);
-
-    // The browser may suspend the watch when the page is hidden (screen off, tab switch).
-    // Re-start as soon as the user returns.
-    function onPageVisible(): void {
-      if (document.visibilityState === 'visible') {
-        if (watchId !== null) { navigator.geolocation.clearWatch(watchId); watchId = null; }
-        startWatch();
-      }
-    }
-    document.addEventListener('visibilitychange', onPageVisible);
-
-    return () => {
-      if (watchId !== null) navigator.geolocation.clearWatch(watchId);
-      clearInterval(watchdog);
-      document.removeEventListener('visibilitychange', onPageVisible);
-      settings.setGeoAccuracy(null);
-      latestCompassHeadingRad = null;
-    };
-  });
-
-  // Subscribe to the device compass (DeviceOrientation API) when browser geo is active.
-  // - Chrome/Android/Firefox: 'deviceorientationabsolute' with alpha (CCW from true north)
-  // - iOS Safari:             'deviceorientation' with webkitCompassHeading (CW from north)
-  $effect(() => {
-    if (!settings.useGeoLocation || !('DeviceOrientationEvent' in window)) return;
-
-    // Once an absolute event fires we ignore the relative fallback.
-    let gotAbsolute = false;
-    // rAF coalescing: only flush one store update per animation frame.
-    let rafPending = false;
-
-    function headingFromAlpha(alpha: number): number {
-      // alpha is a CCW rotation from geographic north; flip to CW compass bearing.
-      return ((360 - alpha) % 360) * (Math.PI / 180);
-    }
-
-    function scheduleFlush() {
-      if (rafPending) return;
-      rafPending = true;
-      requestAnimationFrame(() => {
-        rafPending = false;
-        vesselState.update(s => ({ ...s, heading: latestCompassHeadingRad }));
-      });
-    }
-
-    function onAbsolute(e: DeviceOrientationEvent) {
-      if (e.alpha === null) return;
-      gotAbsolute = true;
-      latestCompassHeadingRad = headingFromAlpha(e.alpha);
-      scheduleFlush();
-    }
-
-    function onRelative(e: DeviceOrientationEvent) {
-      if (gotAbsolute) return; // prefer absolute events when available
-      // iOS: webkitCompassHeading is already a CW bearing from true north.
-      const webkit = (e as unknown as { webkitCompassHeading?: number }).webkitCompassHeading;
-      if (typeof webkit === 'number' && isFinite(webkit)) {
-        latestCompassHeadingRad = webkit * (Math.PI / 180);
-      } else if (e.absolute && e.alpha !== null) {
-        latestCompassHeadingRad = headingFromAlpha(e.alpha);
-      } else {
-        return;
-      }
-      scheduleFlush();
-    }
-
-    window.addEventListener('deviceorientationabsolute', onAbsolute as EventListener);
-    window.addEventListener('deviceorientation', onRelative);
-
-    return () => {
-      window.removeEventListener('deviceorientationabsolute', onAbsolute as EventListener);
-      window.removeEventListener('deviceorientation', onRelative);
-      latestCompassHeadingRad = null;
-      vesselState.update(s => ({ ...s, heading: null }));
-    };
-  });
-
   function scheduleReconnect() {
     if (reconnectTimer !== null) return;
     reconnectTimer = setTimeout(() => {
@@ -240,9 +98,7 @@
       const msg = e.data;
       if (msg.type === 'state') {
         const pos = msg.state.position;
-        if (settings.useGeoLocation) {
-          // Geo mode: browser provides position/heading; SK course data is still used.
-        } else if (pos) {
+        if (pos) {
           vesselState.set({
             position: { longitude: pos.longitude, latitude: pos.latitude },
             cog: msg.state.cog ?? null,
@@ -251,8 +107,8 @@
             ...(msg.state.course !== undefined ? { course: msg.state.course } : {}),
           });
         }
-        // Update course/route regardless of geo mode — route is always from SK.
-        route.update(settings.signalkHttpUrl, settings.useGeoLocation ? undefined : msg.state.course);
+        // Update course/route from SK.
+        route.update(settings.signalkHttpUrl, msg.state.course);
       } else if (msg.type === 'status') {
         connection.setConnected(msg.status === 1);
         if (msg.status === 1) {
