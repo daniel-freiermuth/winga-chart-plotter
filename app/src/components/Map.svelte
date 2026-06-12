@@ -97,6 +97,37 @@
     }
     followMode.following = true;
   }
+  /** Zoom in one step, keeping the vessel at its current screen pixel when following. */
+  export function zoomIn() {
+    if (!map) return;
+    if (followMode.following) {
+      const pos = get(vesselState).position;
+      if (pos) {
+        // Mirror zoomIn() behaviour: snap to the next integer zoom level.
+        const snap = map.getZoomSnap() || 1;
+        const target = Math.ceil(map.getZoom() / snap) * snap + snap;
+        map.easeTo({ zoom: target, around: [pos.longitude, pos.latitude] });
+        return;
+      }
+    }
+    map.zoomIn();
+  }
+
+  /** Zoom out one step, keeping the vessel at its current screen pixel when following. */
+  export function zoomOut() {
+    if (!map) return;
+    if (followMode.following) {
+      const pos = get(vesselState).position;
+      if (pos) {
+        const snap = map.getZoomSnap() || 1;
+        const target = Math.floor(map.getZoom() / snap) * snap - snap;
+        map.easeTo({ zoom: target, around: [pos.longitude, pos.latitude] });
+        return;
+      }
+    }
+    map.zoomOut();
+  }
+
   let mapLoaded     = $state(false);
   let mapZoom       = $state(10);
   // Fraction [0..1] of total track length over which the start fades from transparent to opaque.
@@ -703,8 +734,31 @@
       attributionControl: false,
     });
 
-    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
+    // Zoom buttons + scale bar share the bottom-left slot, laid out as a row via CSS.
+    // MapLibre prepends into bottom-* containers (insertBefore firstChild), so the
+    // LAST control added ends up FIRST in the DOM → leftmost in our flex-row override.
+    // Add scale first so zoom buttons end up left of the scale.
     map.addControl(new maplibregl.ScaleControl({ unit: 'nautical' }), 'bottom-left');
+    map.addControl({
+      onAdd(_m: maplibregl.Map): HTMLElement {
+        const el = document.createElement('div');
+        el.className = 'maplibregl-ctrl zoom-ctrl-group';
+        const btnIn  = document.createElement('button');
+        btnIn.className   = 'zoom-ctrl-btn';
+        btnIn.title       = 'Zoom in';
+        btnIn.textContent = '+';
+        btnIn.addEventListener('click', () => zoomIn());
+        const btnOut = document.createElement('button');
+        btnOut.className   = 'zoom-ctrl-btn';
+        btnOut.title       = 'Zoom out';
+        btnOut.textContent = '−';
+        btnOut.addEventListener('click', () => zoomOut());
+        el.appendChild(btnIn);
+        el.appendChild(btnOut);
+        return el;
+      },
+      onRemove(_m: maplibregl.Map): void { /* MapLibre removes the element */ },
+    }, 'bottom-left');
 
     // deck.gl overlay — non-interleaved mode: deck.gl renders on its own canvas (on top of
     // MapLibre) with its own rAF loop. This decouples deck.gl animation from MapLibre's render
@@ -1008,10 +1062,13 @@
     map.on('moveend',   () => {
       _isInteracting = false;
     });
-    // User dragging the map cancels follow mode. No camera operation here — any camera call
-    // on dragstart interferes with the drag gesture and requires a second grab.
+    // User dragging the map cancels follow mode — but only when not in follow/lock mode.
+    // When following, dragPan is disabled so pan drags cannot fire; a dragstart in that
+    // state can only come from dragRotate (right-click / two-finger rotation), which is
+    // explicitly allowed while following. No camera operation here — any camera call on
+    // dragstart interferes with the drag gesture and requires a second grab.
     map.on('dragstart', () => {
-      if (!rulerDrag) {
+      if (!rulerDrag && !followMode.following) {
         _centerOffset = ZERO_OFFSET;
         followMode.following = false;
       }
@@ -2933,6 +2990,94 @@
       }
     }
   });
+
+  // Lock interaction in follow mode:
+  //   - Pan drag disabled.
+  //   - Custom wheel handler zooms around the vessel, not the cursor. Uses rAF
+  //     accumulation so rapid scroll events batch into a single easeTo per frame,
+  //     matching MapLibre's native speed and feel. Two-finger trackpad scroll
+  //     generates wheel events too, so this path covers it automatically.
+  //   - Custom zoom buttons call zoomIn/Out({ around: vessel }) directly so no
+  //     correction is needed. Touch pinch and keyboard zoom are handled by a
+  //     `zoomend` listener that re-anchors the vessel to its pinned screen pixel.
+  //   - Rotation (right-click drag, two-finger rotate) remains active throughout.
+  $effect(() => {
+    if (!map) return;
+
+    if (!followMode.following) {
+      map.dragPan.enable();
+      map.scrollZoom.enable();
+      return;
+    }
+
+    map.dragPan.disable();
+    map.scrollZoom.disable();
+
+    // Wheel accumulation state — local to this effect run.
+    let wheelDelta  = 0;
+    let zoomTarget: number | null = null;   // ongoing scroll zoom target
+    let wheelRaf:   number | null = null;
+    let scrollTimer: ReturnType<typeof setTimeout> | null = null;
+
+    // Rate constants mirror MapLibre's ScrollZoomHandler.
+    const WHEEL_RATE    = 1 / 450; // discrete scroll wheel (_wheelZoomRate)
+    const TRACKPAD_RATE = 0.01;    // trackpad continuous (_defaultZoomRate)
+    const WHEEL_THRESH  = 4;       // |delta| below this → trackpad heuristic
+
+    function onWheel(e: WheelEvent): void {
+      e.preventDefault();
+      let dy = e.deltaMode === WheelEvent.DOM_DELTA_LINE ? 40 * e.deltaY : e.deltaY;
+      if (e.shiftKey) dy /= 4;
+      wheelDelta -= dy; // accumulate: up = negative deltaY = positive delta = zoom in
+
+      // Debounce: keep scrollActive true until 350 ms after last wheel event so
+      // the zoomend handler does not interfere with our own easeTo animation.
+      if (scrollTimer !== null) clearTimeout(scrollTimer);
+      scrollTimer = setTimeout(() => {
+        scrollTimer = null;
+        zoomTarget  = null; // animation settled; next scroll starts fresh
+      }, 350);
+
+      if (wheelRaf !== null) return; // already scheduled this frame
+      wheelRaf = requestAnimationFrame(() => {
+        wheelRaf = null;
+        if (!map) return;
+        const pos = get(vesselState).position;
+        if (!pos) return;
+        const delta = wheelDelta;
+        wheelDelta = 0;
+        const rate = Math.abs(delta) > WHEEL_THRESH ? WHEEL_RATE : TRACKPAD_RATE;
+        let scale = 2 / (1 + Math.exp(-Math.abs(delta * rate)));
+        if (delta < 0) scale = 1 / scale; // negative accumulated delta → zoom out
+        // Use zoomTarget as base so rapid scroll accumulates correctly even while
+        // a previous easeTo animation is still in flight.
+        zoomTarget = (zoomTarget ?? map.getZoom()) + Math.log2(scale);
+        map.easeTo({ zoom: zoomTarget, around: [pos.longitude, pos.latitude], duration: 200 });
+      });
+    }
+
+    // After any zoom NOT from our wheel handler (buttons, touch pinch, keyboard,
+    // double-click), re-anchor the vessel to its pinned screen pixel.
+    function onZoomEnd(): void {
+      if (scrollTimer !== null) return; // our own scroll animation is still active
+      const pos = get(vesselState).position;
+      if (!pos || !map) return;
+      const W = mapContainer.clientWidth;
+      const H = mapContainer.clientHeight;
+      const offset: [number, number] = [_centerOffset.left * W / 2, _centerOffset.top * H / 2];
+      map.easeTo({ center: [pos.longitude, pos.latitude], offset, duration: 0 });
+    }
+
+    mapContainer.addEventListener('wheel', onWheel, { passive: false });
+    map.on('zoomend', onZoomEnd);
+
+    return () => {
+      mapContainer.removeEventListener('wheel', onWheel);
+      map?.off('zoomend', onZoomEnd);
+      if (wheelRaf   !== null) cancelAnimationFrame(wheelRaf);
+      if (scrollTimer !== null) clearTimeout(scrollTimer);
+    };
+  });
 </script>
 
 <div bind:this={mapContainer} style="width: 100%; height: 100%;"></div>
@@ -3166,4 +3311,34 @@
     cursor: pointer;
     font-size: 12px;
   }
+  /* MapLibre's ctrl containers use float+clear layout, not flexbox.
+     Switch bottom-left to a flex row so zoom buttons and scale sit side-by-side.
+     float and clear on flex items are ignored, so MapLibre's per-ctrl rules are harmless.
+     The zoom group has `maplibregl-ctrl` class for pointer-events:auto and margin. */
+  :global(.maplibregl-ctrl-bottom-left) {
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: flex-end !important;
+  }
+  :global(.zoom-ctrl-group) {
+    display: flex;
+    gap: 2px;
+  }
+  :global(.zoom-ctrl-btn) {
+    width: 26px;
+    height: 26px;
+    background: rgba(0, 0, 0, 0.7);
+    color: white;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 16px;
+    line-height: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  :global(.zoom-ctrl-btn:hover) { background: rgba(40, 40, 80, 0.9); }
+  :global(.zoom-ctrl-btn:active) { background: rgba(60, 60, 120, 0.95); }
+
 </style>
