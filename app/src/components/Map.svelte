@@ -759,6 +759,7 @@
       },
       onRemove(_m: maplibregl.Map): void { /* MapLibre removes the element */ },
     }, 'bottom-left');
+    map.doubleClickZoom.disable(); // double-click zoom is too easy to trigger accidentally on a chart
 
     // deck.gl overlay — non-interleaved mode: deck.gl renders on its own canvas (on top of
     // MapLibre) with its own rAF loop. This decouples deck.gl animation from MapLibre's render
