@@ -33,3 +33,6 @@ test-watch: ## Run Rust tests in watch mode (requires cargo-watch)
 
 clean: ## Remove build artifacts
 	rm -rf target $(WASM_OUT) $(APP)/dist
+
+publish:
+	make package && npm pack && npm publish
