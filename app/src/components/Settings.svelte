@@ -112,15 +112,11 @@
     if (auth.isLoggedIn) loginPass = '';
   }
 
-  // Live-apply appearance as user edits
+  // Live-apply appearance as user edits.
+  // Uses persist() rather than apply() to avoid reassigning data.appearance — that
+  // self-assignment would spuriously re-run the App.svelte $effect that calls track.init().
   function applyAppearance() {
-    settings.apply({
-      signalkProtocol: settings.protocol,
-      signalkHost:     settings.host,
-      signalkPort:     settings.port,
-      appearance:      settings.appearance,
-      targetFps:       settings.targetFps,
-    });
+    settings.persist();
   }
 </script>
 

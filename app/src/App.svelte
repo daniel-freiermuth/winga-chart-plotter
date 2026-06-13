@@ -193,18 +193,23 @@
     return () => { if (vesselInfoTimer !== null) clearInterval(vesselInfoTimer); };
   });
 
-  // Track history: re-init whenever the server URL or the history duration changes.
-  // Debounced so dragging the logarithmic slider doesn't fire a fetch on every tick.
+  // Track history: re-init only when the server URL or history depth actually changes.
+  // No cleanup returned intentionally: a returned cleanup would run before the guard check on
+  // every re-run (e.g. when track color changes via bind:value), clearing the timer before we
+  // can see the key is unchanged. The timer variable is managed entirely inside the guard.
   let trackReinitTimer: ReturnType<typeof setTimeout> | null = null;
+  let _trackReinitKey = '';
   $effect(() => {
     const httpUrl = settings.signalkHttpUrl;
     const hours   = settings.appearance.track.historyHours;
+    const key = `${httpUrl}|${String(hours)}`;
+    if (key === _trackReinitKey) return;
+    _trackReinitKey = key;
     if (trackReinitTimer !== null) clearTimeout(trackReinitTimer);
     trackReinitTimer = setTimeout(() => {
       void track.init(httpUrl, hours);
       trackReinitTimer = null;
     }, 400);
-    return () => { if (trackReinitTimer !== null) { clearTimeout(trackReinitTimer); trackReinitTimer = null; } };
   });
 
   let lastUrl = '';

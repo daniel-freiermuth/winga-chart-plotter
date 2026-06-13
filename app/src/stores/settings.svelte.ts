@@ -247,6 +247,13 @@ function createSettings() {
       data.targetFps = fps;
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
     },
+    /** Persist the current state without any reactive re-assignments. Use from appearance
+     *  controls that mutate data.appearance directly via $state proxy (bind:value, oninput)
+     *  and only need to flush to localStorage. Calling settings.apply() instead would cause
+     *  spurious track.init() re-runs because it reassigns data.appearance. */
+    persist() {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    },
   };
 }
 
