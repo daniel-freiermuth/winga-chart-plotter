@@ -41,19 +41,16 @@ function createRotateModeStore() {
      * - If in auto: advance to the next available auto mode.
      */
     toggle(hasCog: boolean, hasHeading: boolean, hasCourse: boolean) {
-      if (mode === 'manual') {
-        mode = resumeMode;
-        return;
-      }
-      const current = mode;
-      const idx = AUTO_MODES.indexOf(current);
-      for (let i = 1; i <= AUTO_MODES.length; i++) {
-        const next = AUTO_MODES[(idx + i) % AUTO_MODES.length]!;
-        if (isAvailable(next, hasCog, hasHeading, hasCourse)) {
-          mode = next;
-          return;
-        }
-      }
+      // Cycle: [available auto modes..., manual] → wraps back to start.
+      const available: RotateMode[] = [
+        ...AUTO_MODES.filter(m => isAvailable(m, hasCog, hasHeading, hasCourse)),
+        'manual',
+      ];
+      const idx = available.indexOf(mode);
+      const next = available[(idx + 1) % available.length]!;
+      // Save auto mode when entering manual so ensureAvailable has a valid fallback.
+      if (next === 'manual') resumeMode = mode as AutoRotateMode;
+      mode = next;
     },
 
     /**

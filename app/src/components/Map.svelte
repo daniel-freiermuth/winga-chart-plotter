@@ -1074,11 +1074,6 @@
         followMode.following = false;
       }
     });
-    // User rotating the map (gesture) switches to manual rotate mode.
-    // Programmatic camera moves (easeTo/flyTo) also fire rotatestart but without originalEvent.
-    map.on('rotatestart', (e: maplibregl.MapLibreEvent<MouseEvent | TouchEvent | undefined>) => {
-      if ((e as unknown as { originalEvent?: Event }).originalEvent) rotateMode.setManual();
-    });
 
     // Cursor feedback for interactive MapLibre layers.
     const routeClickLayers = ['route-full', 'route-leg', 'route-bearing', 'route-waypoints'];
@@ -2918,6 +2913,91 @@
       route.nextPoint      !== null,
     );
   });
+  // Gesture-rotation lock.
+  //
+  // map.dragRotate handles both bearing AND pitch from right-click drag — there is no public
+  // API to split them. Rather than fight its event handling and inertia animations, we just
+  // disable it entirely in non-manual modes and re-implement right-click as pitch-only
+  // ourselves. Bearing is never touched, so no snap-back is needed at all.
+  //
+  // In MAN mode both handlers are restored to their defaults.
+  $effect(() => {
+    if (!mapLoaded || !map) return;
+
+    if (rotateMode.mode === 'manual') {
+      map.dragRotate.enable();
+      map.touchZoomRotate.enableRotation();
+      return;
+    }
+
+    map.dragRotate.disable();
+    map.touchZoomRotate.disableRotation();
+
+    // Pointer capture guarantees pointerup fires on the canvas even if the mouse
+    // leaves the window — no window.addEventListener needed.
+    // contextmenu is suppressed only after an actual drag (> 3 px displacement),
+    // so a plain right-click still shows the map context menu.
+    let capturedId = -1;
+    let startY = 0;
+    let lastY = 0;
+    let dragMoved = false;
+    const canvas = map.getCanvas();
+
+    const onPointerDown = (e: PointerEvent) => {
+      if (e.button !== 2 || capturedId !== -1) return;
+      canvas.setPointerCapture(e.pointerId);
+      capturedId = e.pointerId;
+      startY = e.clientY;
+      lastY  = e.clientY;
+      dragMoved = false;
+    };
+
+    const onPointerMove = (e: PointerEvent) => {
+      if (e.pointerId !== capturedId || !map) return;
+      const dy = e.clientY - lastY;
+      lastY = e.clientY;
+      // Flag as drag once the pointer has moved > 3 px vertically from the start.
+      if (!dragMoved && Math.abs(e.clientY - startY) > 3) dragMoved = true;
+      // Up (dy < 0) increases pitch; down decreases. ~0.5 deg/px ≈ MapLibre native.
+      map.setPitch(Math.max(0, Math.min(map.getMaxPitch(), map.getPitch() - dy * 0.5)));
+    };
+
+    const onPointerUp = (e: PointerEvent) => {
+      if (e.pointerId !== capturedId) return;
+      canvas.releasePointerCapture(e.pointerId);
+      capturedId = -1;
+    };
+
+    // pointercancel fires if the browser steals the pointer (e.g. OS gesture).
+    const onPointerCancel = (e: PointerEvent) => {
+      if (e.pointerId !== capturedId) return;
+      capturedId = -1;
+      dragMoved = false;
+    };
+
+    // contextmenu fires after pointerup on most platforms. Suppress it only when
+    // the gesture was a real drag; let it through for a plain right-click.
+    const onContextMenu = (e: Event) => {
+      if (dragMoved) { e.preventDefault(); dragMoved = false; }
+    };
+
+    canvas.addEventListener('pointerdown',   onPointerDown);
+    canvas.addEventListener('pointermove',   onPointerMove);
+    canvas.addEventListener('pointerup',     onPointerUp);
+    canvas.addEventListener('pointercancel', onPointerCancel);
+    canvas.addEventListener('contextmenu',   onContextMenu);
+
+    return () => {
+      canvas.removeEventListener('pointerdown',   onPointerDown);
+      canvas.removeEventListener('pointermove',   onPointerMove);
+      canvas.removeEventListener('pointerup',     onPointerUp);
+      canvas.removeEventListener('pointercancel', onPointerCancel);
+      canvas.removeEventListener('contextmenu',   onContextMenu);
+      map!.dragRotate.enable();
+      map!.touchZoomRotate.enableRotation();
+    };
+  });
+
 
   // Follow + rotation mode: combined into one effect so we never issue two competing
   // easeTo/flyTo calls in the same reactive flush.
@@ -3090,25 +3170,30 @@
   </div>
 {/if}
 
-<!-- North indicator: visible whenever map bearing is non-zero.
-     The needle always points toward true North.  Clicking snaps back to North-Up. -->
+<!-- Compass: always visible; clicking cycles rotation mode (N → COG → HDG → BRG → MAN → N).
+     The needle rotates with map bearing so it always points toward true North.
+     Ring and label turn amber in MAN mode to signal that gesture-rotation is unlocked. -->
 <button
   class="north-indicator"
-  class:north-indicator--visible={Math.abs(mapBearing) > 0.5}
-  title="Tap to reset to North-Up (bearing {mapBearing.toFixed(1)}°)"
-  onclick={() => map?.easeTo({ bearing: 0, duration: 300 })}
-  aria-label="Reset to North-Up"
+  class:north-indicator--manual={rotateMode.mode === 'manual'}
+  title="Rotation: {rotateMode.label}"
+  onclick={() => rotateMode.toggle($vesselState.cog !== null, $vesselState.heading !== null, route.nextPoint !== null)}
+  aria-label="Rotation mode: {rotateMode.label}"
 >
-  <svg width="44" height="44" viewBox="0 0 44 44" aria-hidden="true">
-    <circle cx="22" cy="22" r="21" fill="rgba(0,0,0,0.72)" stroke="rgba(255,255,255,0.18)" stroke-width="1"/>
+  <svg width="44" height="52" viewBox="0 0 44 52" aria-hidden="true">
+    <circle cx="22" cy="22" r="21"
+      fill="rgba(0,0,0,0.72)"
+      stroke={rotateMode.mode === 'manual' ? 'rgba(245,158,11,0.65)' : 'rgba(255,255,255,0.18)'}
+      stroke-width="1.5"/>
     <g transform="rotate({-mapBearing}, 22, 22)">
-      <!-- north half: red -->
       <polygon points="22,5 17,23 22,20 27,23" fill="#e53e3e"/>
-      <!-- south half: light grey -->
       <polygon points="22,39 17,21 22,24 27,21" fill="rgba(200,200,200,0.75)"/>
     </g>
     <text x="22" y="15.5" text-anchor="middle" font-size="7" font-family="system-ui,sans-serif"
       fill="rgba(255,255,255,0.55)" transform="rotate({-mapBearing}, 22, 22)">N</text>
+    <text x="22" y="49" text-anchor="middle" font-size="9" font-weight="bold"
+      font-family="system-ui,sans-serif"
+      fill={rotateMode.mode === 'manual' ? 'rgba(245,158,11,0.9)' : 'rgba(255,255,255,0.75)'}>{rotateMode.label}</text>
   </svg>
 </button>
 
@@ -3162,16 +3247,12 @@
     border: none;
     padding: 0;
     cursor: pointer;
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity 0.3s ease;
     border-radius: 50%;
+    transition: opacity 0.15s ease;
   }
-  .north-indicator--visible {
-    opacity: 1;
-    pointer-events: auto;
-  }
-  .north-indicator:hover circle { fill: rgba(30,30,70,0.85); }
+  .north-indicator:hover { opacity: 0.8; }
+  /* circle fill is set inline; darken on hover via brightness filter */
+  .north-indicator:hover svg { filter: brightness(1.25); }
 
   :global(.ais-popup) {
     font-family: system-ui, sans-serif;
