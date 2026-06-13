@@ -542,6 +542,14 @@
   let isHoveringHandle = false;
   // Ruler label popup: shown when user clicks a label; holds screen position and ruler id.
   let rulerPopup = $state<{ rulerId: string; x: number; y: number } | null>(null);
+  // At most one MapLibre popup open at a time — each new popup closes the previous one.
+  let activePopup: maplibregl.Popup | null = null;
+  function openPopup(p: maplibregl.Popup): maplibregl.Popup {
+    activePopup?.remove();
+    activePopup = p;
+    p.on('close', () => { if (activePopup === p) activePopup = null; });
+    return p;
+  }
 
   // Route planner drag state.
   let plannerDrag: { idx: number } | null = null;
@@ -1517,10 +1525,10 @@
       aisAgeTimer = null;
     }
 
-    const popup = new maplibregl.Popup({ closeButton: true, maxWidth: 'none' })
+    const popup = openPopup(new maplibregl.Popup({ closeButton: true, maxWidth: 'none' })
       .setLngLat(coordinate)
       .setHTML(buildAisPopupHtml(t))
-      .addTo(map);
+      ).addTo(map);
 
     const timerId = setInterval(() => {
       const el = document.getElementById('ais-age');
@@ -1581,10 +1589,10 @@
       </div>`;
 
     if (!map) return;
-    const popup = new maplibregl.Popup({ closeButton: true, maxWidth: 'none' })
+    const popup = openPopup(new maplibregl.Popup({ closeButton: true, maxWidth: 'none' })
       .setLngLat(coordinate)
       .setHTML(html)
-      .addTo(map);
+      ).addTo(map);
 
     // Attach click handler after the popup is in the DOM.
     const el = popup.getElement();
@@ -1628,7 +1636,7 @@
     const canNavigate = auth.isLoggedIn;
     const canWaypoint = auth.isLoggedIn;
 
-    const popup = new maplibregl.Popup({ closeButton: true, maxWidth: 'none' })
+    const popup = openPopup(new maplibregl.Popup({ closeButton: true, maxWidth: 'none' })
       .setLngLat(lngLat)
       .setHTML(`
         <div class="ais-popup navigate-popup">
@@ -1643,7 +1651,7 @@
           </button>
         </div>
       `)
-      .addTo(map);
+      ).addTo(map);
 
     popup.getElement().addEventListener('click', (ev) => {
       const el = ev.target as HTMLElement;
@@ -1667,14 +1675,14 @@
     if (!map) return;
     const ownPos = get(vesselState).position;
     const canWaypoint = auth.isLoggedIn && ownPos != null;
-    const popup = new maplibregl.Popup({ closeButton: false, offset: 14, className: 'vessel-self-popup' })
+    const popup = openPopup(new maplibregl.Popup({ closeButton: false, offset: 14, className: 'vessel-self-popup' })
       .setLngLat(lngLat)
       .setHTML(`
         <button class="vessel-self-settings-btn">Own vessel settings</button>
         <button class="popup-settings-btn add-waypoint-here-btn"
           ${canWaypoint ? `data-lat="${String(ownPos.latitude)}" data-lon="${String(ownPos.longitude)}"` : 'disabled title="Login required"'}>Add waypoint here</button>
       `)
-      .addTo(map);
+      ).addTo(map);
     popup.getElement().addEventListener('click', (ev) => {
       const settingsBtn = (ev.target as HTMLElement).closest('.vessel-self-settings-btn');
       if (settingsBtn) { popup.remove(); openSettings('vessel'); return; }
@@ -1690,7 +1698,7 @@
     if (!map) return;
     const name = route.routeName;
     const canStop = auth.isLoggedIn;
-    const popup = new maplibregl.Popup({ closeButton: false, offset: 10, maxWidth: 'none' })
+    const popup = openPopup(new maplibregl.Popup({ closeButton: false, offset: 10, maxWidth: 'none' })
       .setLngLat(lngLat)
       .setHTML(`
         <div class="ais-popup">
@@ -1701,7 +1709,7 @@
             <button class="popup-settings-btn" data-settings="routes">Route settings</button>
           </div>
         </div>`)
-      .addTo(map);
+      ).addTo(map);
     popup.getElement().addEventListener('click', (ev) => {
       const el = ev.target as HTMLElement;
       const settingsBtn = el.closest<HTMLElement>('[data-settings]');
@@ -1721,7 +1729,7 @@
     const name = (f.properties['name'] as string | null | undefined) ?? '';
     const uuid = (f.properties['uuid'] as string | null | undefined) ?? '';
     const canAct = auth.isLoggedIn && uuid !== '';
-    const popup = new maplibregl.Popup({ closeButton: false, offset: 10, maxWidth: 'none' })
+    const popup = openPopup(new maplibregl.Popup({ closeButton: false, offset: 10, maxWidth: 'none' })
       .setLngLat(lngLat)
       .setHTML(`
         <div class="ais-popup">
@@ -1736,7 +1744,7 @@
             <button class="popup-settings-btn" data-settings="routes">Route style</button>
           </div>
         </div>`)
-      .addTo(map);
+      ).addTo(map);
     popup.getElement().addEventListener('click', (ev) => {
       const el = ev.target as HTMLElement;
       const settingsBtn = el.closest<HTMLElement>('[data-settings]');
@@ -1779,7 +1787,7 @@
     const lon = coords[0] as number;
     const lat = coords[1] as number;
     const canAct = auth.isLoggedIn && uuid !== '';
-    const popup = new maplibregl.Popup({ closeButton: true, maxWidth: 'none' })
+    const popup = openPopup(new maplibregl.Popup({ closeButton: true, maxWidth: 'none' })
       .setLngLat([lon, lat])
       .setHTML(`
         <div class="ais-popup">
@@ -1796,7 +1804,7 @@
               ${canAct ? `data-uuid="${uuid}" data-name="${name}"` : 'disabled title="Login required"'}>Delete</button>
           </div>
         </div>`)
-      .addTo(map);
+      ).addTo(map);
     popup.getElement().addEventListener('click', (ev) => {
       const el = ev.target as HTMLElement;
       const navBtn = el.closest<HTMLButtonElement>('.navigate-here-btn');
