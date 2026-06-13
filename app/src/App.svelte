@@ -293,7 +293,7 @@
 
     <button
       class="map-btn map-btn--label"
-      class:map-btn--highlight={rotateMode.mode === 'manual'}
+      class:map-btn--active={rotateMode.mode !== 'manual'}
       title="Rotation mode: {rotateMode.label}"
       onclick={() => { rotateMode.toggle($vesselState.cog !== null, $vesselState.heading !== null, route.nextPoint !== null); }}
     >{rotateMode.label}</button>
@@ -438,7 +438,6 @@
   .map-btn--active:hover:not(:disabled) { background: rgba(220,220,240,0.95); }
   .map-btn--open                 { background: rgba(80,100,140,0.85); border-bottom: 2px solid rgba(150,200,255,0.8); }
   .map-btn--open:hover:not(:disabled)  { background: rgba(90,115,160,0.9); }
-  .map-btn--highlight            { color: #f59e0b; }
   /* Label-only buttons (rotation mode): fixed width so the toolbar doesn't jump */
   .map-btn--label                { font-size: 12px; font-weight: 700; letter-spacing: 0.03em; width: 40px; display: flex; align-items: center; justify-content: center; padding-left: 0; padding-right: 0; }
 

@@ -3198,19 +3198,17 @@
 {/if}
 
 <!-- Compass: always visible; clicking cycles rotation mode (N → COG → HDG → BRG → MAN → N).
-     The needle rotates with map bearing so it always points toward true North.
-     Ring and label turn amber in MAN mode to signal that gesture-rotation is unlocked. -->
+     The needle rotates with map bearing so it always points toward true North. -->
 <button
   class="north-indicator"
-  class:north-indicator--manual={rotateMode.mode === 'manual'}
   title="Rotation: {rotateMode.label}"
   onclick={() => rotateMode.toggle($vesselState.cog !== null, $vesselState.heading !== null, route.nextPoint !== null)}
   aria-label="Rotation mode: {rotateMode.label}"
 >
-  <svg width="44" height="52" viewBox="0 0 44 52" aria-hidden="true">
+  <svg width="44" height="44" viewBox="0 0 44 44" aria-hidden="true">
     <circle cx="22" cy="22" r="21"
       fill="rgba(0,0,0,0.72)"
-      stroke={rotateMode.mode === 'manual' ? 'rgba(245,158,11,0.65)' : 'rgba(255,255,255,0.18)'}
+      stroke="rgba(255,255,255,0.18)"
       stroke-width="1.5"/>
     <g transform="rotate({-mapBearing}, 22, 22)">
       <polygon points="22,5 17,23 22,20 27,23" fill="#e53e3e"/>
@@ -3218,9 +3216,6 @@
     </g>
     <text x="22" y="15.5" text-anchor="middle" font-size="7" font-family="system-ui,sans-serif"
       fill="rgba(255,255,255,0.55)" transform="rotate({-mapBearing}, 22, 22)">N</text>
-    <text x="22" y="49" text-anchor="middle" font-size="9" font-weight="bold"
-      font-family="system-ui,sans-serif"
-      fill={rotateMode.mode === 'manual' ? 'rgba(245,158,11,0.9)' : 'rgba(255,255,255,0.75)'}>{rotateMode.label}</text>
   </svg>
 </button>
 
