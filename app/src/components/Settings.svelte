@@ -1,5 +1,6 @@
 <script lang="ts">
   import { settings, type AppearanceSettings, type SettingsTab } from '../stores/settings.svelte';
+  import { visibility } from '../stores/visibility.svelte';
   import { auth } from '../stores/auth.svelte';
   import { fpsStore } from '../stores/fps.svelte';
   import { connection } from '../stores/connection.svelte';
@@ -241,7 +242,8 @@
         <span class="field-label">Show</span>
         <div class="field">
           <label class="toggle">
-            <input type="checkbox" bind:checked={settings.appearance.track.show} onchange={applyAppearance} />
+            <input type="checkbox" checked={visibility.ownTrack}
+              onchange={() => { visibility.toggle('ownTrack'); }} />
             <span class="toggle-track"><span class="toggle-thumb"></span></span>
           </label>
         </div>

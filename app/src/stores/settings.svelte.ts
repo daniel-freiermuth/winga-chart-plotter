@@ -54,7 +54,6 @@ export interface RouteAppearance {
 }
 
 export interface TrackAppearance {
-  show:         boolean;
   color:        string;
   width:        number;    // screen pixels
   style:        LineStyle;
@@ -107,7 +106,7 @@ const DEFAULTS: SettingsData = {
       remaining: { color: '#e040fb', width: 4,   style: 'dashed' },
       allRoutes: { color: '#7cc8e8', width: 3, style: 'dashed' },
     },
-    track: { show: true, color: '#3b82f6', width: 2, style: 'solid', historyHours: 24 },
+    track: { color: '#3b82f6', width: 2, style: 'solid', historyHours: 24 },
   },
 };
 

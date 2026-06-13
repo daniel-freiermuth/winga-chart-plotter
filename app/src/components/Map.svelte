@@ -1319,7 +1319,7 @@
         paint: {
           'line-color':   ap.track.color,
           'line-width':   ap.track.width,
-          'line-opacity': ap.track.show ? 1 : 0,
+          'line-opacity': 1,
         },
       }, 'vessel-gc-line');
       // Uses line-gradient (requires lineMetrics: true on source) for solid style fade.
@@ -1331,7 +1331,7 @@
         paint: {
           'line-gradient': buildTrackGradient(ap.track.color, 0) as never,
           'line-width':    ap.track.width,
-          'line-opacity':  ap.track.show ? 1 : 0,
+          'line-opacity':  1,
         },
       }, 'vessel-gc-line');
 
@@ -2649,11 +2649,10 @@
       map.setPaintProperty('vessel-track-line', 'line-dasharray', dashArray(ap.track.style, ap.track.width) ?? undefined);
     }
     map.setPaintProperty('vessel-track-line',  'line-width',     ap.track.width);
-    map.setPaintProperty('vessel-track-line',  'line-opacity',   ap.track.show ? 1 : 0);
     // Overflow segments: same color/width/dash as main track, no gradient.
     map.setPaintProperty('vessel-track-overflow-line', 'line-color',   ap.track.color);
     map.setPaintProperty('vessel-track-overflow-line', 'line-width',   ap.track.width);
-    map.setPaintProperty('vessel-track-overflow-line', 'line-opacity', ap.track.show ? 1 : 0);
+    map.setPaintProperty('vessel-track-overflow-line', 'line-opacity', 1);
     map.setPaintProperty('vessel-track-overflow-line', 'line-dasharray',
       ap.track.style !== 'solid' ? dashArray(ap.track.style, ap.track.width) ?? undefined : undefined);
     // Route appearance — kept here so it never fires on 60 Hz heading ticks.
