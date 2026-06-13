@@ -1992,6 +1992,11 @@
       if (map!.getLayer(id)) map!.setLayoutProperty(id, 'visibility', show ? 'visible' : 'none');
     };
     v('ais-label',               visibility.aisVessels);
+    // AIS tracks: visible when vessels are on AND (all-tracks toggle OR a popup track is active).
+    // Using layout.visibility (not opacity) so MapLibre skips draw calls entirely when hidden.
+    const showAisTracks = visibility.aisVessels && (visibility.aisTracks || aisTrackRaw.length >= 2);
+    v('ais-track-line',          showAisTracks);
+    v('ais-track-overflow-line', showAisTracks);
     v('vessel-track-line',       visibility.ownTrack);
     v('vessel-track-overflow-line', visibility.ownTrack);
     v('all-routes-line',         visibility.routes);
@@ -2826,7 +2831,9 @@
     if (!(src instanceof maplibregl.GeoJSONSource)) return;
     if (!(overflowSrc instanceof maplibregl.GeoJSONSource)) return;
 
-    if (visibility.aisTracks && aisAllTracksMap.size > 0) {
+    // Gate on aisVessels too: when vessels are hidden, clear the source to free GPU buffers.
+    // The aisAllTracksMap cache is kept so re-enabling aisVessels doesn't require re-fetching.
+    if (visibility.aisVessels && visibility.aisTracks && aisAllTracksMap.size > 0) {
       const features: GeoJSON.Feature[] = [];
       for (const [, coords] of aisAllTracksMap) {
         if (coords.length >= 2) {
@@ -2840,7 +2847,8 @@
       return;
     }
 
-    const raw = aisTrackRaw;
+    // When aisVessels is OFF, treat as no track data — clears source to EMPTY_FC below.
+    const raw = visibility.aisVessels ? aisTrackRaw : [];
     if (raw.length < 2) {
       src.setData(EMPTY_FC);
       overflowSrc.setData(EMPTY_FC);
@@ -2881,11 +2889,10 @@
     }
     map.setPaintProperty('ais-track-line', 'line-width',   ta.width);
     const hasData = allTracksMode ? aisAllTracksMap.size > 0 : aisTrackRaw.length >= 2;
-    const showTrack = visibility.aisVessels;
-    map.setPaintProperty('ais-track-line',          'line-opacity', ta.show && showTrack && hasData ? 1 : 0);
+    map.setPaintProperty('ais-track-line',          'line-opacity', ta.show && hasData ? 1 : 0);
     map.setPaintProperty('ais-track-overflow-line', 'line-color',   ta.color);
     map.setPaintProperty('ais-track-overflow-line', 'line-width',   ta.width);
-    map.setPaintProperty('ais-track-overflow-line', 'line-opacity', ta.show && showTrack && !allTracksMode && aisTrackRaw.length >= 2 ? 1 : 0);
+    map.setPaintProperty('ais-track-overflow-line', 'line-opacity', ta.show && !allTracksMode && aisTrackRaw.length >= 2 ? 1 : 0);
     map.setPaintProperty('ais-track-overflow-line', 'line-dasharray',
       ta.style !== 'solid' ? dashArray(ta.style, ta.width) ?? undefined : undefined);
   });
