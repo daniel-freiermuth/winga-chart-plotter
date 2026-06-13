@@ -2,7 +2,7 @@
   import { charts } from '../stores/charts.svelte';
   import { baseLayers, BASE_LAYERS } from '../stores/baseLayers.svelte';
 
-  let isOpen = $state(false);
+  let { isOpen = $bindable(false) }: { isOpen?: boolean } = $props();
   // Track pending manual URL inputs per chart id
   let manualInputs = $state<Record<string, string>>({});
 

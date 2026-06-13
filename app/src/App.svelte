@@ -74,6 +74,7 @@
   let mapComp          = $state<ReturnType<typeof Map>      | null>(null);
   let settingsComp     = $state<ReturnType<typeof Settings>  | null>(null);
   let chartPickerComp  = $state<ReturnType<typeof ChartPicker> | null>(null);
+  let chartPickerOpen  = $state(false);
   let worker: Worker | null = null;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let reconnectDelay = 2000; // ms, doubles on each failure up to 30s
@@ -256,7 +257,7 @@
 <div style="position: relative; width: 100%; height: 100%;">
   <Map bind:this={mapComp} openSettings={handleOpenSettings} />
   <Settings bind:this={settingsComp} />
-  <ChartPicker bind:this={chartPickerComp} />
+  <ChartPicker bind:this={chartPickerComp} bind:isOpen={chartPickerOpen} />
 
   <!-- Consolidated map toolbar -->
   <div class="map-toolbar">
@@ -269,6 +270,7 @@
 
     <button
       class="map-btn"
+      class:map-btn--open={chartPickerOpen}
       title="Charts &amp; layers"
       onclick={handleOpenChartPicker}
     ><FaIcon icon={faLayerGroup} /></button>
@@ -420,6 +422,7 @@
   .map-btn {
     background: rgba(0,0,0,0.7);
     border: none;
+    border-bottom: 2px solid transparent;
     color: white;
     padding: 6px 10px;
     border-radius: 6px;
@@ -433,6 +436,8 @@
   .map-btn:disabled              { opacity: 0.35; cursor: default; }
   .map-btn--active               { background: rgba(255,255,255,0.9); color: #111827; }
   .map-btn--active:hover:not(:disabled) { background: rgba(220,220,240,0.95); }
+  .map-btn--open                 { background: rgba(80,100,140,0.85); border-bottom: 2px solid rgba(150,200,255,0.8); }
+  .map-btn--open:hover:not(:disabled)  { background: rgba(90,115,160,0.9); }
   .map-btn--highlight            { color: #f59e0b; }
   /* Label-only buttons (rotation mode): fixed width so the toolbar doesn't jump */
   .map-btn--label                { font-size: 12px; font-weight: 700; letter-spacing: 0.03em; width: 40px; display: flex; align-items: center; justify-content: center; padding-left: 0; padding-right: 0; }
