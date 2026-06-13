@@ -2920,26 +2920,36 @@
   // disable it entirely in non-manual modes and re-implement right-click as pitch-only
   // ourselves. Bearing is never touched, so no snap-back is needed at all.
   //
-  // In MAN mode both handlers are restored to their defaults.
+  // Right-click drag handler.
+  //
+  // Three cases:
+  //   MAN + not following  → native dragRotate (MapLibre default, center-anchored is fine).
+  //   MAN + following      → our handler: bearing + pitch, easeTo around vessel so it
+  //                          stays pinned at its offset screen position.
+  //   non-MAN              → our handler: pitch only, bearing stays locked.
+  //
+  // Pointer capture guarantees pointerup fires on the canvas even when the mouse leaves
+  // the window — no window.addEventListener needed.
+  // contextmenu is suppressed only after a real drag (> 3 px), so plain right-click
+  // still shows the map context menu.
   $effect(() => {
     if (!mapLoaded || !map) return;
 
-    if (rotateMode.mode === 'manual') {
+    const isManual   = rotateMode.mode === 'manual';
+    const isFollowing = followMode.following;
+
+    if (isManual && !isFollowing) {
+      // Default MapLibre behaviour — rotate and pitch freely around map centre.
       map.dragRotate.enable();
       map.touchZoomRotate.enableRotation();
       return;
     }
 
     map.dragRotate.disable();
-    map.touchZoomRotate.disableRotation();
+    map.touchZoomRotate[isManual ? 'enableRotation' : 'disableRotation']();
 
-    // Pointer capture guarantees pointerup fires on the canvas even if the mouse
-    // leaves the window — no window.addEventListener needed.
-    // contextmenu is suppressed only after an actual drag (> 3 px displacement),
-    // so a plain right-click still shows the map context menu.
     let capturedId = -1;
-    let startY = 0;
-    let lastY = 0;
+    let startX = 0, startY = 0, lastX = 0, lastY = 0;
     let dragMoved = false;
     const canvas = map.getCanvas();
 
@@ -2947,19 +2957,39 @@
       if (e.button !== 2 || capturedId !== -1) return;
       canvas.setPointerCapture(e.pointerId);
       capturedId = e.pointerId;
-      startY = e.clientY;
-      lastY  = e.clientY;
+      startX = e.clientX; startY = e.clientY;
+      lastX  = e.clientX; lastY  = e.clientY;
       dragMoved = false;
     };
 
     const onPointerMove = (e: PointerEvent) => {
       if (e.pointerId !== capturedId || !map) return;
+      const dx = e.clientX - lastX;
       const dy = e.clientY - lastY;
+      lastX = e.clientX;
       lastY = e.clientY;
-      // Flag as drag once the pointer has moved > 3 px vertically from the start.
-      if (!dragMoved && Math.abs(e.clientY - startY) > 3) dragMoved = true;
-      // Up (dy < 0) increases pitch; down decreases. ~0.5 deg/px ≈ MapLibre native.
-      map.setPitch(Math.max(0, Math.min(map.getMaxPitch(), map.getPitch() - dy * 0.5)));
+      if (!dragMoved && Math.hypot(e.clientX - startX, e.clientY - startY) > 3) dragMoved = true;
+
+      if (isManual) {
+        // MAN + following: rotate around vessel so it stays at its pinned screen pixel.
+        const newBearing = map.getBearing() + dx * 0.4;
+        const newPitch   = Math.max(0, Math.min(map.getMaxPitch(), map.getPitch() - dy * 0.5));
+        const pos = get(vesselState).position;
+        const around: [number, number] | undefined = pos
+          ? [pos.longitude, pos.latitude]
+          : undefined;
+        map.easeTo({ bearing: newBearing, pitch: newPitch, ...(around ? { around } : {}), duration: 0 });
+      } else {
+        // Non-manual: pitch only, bearing stays locked.
+        // When following, anchor around the vessel so it stays at its pinned pixel.
+        const newPitch = Math.max(0, Math.min(map.getMaxPitch(), map.getPitch() - dy * 0.5));
+        const pos = isFollowing ? get(vesselState).position : null;
+        if (pos) {
+          map.easeTo({ pitch: newPitch, around: [pos.longitude, pos.latitude], duration: 0 });
+        } else {
+          map.setPitch(newPitch);
+        }
+      }
     };
 
     const onPointerUp = (e: PointerEvent) => {
@@ -2968,15 +2998,12 @@
       capturedId = -1;
     };
 
-    // pointercancel fires if the browser steals the pointer (e.g. OS gesture).
     const onPointerCancel = (e: PointerEvent) => {
       if (e.pointerId !== capturedId) return;
       capturedId = -1;
       dragMoved = false;
     };
 
-    // contextmenu fires after pointerup on most platforms. Suppress it only when
-    // the gesture was a real drag; let it through for a plain right-click.
     const onContextMenu = (e: Event) => {
       if (dragMoved) { e.preventDefault(); dragMoved = false; }
     };
