@@ -78,7 +78,9 @@
                 <span class="wmts-ok">✓ Custom URL active</span>
                 <button class="wmts-clear" onclick={() => { charts.setOverride(id, ''); manualInputs[id] = ''; }}>Clear</button>
               {:else if chart.type === 'WMTS'}
-                {#if (charts.visibleLayers(id).length) > 1}
+                {#if charts.wmtsResolving.has(id)}
+                  <span class="wmts-resolving">Resolving…</span>
+                {:else if (charts.visibleLayers(id).length) > 1}
                   <div class="wmts-layer-row">
                     <label class="wmts-layer-label" for="wmts-layer-{id}">Layer</label>
                     <select
@@ -239,6 +241,11 @@
   .wmts-ok {
     font-size: 11px;
     color: #34d399;
+    margin-top: 2px;
+  }
+  .wmts-resolving {
+    font-size: 11px;
+    color: #666688;
     margin-top: 2px;
   }
   .wmts-clear {

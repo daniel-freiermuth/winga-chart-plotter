@@ -41,6 +41,8 @@ function createChartsStore() {
   const wmtsResolved      = new SvelteMap<string, string>();
   // Charts where auto-resolution failed
   const wmtsFailed        = new SvelteSet<string>();
+  // Charts currently fetching their WMTS capabilities
+  const wmtsResolving     = new SvelteSet<string>();
   // Manual URL overrides (persisted)
   const wmtsOverrides     = loadLS(LS_OVERRIDES_KEY);
   // All layers from capabilities
@@ -57,7 +59,8 @@ function createChartsStore() {
     get selected():   SvelteSet<string>        { return selected;   },
     get loading():    boolean                  { return loading;    },
     get error():      string | null            { return error;      },
-    get wmtsFailed(): SvelteSet<string>        { return wmtsFailed; },
+    get wmtsFailed():    SvelteSet<string>        { return wmtsFailed;    },
+    get wmtsResolving(): SvelteSet<string>        { return wmtsResolving; },
 
     /** Layers to display in the picker for a given chart id. */
     visibleLayers(id: string): WmtsLayerInfo[] {
@@ -140,36 +143,42 @@ function createChartsStore() {
           if (id in available) selected.add(id);
         }
         savedSelected.clear();
-
-        const wmtsTasks = Object.values(available)
-          .filter(c => c.type === 'WMTS' && !wmtsOverrides.has(c.identifier))
-          .map(async c => {
-            const url = c.url?.startsWith('/') ? `${base}${c.url}` : (c.url ?? '');
-            if (!url) { wmtsFailed.add(c.identifier); return; }
-            const preferLayer = wmtsLayerSel.get(c.identifier) ?? c.layers?.[0];
-            try {
-              const info = await resolveWmtsTileUrl(url, preferLayer);
-              wmtsResolved.set(c.identifier, info.tileUrlTemplate);
-              wmtsAllLayers.set(c.identifier, info.availableLayers);
-              // Build filtered list from chart.layers hints (preserving server order)
-              if (c.layers && c.layers.length > 0) {
-                const allById = new Map(info.availableLayers.map(l => [l.id, l]));
-                const filtered = c.layers.map(id => allById.get(id)).filter(Boolean) as WmtsLayerInfo[];
-                if (filtered.length > 0) wmtsFilteredLayers.set(c.identifier, filtered);
-              }
-              if (!wmtsLayerSel.has(c.identifier)) {
-                wmtsLayerSel.set(c.identifier, info.layerName);
-              }
-            } catch {
-              wmtsFailed.add(c.identifier);
-            }
-          });
-        await Promise.allSettled(wmtsTasks);
       } catch (e) {
         error = String(e);
+        return;
       } finally {
         loading = false;
       }
+
+      // Resolve WMTS capabilities in the background — each chart row updates
+      // reactively as its request completes, without blocking the panel.
+      const wmtsTasks = Object.values(available)
+        .filter(c => c.type === 'WMTS' && !wmtsOverrides.has(c.identifier))
+        .map(async c => {
+          const url = c.url?.startsWith('/') ? `${base}${c.url}` : (c.url ?? '');
+          if (!url) { wmtsFailed.add(c.identifier); return; }
+          wmtsResolving.add(c.identifier);
+          const preferLayer = wmtsLayerSel.get(c.identifier) ?? c.layers?.[0];
+          try {
+            const info = await resolveWmtsTileUrl(url, preferLayer);
+            wmtsResolved.set(c.identifier, info.tileUrlTemplate);
+            wmtsAllLayers.set(c.identifier, info.availableLayers);
+            // Build filtered list from chart.layers hints (preserving server order)
+            if (c.layers && c.layers.length > 0) {
+              const allById = new Map(info.availableLayers.map(l => [l.id, l]));
+              const filtered = c.layers.map(id => allById.get(id)).filter(Boolean) as WmtsLayerInfo[];
+              if (filtered.length > 0) wmtsFilteredLayers.set(c.identifier, filtered);
+            }
+            if (!wmtsLayerSel.has(c.identifier)) {
+              wmtsLayerSel.set(c.identifier, info.layerName);
+            }
+          } catch {
+            wmtsFailed.add(c.identifier);
+          } finally {
+            wmtsResolving.delete(c.identifier);
+          }
+        });
+      void Promise.allSettled(wmtsTasks);
     },
 
     toggle(id: string) {
