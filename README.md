@@ -11,6 +11,7 @@ Unfortunately, my sailing tablet gets laggy as soon as Freeboard has more than 3
 
 ## Getting started
 Install via SignalK's app store.
+Installable as PWA.
 
 ## Building
 ### Prerequisites
@@ -27,41 +28,11 @@ cargo install wasm-pack
 ### Run
 
 ```sh
-# 1. Build the Rust/WASM core
-cd app && npm run build:wasm
-
-# 2. Install frontend dependencies (first time only)
-npm install
-
-# 3. Start the dev server
-npm run dev
+make install
+make dev
 ```
 
-Open `http://localhost:5173`. Edit `src/App.svelte` to point `SIGNALK_WS` at your Signal K server.
-
-### Deploy
-
-Build a production-optimised bundle into `app/dist/`:
-
-```sh
-make build
-# or manually:
-cd app && npm run build:wasm && npm run build
-```
-
-`app/dist/` is a self-contained static site — serve it with any HTTP server.
-
-**Option A — standalone static server**
-
-Any `serve`-compatible tool works:
-```sh
-npx serve app/dist
-# or nginx, caddy, etc.
-```
-
-**Option B — install as PWA**
-
-With the dev server or any of the above servers running, open the app in Chrome/Edge/Firefox and use "Add to Home Screen" / "Install app".
+Open `http://localhost:5173`.
 
 ### Run Rust tests
 
@@ -73,7 +44,9 @@ cargo test
 Do one job, do it good. This means that some features might be left to other layers. E.g. notification and alarm management as well as instrument might be left to KIP. Being a tool for marine navigation, Winga Chart Plotter will prioritize correctness and stability over features.
 
 
-See [`KNOWLEDGE_BASE.md`](./KNOWLEDGE_BASE.md) for full architecture decisions, user stories, and open questions.
+## Known limitation
+
+Chrome on Android doesn't seem to like the shaders by deck.gl. After closing the warnings, the map works, but no AIS targets are drawn.
 
 ## Additional features compared to Freeboard
 - Globe projection
@@ -89,12 +62,12 @@ See [`KNOWLEDGE_BASE.md`](./KNOWLEDGE_BASE.md) for full architecture decisions, 
 
 ## Missing features compared to Freeboard
 - Alarm management
-- Anchor (planned)
+- Anchor
+- Radar
 - Many many more
 
 ## Roadmap
 
-- [ ] Tracks
 - [ ] Tauri packaging (Android)
 - [ ] Wind particle overlay
 - [ ] Maybe Grib support
