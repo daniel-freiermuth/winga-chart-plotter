@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount, onDestroy, untrack } from 'svelte';
   import maplibregl from 'maplibre-gl';
   import 'maplibre-gl/dist/maplibre-gl.css';
   import type * as GeoJSON from 'geojson';
@@ -32,6 +32,7 @@
   import { extrapolatePos } from '../lib/deadReckoning';
   import { SvelteMap, SvelteSet } from 'svelte/reactivity';
   import { mapView } from '../stores/mapView.svelte';
+  import { visibility } from '../stores/visibility.svelte';
 
   const { openSettings = () => { /* noop */ } }: { openSettings?: (tab: SettingsTab) => void } = $props();
 
@@ -136,6 +137,11 @@
   let aisTrackRaw      = $state<[number, number][]>([]);
   let aisTrackFadeStop = $state(0);
   let _aisTrackGen     = 0; // incremented to cancel in-flight fetches on popup close
+  // Per-vessel track cache for all-tracks mode (visibility.aisTracks ON).
+  const aisAllTracksMap = new SvelteMap<string, [number, number][]>();
+  let _aisAllTracksGen = 0;
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity
+  const _fetchedAisTrackIds = new Set<string>();
   let mapBearing  = $state(0);
 
   // When we switch mercator→globe, MapLibre creates a fresh VerticalPerspectiveProjection
@@ -711,7 +717,14 @@
   let plannerLayerGroup: Layer[] = [];
 
   function flushLayers() {
-    overlay?.setProps({ layers: [...aisLayerGroup, ...rulerLayerGroup, ...plannerLayerGroup, ...ownVesselLayerGroup] });
+    // Read visibility without establishing reactive dependency — callers should not
+    // re-run just because the user toggled a layer. A dedicated $effect handles that.
+    const showVessels    = untrack(() => visibility.aisVessels);
+    const showPredictors = untrack(() => visibility.aisPredictors);
+    const aisFiltered = (showVessels && showPredictors)
+      ? aisLayerGroup
+      : aisLayerGroup.filter(l => (l instanceof PathLayer ? (showVessels && showPredictors) : showVessels));
+    overlay?.setProps({ layers: [...aisFiltered, ...rulerLayerGroup, ...plannerLayerGroup, ...ownVesselLayerGroup] });
   }
 
   let rafId = 0;
@@ -1541,7 +1554,7 @@
     // Fetch and display this vessel's position history.
     aisTrackRaw = [];
     const gen = ++_aisTrackGen;
-    const historyHours = settings.appearance.track.historyHours;
+    const historyHours = settings.appearance.ais.track.historyHours;
     const serverBase = settings.signalkHttpUrl;
     fetchAisVesselTrack(serverBase, t.id, historyHours).then(coords => {
       if (gen === _aisTrackGen) aisTrackRaw = coords;
@@ -1972,6 +1985,27 @@
       map.setLayoutProperty(layer.id, 'visibility', enabled.has(layer.id) ? 'visible' : 'none');
     }
   });
+  // MapLibre layer visibility — toggled independently of deck.gl layers.
+  $effect(() => {
+    if (!map || !mapLoaded) return;
+    const v = (id: string, show: boolean) => {
+      if (map!.getLayer(id)) map!.setLayoutProperty(id, 'visibility', show ? 'visible' : 'none');
+    };
+    v('ais-label',               visibility.aisVessels);
+    v('vessel-track-line',       visibility.ownTrack);
+    v('vessel-track-overflow-line', visibility.ownTrack);
+    v('all-routes-line',         visibility.routes);
+    v('all-waypoints-circle',    visibility.waypoints);
+    v('all-waypoints-label',     visibility.waypoints);
+  });
+
+  // Re-flush deck.gl layers when AIS visibility changes.
+  $effect(() => {
+    const _vis  = visibility.aisVessels;
+    const _pred = visibility.aisPredictors;
+    flushLayers();
+  });
+
 
 
   // Update ais-label text color when AIS appearance settings change.
@@ -2756,14 +2790,57 @@
     }
   });
 
-  // AIS track data effect: updates when aisTrackRaw changes (vessel clicked / popup closed).
+  // Fetch all AIS vessel tracks when the all-tracks toggle is on.
+  // Increments _aisAllTracksGen to discard in-flight results when toggled off.
   $effect(() => {
-    const raw = aisTrackRaw;
+    if (!visibility.aisTracks || !mapLoaded) {
+      if (_fetchedAisTrackIds.size > 0) {
+        _aisAllTracksGen++;
+        _fetchedAisTrackIds.clear();
+        aisAllTracksMap.clear();
+      }
+      return;
+    }
+    // Capture current gen without bumping — only the "toggle off" branch above should bump it.
+    // Bumping here would cancel in-flight fetches every time ais.ids changes (1 Hz).
+    const cancelAtGen = _aisAllTracksGen;
+    const base  = settings.signalkHttpUrl;
+    const hours = settings.appearance.ais.track.historyHours;
+    for (const id of ais.ids) {
+      if (_fetchedAisTrackIds.has(id)) continue;
+      _fetchedAisTrackIds.add(id);
+      fetchAisVesselTrack(base, id, hours).then(coords => {
+        if (_aisAllTracksGen !== cancelAtGen) return;
+        if (coords.length >= 2) aisAllTracksMap.set(id, coords);
+      }).catch(() => { /* no history for this vessel — silently skip */ });
+    }
+  });
+
+  // AIS track data effect: populates AIS track GeoJSON source.
+  // In all-tracks mode: FeatureCollection from all fetched vessel tracks, overflow stays empty.
+  // In popup mode: single selected vessel from aisTrackRaw with overflow segments.
+  $effect(() => {
     if (!map || !mapLoaded) return;
     const src = map.getSource(AIS_TRACK_SOURCE);
     const overflowSrc = map.getSource(AIS_TRACK_OVERFLOW_SOURCE);
     if (!(src instanceof maplibregl.GeoJSONSource)) return;
     if (!(overflowSrc instanceof maplibregl.GeoJSONSource)) return;
+
+    if (visibility.aisTracks && aisAllTracksMap.size > 0) {
+      const features: GeoJSON.Feature[] = [];
+      for (const [, coords] of aisAllTracksMap) {
+        if (coords.length >= 2) {
+          const { coords: processed } = processTrack(coords);
+          features.push({ type: 'Feature', geometry: { type: 'LineString', coordinates: processed }, properties: {} });
+        }
+      }
+      src.setData({ type: 'FeatureCollection', features });
+      overflowSrc.setData(EMPTY_FC);
+      aisTrackFadeStop = 0;
+      return;
+    }
+
+    const raw = aisTrackRaw;
     if (raw.length < 2) {
       src.setData(EMPTY_FC);
       overflowSrc.setData(EMPTY_FC);
@@ -2787,23 +2864,28 @@
   });
 
   // AIS track style effect: syncs appearance settings and fade gradient to the AIS track layers.
+  // In all-tracks mode the gradient is suppressed — age encoding is per-vessel and cannot be
+  // represented uniformly across a multi-feature FeatureCollection.
   $effect(() => {
     if (!map || !mapLoaded) return;
-    const ta       = settings.appearance.ais.track;
-    const fadeStop = aisTrackFadeStop;
-    if (ta.style === 'solid') {
+    const ta            = settings.appearance.ais.track;
+    const allTracksMode = visibility.aisTracks && aisAllTracksMap.size > 0;
+    const fadeStop      = allTracksMode ? 0 : aisTrackFadeStop;
+    if (ta.style === 'solid' && !allTracksMode) {
       map.setPaintProperty('ais-track-line', 'line-gradient',  buildTrackGradient(ta.color, fadeStop));
       map.setPaintProperty('ais-track-line', 'line-dasharray', undefined);
     } else {
       map.setPaintProperty('ais-track-line', 'line-gradient',  null);
       map.setPaintProperty('ais-track-line', 'line-color',     ta.color);
-      map.setPaintProperty('ais-track-line', 'line-dasharray', dashArray(ta.style, ta.width) ?? undefined);
+      map.setPaintProperty('ais-track-line', 'line-dasharray', ta.style !== 'solid' ? dashArray(ta.style, ta.width) ?? undefined : undefined);
     }
-    map.setPaintProperty('ais-track-line',          'line-width',   ta.width);
-    map.setPaintProperty('ais-track-line',          'line-opacity', ta.show && aisTrackRaw.length >= 2 ? 1 : 0);
+    map.setPaintProperty('ais-track-line', 'line-width',   ta.width);
+    const hasData = allTracksMode ? aisAllTracksMap.size > 0 : aisTrackRaw.length >= 2;
+    const showTrack = visibility.aisVessels;
+    map.setPaintProperty('ais-track-line',          'line-opacity', ta.show && showTrack && hasData ? 1 : 0);
     map.setPaintProperty('ais-track-overflow-line', 'line-color',   ta.color);
     map.setPaintProperty('ais-track-overflow-line', 'line-width',   ta.width);
-    map.setPaintProperty('ais-track-overflow-line', 'line-opacity', ta.show && aisTrackRaw.length >= 2 ? 1 : 0);
+    map.setPaintProperty('ais-track-overflow-line', 'line-opacity', ta.show && showTrack && !allTracksMode && aisTrackRaw.length >= 2 ? 1 : 0);
     map.setPaintProperty('ais-track-overflow-line', 'line-dasharray',
       ta.style !== 'solid' ? dashArray(ta.style, ta.width) ?? undefined : undefined);
   });

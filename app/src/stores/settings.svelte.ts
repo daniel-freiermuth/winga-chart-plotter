@@ -22,10 +22,11 @@ export interface AisAppearance {
     lengthMinutes: number;
   };
   track: {
-    show:  boolean;
-    color: string;
-    width: number;
-    style: LineStyle;
+    show:         boolean;
+    color:        string;
+    width:        number;
+    style:        LineStyle;
+    historyHours: number;   // how far back to fetch for AIS vessel tracks
   };
 }
 
@@ -95,8 +96,8 @@ const DEFAULTS: SettingsData = {
     ais: {
       vesselColor: '#22c55e',
       vesselSize: 20,
-      cog: { color: '#374151', width: 1.5, style: 'dashed', lengthMinutes: 3 },
-      track: { show: true, color: '#f97316', width: 2, style: 'solid' },
+      cog:   { color: '#374151', width: 1.5, style: 'dashed', lengthMinutes: 3 },
+      track: { show: true, color: '#f97316', width: 2, style: 'solid', historyHours: 24 },
     },
     ruler: { color: '#1e3a8a', width: 2 },
     planner: { color: '#64c8ff', width: 6 },

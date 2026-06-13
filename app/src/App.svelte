@@ -3,7 +3,7 @@
   import Map from './components/Map.svelte';
   import FaIcon from './lib/FaIcon.svelte';
   import {
-    faGear, faLayerGroup, faLocationCrosshairs, faRuler, faPencil,
+    faGear, faLayerGroup, faEye, faLocationCrosshairs, faRuler, faPencil,
     faGlobe, faMap, faExpand, faCompress,
   } from '@fortawesome/free-solid-svg-icons';
   import { routePlanner } from './stores/routePlanner.svelte';
@@ -43,6 +43,7 @@
   }
   import Settings from './components/Settings.svelte';
   import ChartPicker from './components/ChartPicker.svelte';
+  import LayerVisibility from './components/LayerVisibility.svelte';
   import { vesselState } from './stores/vessel';
   import { settings, type SettingsTab } from './stores/settings.svelte';
   import { followMode } from './stores/follow.svelte';
@@ -75,6 +76,8 @@
   let settingsComp     = $state<ReturnType<typeof Settings>  | null>(null);
   let chartPickerComp  = $state<ReturnType<typeof ChartPicker> | null>(null);
   let chartPickerOpen  = $state(false);
+  let layerVisibilityComp = $state<ReturnType<typeof LayerVisibility> | null>(null);
+  let layerVisibilityOpen = $state(false);
   let worker: Worker | null = null;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let reconnectDelay = 2000; // ms, doubles on each failure up to 30s
@@ -228,6 +231,10 @@
     // eslint-disable-next-line @typescript-eslint/no-unsafe-call
     chartPickerComp?.open();
   }
+  function handleOpenLayerVisibility(): void {
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-call
+    layerVisibilityComp?.open();
+  }
   function handleFlyToVessel(): void {
     // eslint-disable-next-line @typescript-eslint/no-unsafe-call
     mapComp?.flyToVessel();
@@ -258,6 +265,7 @@
   <Map bind:this={mapComp} openSettings={handleOpenSettings} />
   <Settings bind:this={settingsComp} />
   <ChartPicker bind:this={chartPickerComp} bind:isOpen={chartPickerOpen} />
+  <LayerVisibility bind:this={layerVisibilityComp} bind:isOpen={layerVisibilityOpen} />
 
   <!-- Consolidated map toolbar -->
   <div class="map-toolbar">
@@ -274,6 +282,13 @@
       title="Charts &amp; layers"
       onclick={handleOpenChartPicker}
     ><FaIcon icon={faLayerGroup} /></button>
+
+    <button
+      class="map-btn"
+      class:map-btn--open={layerVisibilityOpen}
+      title="Layer visibility"
+      onclick={handleOpenLayerVisibility}
+    ><FaIcon icon={faEye} /></button>
 
     <button
       class="map-btn"

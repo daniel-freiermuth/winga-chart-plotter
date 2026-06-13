@@ -406,6 +406,20 @@
           </select>
         </div>
       </div>
+      <div class="row">
+        <span class="field-label">History</span>
+        <div class="field" style="flex-direction: column; align-items: flex-start; gap: 4px;">
+          <input type="range" min="0" max="1000" step="1"
+            value={hoursToSlider(settings.appearance.ais.track.historyHours)}
+            oninput={(e) => {
+              settings.appearance.ais.track.historyHours = sliderToHours(parseInt(e.currentTarget.value));
+              applyAppearance();
+            }}
+            style="width: 100%;"
+          />
+          <span class="unit">{trackDurationLabel(settings.appearance.ais.track.historyHours)}</span>
+        </div>
+      </div>
 
       <p class="section-title">Performance</p>
       <div class="row">
