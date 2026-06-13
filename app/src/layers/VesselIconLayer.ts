@@ -581,7 +581,6 @@ export class VesselIconLayer<DataT = number> extends Layer<VesselIconLayerProps<
     }
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   override draw({ uniforms: _uniforms }: { uniforms: Record<string, unknown> }) {
     const { uploadTimestamp, selfAnimate, animationIntervalMs, settingsIconSize, opacity, drCapSeconds } = this.props;
     const now = Date.now();

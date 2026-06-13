@@ -48,6 +48,13 @@ export default ts.config(
       // noUncheckedIndexedAccess makes all array access return T | undefined; using ! for
       // bounds-checked loops is the idiomatic fix and much cleaner than adding guards everywhere.
       '@typescript-eslint/no-non-null-assertion': 'off',
+
+      // _-prefixed parameters are the TypeScript convention for required-but-unused interface args
+      '@typescript-eslint/no-unused-vars': ['error', {
+        argsIgnorePattern: '^_',
+        varsIgnorePattern: '^_',
+        caughtErrorsIgnorePattern: '^_',
+      }],
     },
   },
   {

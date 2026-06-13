@@ -2,7 +2,9 @@
 //! Owns the connection lifecycle and vessel state accumulation.
 //! Calls back into JS when state or connection status changes.
 
-use crate::signalk::{apply_message, extract_ais_binary, extract_vessel_state, prune_stale_vessels, VesselState};
+use crate::signalk::{
+    apply_message, extract_ais_binary, extract_vessel_state, prune_stale_vessels, VesselState,
+};
 use js_sys::Function;
 use signalk::{Storage, V1FullFormat};
 use std::{cell::RefCell, rc::Rc};
@@ -114,7 +116,8 @@ impl SignalKClient {
             Rc::new(move || {
                 let now_ms = js_sys::Date::now();
                 prune_stale_vessels(&mut storage.borrow_mut(), now_ms, AIS_STALE_MS);
-                let (hot_arr, ids, cold) = extract_ais_binary(&storage.borrow(), now_ms, AIS_STALE_MS);
+                let (hot_arr, ids, cold) =
+                    extract_ais_binary(&storage.borrow(), now_ms, AIS_STALE_MS);
                 if !ids.is_empty() {
                     let js_ids = js_sys::Array::new_with_length(ids.len() as u32);
                     for (i, id) in ids.iter().enumerate() {
@@ -122,7 +125,11 @@ impl SignalKClient {
                     }
                     let cold_js = serde_wasm_bindgen::to_value(&cold).unwrap_or(JsValue::NULL);
                     let payload = js_sys::Object::new();
-                    let _ = js_sys::Reflect::set(&payload, &JsValue::from_str("hot"), &hot_arr.buffer());
+                    let _ = js_sys::Reflect::set(
+                        &payload,
+                        &JsValue::from_str("hot"),
+                        &hot_arr.buffer(),
+                    );
                     let _ = js_sys::Reflect::set(&payload, &JsValue::from_str("ids"), &js_ids);
                     let _ = js_sys::Reflect::set(&payload, &JsValue::from_str("cold"), &cold_js);
                     let _ = ais_cb.call1(&JsValue::NULL, &payload);
@@ -132,8 +139,12 @@ impl SignalKClient {
         };
 
         let on_message = Closure::wrap(Box::new(move |e: MessageEvent| {
-            let Some(text) = e.data().as_string() else { return; };
-            if apply_message(&mut storage_clone.borrow_mut(), &text).is_err() { return; }
+            let Some(text) = e.data().as_string() else {
+                return;
+            };
+            if apply_message(&mut storage_clone.borrow_mut(), &text).is_err() {
+                return;
+            }
 
             // Always forward own-vessel state immediately — it's a single cheap struct.
             let state = extract_vessel_state(&storage_clone.borrow());
@@ -197,7 +208,10 @@ impl SignalKClient {
         // onclose
         let status_cb = on_status_change.clone();
         let on_close = Closure::wrap(Box::new(move |_e: CloseEvent| {
-            let _ = status_cb.call1(&JsValue::NULL, &JsValue::from(ConnectionStatus::Disconnected));
+            let _ = status_cb.call1(
+                &JsValue::NULL,
+                &JsValue::from(ConnectionStatus::Disconnected),
+            );
         }) as Box<dyn FnMut(CloseEvent)>);
         ws.set_onclose(Some(on_close.as_ref().unchecked_ref()));
 

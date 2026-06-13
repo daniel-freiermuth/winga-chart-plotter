@@ -314,7 +314,6 @@ export class AisHullLayer<DataT = number> extends Layer<AisHullLayerProps<DataT>
     }
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   override draw({ uniforms: _uniforms }: { uniforms: Record<string, unknown> }) {
     const { uploadTimestamp, selfAnimate, animationIntervalMs, settingsIconSize, opacity, drCapSeconds } = this.props;
     const now = Date.now();
@@ -786,7 +785,6 @@ export class AisHullDecorationLayer<DataT = number>
     }
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   override draw({ uniforms: _uniforms }: { uniforms: Record<string, unknown> }) {
     const { uploadTimestamp, selfAnimate, animationIntervalMs, settingsIconSize, drCapSeconds } = this.props;
     const now = Date.now();
@@ -1020,7 +1018,6 @@ export class AisHullBorderLayer<DataT = number>
     }
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   override draw({ uniforms: _uniforms }: { uniforms: Record<string, unknown> }) {
     const { uploadTimestamp, selfAnimate, animationIntervalMs, settingsIconSize, opacity, drCapSeconds } = this.props;
     const now = Date.now();

@@ -645,5 +645,4 @@
     background: white; transition: left 0.2s;
   }
   .toggle input:checked + .toggle-track .toggle-thumb { left: 18px; }
-  .toggle-label { font-size: 12px; color: #a0a0c0; }
 </style>

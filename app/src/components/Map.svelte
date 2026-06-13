@@ -740,24 +740,24 @@
     // Add scale first so zoom buttons end up left of the scale.
     map.addControl(new maplibregl.ScaleControl({ unit: 'nautical' }), 'bottom-left');
     map.addControl({
-      onAdd(_m: maplibregl.Map): HTMLElement {
+      onAdd(_: maplibregl.Map): HTMLElement {
         const el = document.createElement('div');
         el.className = 'maplibregl-ctrl zoom-ctrl-group';
         const btnIn  = document.createElement('button');
         btnIn.className   = 'zoom-ctrl-btn';
         btnIn.title       = 'Zoom in';
         btnIn.textContent = '+';
-        btnIn.addEventListener('click', () => zoomIn());
+        btnIn.addEventListener('click', () => { zoomIn(); });
         const btnOut = document.createElement('button');
         btnOut.className   = 'zoom-ctrl-btn';
         btnOut.title       = 'Zoom out';
         btnOut.textContent = '−';
-        btnOut.addEventListener('click', () => zoomOut());
+        btnOut.addEventListener('click', () => { zoomOut(); });
         el.appendChild(btnIn);
         el.appendChild(btnOut);
         return el;
       },
-      onRemove(_m: maplibregl.Map): void { /* MapLibre removes the element */ },
+      onRemove(_: maplibregl.Map): void { /* MapLibre removes the element */ },
     }, 'bottom-left');
     map.doubleClickZoom.disable(); // double-click zoom is too easy to trigger accidentally on a chart
 
@@ -1853,9 +1853,7 @@
       chartSourceUrls.clear();
       activeStyleUrl = newStyleUrl;
       if (newStyleUrl) {
-        const chartUrl = styleChart?.url
-          ? (styleChart.url.startsWith('/') ? `${charts.serverBase}${styleChart.url}` : styleChart.url)
-          : null;
+        const chartUrl = styleChart ? (charts.tileUrl(styleChart) || null) : null;
         fetchAndResolveStyle(newStyleUrl)
           .then(resolved => {
             // If chart.url is available, inject it as a source for any layer
@@ -1865,10 +1863,10 @@
             //   - both set → both exist (style wins for enc, SK url fills gaps)
             if (chartUrl) {
               const spec = resolved as maplibregl.StyleSpecification;
-              const sources: Record<string, maplibregl.SourceSpecification> = (spec.sources ?? {}) as Record<string, maplibregl.SourceSpecification>;
+              const sources = spec.sources;
               const definedSources = new Set(Object.keys(sources));
               const referencedSources = new Set(
-                (spec.layers ?? [])
+                spec.layers
                   .map((l: maplibregl.LayerSpecification) => ('source' in l ? l.source : undefined))
                   .filter((s): s is string => typeof s === 'string')
               );
@@ -3202,7 +3200,7 @@
 <button
   class="north-indicator"
   title="Rotation: {rotateMode.label}"
-  onclick={() => rotateMode.toggle($vesselState.cog !== null, $vesselState.heading !== null, route.nextPoint !== null)}
+  onclick={() => { rotateMode.toggle($vesselState.cog !== null, $vesselState.heading !== null, route.nextPoint !== null); }}
   aria-label="Rotation mode: {rotateMode.label}"
 >
   <svg width="44" height="44" viewBox="0 0 44 44" aria-hidden="true">

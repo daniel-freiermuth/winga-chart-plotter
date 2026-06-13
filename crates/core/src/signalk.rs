@@ -18,7 +18,11 @@ pub struct Position {
 impl Position {
     #[wasm_bindgen(constructor)]
     pub fn new(longitude: f64, latitude: f64) -> Self {
-        Self { longitude, latitude, altitude: None }
+        Self {
+            longitude,
+            latitude,
+            altitude: None,
+        }
     }
 }
 
@@ -84,11 +88,11 @@ pub struct AisTarget {
     pub mmsi: Option<String>,
     pub name: Option<String>,
     pub position: Option<Position>,
-    pub cog: Option<f64>,      // rad
-    pub sog: Option<f64>,      // m/s
-    pub heading: Option<f64>,  // rad true
-    pub rot: Option<f64>,      // rad/s, + = turning right
-    pub stw: Option<f64>,      // speed through water, m/s
+    pub cog: Option<f64>,     // rad
+    pub sog: Option<f64>,     // m/s
+    pub heading: Option<f64>, // rad true
+    pub rot: Option<f64>,     // rad/s, + = turning right
+    pub stw: Option<f64>,     // speed through water, m/s
     /// Epoch ms of the last received position update (wall-clock time on receive).
     pub last_position_update_ms: f64,
 }
@@ -102,11 +106,15 @@ pub fn extract_vessel_state(storage: &Storage) -> VesselState {
         return VesselState::default();
     };
 
-    let position = nav.position.as_ref().and_then(|p| p.value.as_ref()).map(|v| Position {
-        longitude: v.longitude,
-        latitude: v.latitude,
-        altitude: v.altitude,
-    });
+    let position = nav
+        .position
+        .as_ref()
+        .and_then(|p| p.value.as_ref())
+        .map(|v| Position {
+            longitude: v.longitude,
+            latitude: v.latitude,
+            altitude: v.altitude,
+        });
 
     let course = extract_course(nav);
 
@@ -143,21 +151,30 @@ fn extract_course(nav: &signalk::V1Navigation) -> Option<CourseState> {
     // Type is inferred from the field — we never name the private module.
     let next_point = c.next_point.as_ref().map(|np| CoursePoint {
         longitude: np.position.longitude,
-        latitude:  np.position.latitude,
+        latitude: np.position.latitude,
     });
 
     let previous_point = c.previous_point.as_ref().map(|pp| CoursePoint {
         longitude: pp.position.longitude,
-        latitude:  pp.position.latitude,
+        latitude: pp.position.latitude,
     });
 
     let active_route = c.active_route.as_ref().and_then(|ar| {
         let href = to_str(&ar.href)?;
         let name = ar.name.as_ref().and_then(to_str);
-        Some(ActiveRoute { href, name, point_index: ar.point_index, reverse: ar.reverse })
+        Some(ActiveRoute {
+            href,
+            name,
+            point_index: ar.point_index,
+            reverse: ar.reverse,
+        })
     });
 
-    Some(CourseState { next_point, previous_point, active_route })
+    Some(CourseState {
+        next_point,
+        previous_point,
+        active_route,
+    })
 }
 
 /// Parse a UTC ISO 8601 datetime string to epoch milliseconds.
@@ -169,14 +186,14 @@ fn parse_iso8601_utc_ms(s: &str) -> Option<f64> {
     let s = s.trim().strip_suffix('Z')?;
     let (date, time) = s.split_once('T')?;
     let mut dp = date.split('-');
-    let year: i32  = dp.next()?.parse().ok()?;
+    let year: i32 = dp.next()?.parse().ok()?;
     let month: u32 = dp.next()?.parse().ok()?;
-    let day: u32   = dp.next()?.parse().ok()?;
+    let day: u32 = dp.next()?.parse().ok()?;
     let (hms, frac_str) = time.split_once('.').unwrap_or((time, ""));
     let mut tp = hms.split(':');
     let hour: i64 = tp.next()?.parse().ok()?;
-    let min: i64  = tp.next()?.parse().ok()?;
-    let sec: i64  = tp.next()?.parse().ok()?;
+    let min: i64 = tp.next()?.parse().ok()?;
+    let sec: i64 = tp.next()?.parse().ok()?;
     // Truncate fractional seconds to 3 digits, right-pad with zeros → milliseconds.
     let frac3 = &frac_str[..frac_str.len().min(3)];
     let ms: i64 = format!("{frac3:0<3}").parse().ok()?;
@@ -191,9 +208,9 @@ fn days_from_epoch(year: i32, month: u32, day: u32) -> i64 {
     let d = day as i64;
     let (y, m) = if m <= 2 { (y - 1, m + 12) } else { (y, m) };
     let era = y.div_euclid(400);
-    let yoe = y - era * 400;                            // year of era [0, 399]
-    let doy = (153 * (m - 3) + 2) / 5 + d - 1;         // day of year [0, 365]
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;   // day of era  [0, 146096]
+    let yoe = y - era * 400; // year of era [0, 399]
+    let doy = (153 * (m - 3) + 2) / 5 + d - 1; // day of year [0, 365]
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy; // day of era  [0, 146096]
     era * 146097 + doe - 719_468
 }
 
@@ -205,11 +222,7 @@ fn days_from_epoch(year: i32, month: u32, day: u32) -> i64 {
 /// Vessels without a parseable `navigation.datetime` are silently skipped — in practice
 /// this is only Class B transponders that never broadcast UTC time (very rare: 1/322 in
 /// testing). It is also the correct behaviour for vessels with no position at all.
-pub fn extract_ais_targets(
-    storage: &Storage,
-    now_ms: f64,
-    stale_ms: f64,
-) -> Vec<AisTarget> {
+pub fn extract_ais_targets(storage: &Storage, now_ms: f64, stale_ms: f64) -> Vec<AisTarget> {
     let data = storage.data();
     // self_ is "vessels.urn:mrn:..." — the vessel map key is after "vessels."
     let self_key = data.self_.strip_prefix("vessels.").unwrap_or(&data.self_);
@@ -258,10 +271,14 @@ pub fn extract_ais_targets(
             // so 511° ≈ 8.92 rad — clearly outside the valid [0, 2π) range.
             // COG sentinel: 360.0° (3600 in AIS 0.1° units) → 2π rad exactly.
             // Reject anything outside [0, 2π) to suppress both sentinels.
-            let heading = nav.heading_true.as_ref()
+            let heading = nav
+                .heading_true
+                .as_ref()
                 .and_then(|v| v.value)
                 .filter(|&h| (0.0..std::f64::consts::TAU).contains(&h));
-            let cog = nav.course_over_ground_true.as_ref()
+            let cog = nav
+                .course_over_ground_true
+                .as_ref()
                 .and_then(|v| v.value)
                 .filter(|&c| (0.0..std::f64::consts::TAU).contains(&c));
             Some(AisTarget {
@@ -270,10 +287,22 @@ pub fn extract_ais_targets(
                 name: vessel.name.clone(),
                 position: Some(position),
                 cog,
-                sog: nav.speed_over_ground.as_ref().and_then(|v| v.value).filter(|v| v.is_finite()),
+                sog: nav
+                    .speed_over_ground
+                    .as_ref()
+                    .and_then(|v| v.value)
+                    .filter(|v| v.is_finite()),
                 heading,
-                rot: nav.rate_of_turn.as_ref().and_then(|v| v.value).filter(|v| v.is_finite()),
-                stw: nav.speed_through_water.as_ref().and_then(|v| v.value).filter(|v| v.is_finite()),
+                rot: nav
+                    .rate_of_turn
+                    .as_ref()
+                    .and_then(|v| v.value)
+                    .filter(|v| v.is_finite()),
+                stw: nav
+                    .speed_through_water
+                    .as_ref()
+                    .and_then(|v| v.value)
+                    .filter(|v| v.is_finite()),
                 last_position_update_ms: last_ms,
             })
         })
@@ -365,10 +394,14 @@ pub fn extract_ais_binary(
             if !pos_value.longitude.is_finite() || !pos_value.latitude.is_finite() {
                 return None;
             }
-            let heading = nav.heading_true.as_ref()
+            let heading = nav
+                .heading_true
+                .as_ref()
                 .and_then(|v| v.value)
                 .filter(|&h| (0.0..std::f64::consts::TAU).contains(&h));
-            let cog = nav.course_over_ground_true.as_ref()
+            let cog = nav
+                .course_over_ground_true
+                .as_ref()
                 .and_then(|v| v.value)
                 .filter(|&c| (0.0..std::f64::consts::TAU).contains(&c));
             Some(Row {
@@ -378,12 +411,16 @@ pub fn extract_ais_binary(
                 lon: pos_value.longitude,
                 lat: pos_value.latitude,
                 cog: cog.unwrap_or(f64::NAN),
-                sog: nav.speed_over_ground.as_ref()
+                sog: nav
+                    .speed_over_ground
+                    .as_ref()
                     .and_then(|v| v.value)
                     .filter(|v| v.is_finite())
                     .unwrap_or(f64::NAN),
                 hdg: heading.unwrap_or(f64::NAN),
-                rot: nav.rate_of_turn.as_ref()
+                rot: nav
+                    .rate_of_turn
+                    .as_ref()
                     .and_then(|v| v.value)
                     .unwrap_or(f64::NAN),
                 age: (now_ms - last_ms) / 1000.0,
@@ -398,20 +435,23 @@ pub fn extract_ais_binary(
 
     for (i, r) in rows.into_iter().enumerate() {
         let b = i * AIS_HOT_STRIDE;
-        hot[b]     = r.lon;
+        hot[b] = r.lon;
         hot[b + 1] = r.lat;
         hot[b + 2] = r.cog;
         hot[b + 3] = r.sog;
         hot[b + 4] = r.hdg;
         hot[b + 5] = r.rot;
         hot[b + 6] = r.age;
-        cold.push(AisColdData { id: r.id.clone(), name: r.name, mmsi: r.mmsi });
+        cold.push(AisColdData {
+            id: r.id.clone(),
+            name: r.name,
+            mmsi: r.mmsi,
+        });
         ids.push(r.id);
     }
 
     (Float64Array::from(hot.as_slice()), ids, cold)
 }
-
 
 /// milliseconds relative to `now_ms`.
 ///
@@ -423,11 +463,17 @@ pub fn extract_ais_binary(
 /// in AIS target snapshots but also don't consume significant memory.
 pub fn prune_stale_vessels(storage: &mut Storage, now_ms: f64, stale_ms: f64) {
     let mut full = storage.get();
-    let Some(vessels) = full.vessels.as_mut() else { return; };
+    let Some(vessels) = full.vessels.as_mut() else {
+        return;
+    };
     let before = vessels.len();
     vessels.retain(|_id, vessel| {
-        let Some(nav) = vessel.navigation.as_ref() else { return true; };
-        let Some(dt) = nav.datetime.as_ref() else { return true; };
+        let Some(nav) = vessel.navigation.as_ref() else {
+            return true;
+        };
+        let Some(dt) = nav.datetime.as_ref() else {
+            return true;
+        };
         let json = match serde_json::to_string(dt) {
             Ok(j) => j,
             Err(_) => return true,
@@ -448,7 +494,6 @@ pub fn prune_stale_vessels(storage: &mut Storage, now_ms: f64, stale_ms: f64) {
         *storage = Storage::new(full);
     }
 }
-
 
 /// Returns an error string on JSON parse failure; unknown/bad messages are silently ignored.
 pub fn apply_message(storage: &mut Storage, json: &str) -> Result<(), String> {
@@ -533,13 +578,17 @@ mod tests {
         }"#).unwrap();
 
         // 4 minutes after epoch — within 10-minute staleness window.
-        apply_message(&mut storage, r#"{
+        apply_message(
+            &mut storage,
+            r#"{
             "context": "vessels.urn:mrn:imo:mmsi:123456789",
             "updates": [{"values": [
                 {"path": "navigation.position", "value": {"longitude": 11.0, "latitude": 59.0}},
                 {"path": "navigation.datetime", "value": "1970-01-01T00:04:00.000Z"}
             ]}]
-        }"#).unwrap();
+        }"#,
+        )
+        .unwrap();
 
         // now = 5 minutes after epoch
         let now_ms = 5.0 * 60.0 * 1000.0;
@@ -557,13 +606,17 @@ mod tests {
         storage.set_self("vessels.urn:mrn:signalk:uuid:self");
 
         // datetime = 9 minutes after epoch → stale when now = 20 minutes after epoch
-        apply_message(&mut storage, r#"{
+        apply_message(
+            &mut storage,
+            r#"{
             "context": "vessels.urn:mrn:imo:mmsi:999999999",
             "updates": [{"values": [
                 {"path": "navigation.position", "value": {"longitude": 11.0, "latitude": 59.0}},
                 {"path": "navigation.datetime", "value": "1970-01-01T00:09:00.000Z"}
             ]}]
-        }"#).unwrap();
+        }"#,
+        )
+        .unwrap();
 
         let now_ms = 20.0 * 60.0 * 1000.0;
         let targets = extract_ais_targets(&storage, now_ms, 10.0 * 60.0 * 1000.0);
@@ -575,15 +628,22 @@ mod tests {
         let mut storage = Storage::new(V1FullFormat::default());
         storage.set_self("vessels.urn:mrn:signalk:uuid:self");
 
-        apply_message(&mut storage, r#"{
+        apply_message(
+            &mut storage,
+            r#"{
             "context": "vessels.urn:mrn:imo:mmsi:111111111",
             "updates": [{"values": [
                 {"path": "navigation.position", "value": {"longitude": 11.0, "latitude": 59.0}}
             ]}]
-        }"#).unwrap();
+        }"#,
+        )
+        .unwrap();
 
         let targets = extract_ais_targets(&storage, f64::INFINITY, 10.0 * 60.0 * 1000.0);
-        assert!(targets.is_empty(), "vessel without datetime should be dropped");
+        assert!(
+            targets.is_empty(),
+            "vessel without datetime should be dropped"
+        );
     }
 
     #[test]
@@ -592,22 +652,30 @@ mod tests {
         storage.set_self("vessels.urn:mrn:signalk:uuid:self");
 
         // Fresh vessel: datetime = 15 minutes after epoch
-        apply_message(&mut storage, r#"{
+        apply_message(
+            &mut storage,
+            r#"{
             "context": "vessels.urn:mrn:imo:mmsi:111111111",
             "updates": [{"values": [
                 {"path": "navigation.position", "value": {"longitude": 10.0, "latitude": 59.0}},
                 {"path": "navigation.datetime", "value": "1970-01-01T00:15:00.000Z"}
             ]}]
-        }"#).unwrap();
+        }"#,
+        )
+        .unwrap();
 
         // Stale vessel: datetime = 1 minute after epoch
-        apply_message(&mut storage, r#"{
+        apply_message(
+            &mut storage,
+            r#"{
             "context": "vessels.urn:mrn:imo:mmsi:999999999",
             "updates": [{"values": [
                 {"path": "navigation.position", "value": {"longitude": 11.0, "latitude": 59.0}},
                 {"path": "navigation.datetime", "value": "1970-01-01T00:01:00.000Z"}
             ]}]
-        }"#).unwrap();
+        }"#,
+        )
+        .unwrap();
 
         // now = 20 minutes, stale = 10 minutes → vessel at 1min is stale, vessel at 15min is fresh
         let now_ms = 20.0 * 60.0 * 1000.0;
@@ -615,10 +683,15 @@ mod tests {
         prune_stale_vessels(&mut storage, now_ms, stale_ms);
 
         let vessels = storage.data().vessels.as_ref().unwrap();
-        assert!(vessels.contains_key("urn:mrn:imo:mmsi:111111111"), "fresh vessel should remain");
-        assert!(!vessels.contains_key("urn:mrn:imo:mmsi:999999999"), "stale vessel should be pruned");
+        assert!(
+            vessels.contains_key("urn:mrn:imo:mmsi:111111111"),
+            "fresh vessel should remain"
+        );
+        assert!(
+            !vessels.contains_key("urn:mrn:imo:mmsi:999999999"),
+            "stale vessel should be pruned"
+        );
     }
-
 
     #[test]
     fn parse_iso8601_epoch() {
@@ -628,16 +701,25 @@ mod tests {
     #[test]
     fn parse_iso8601_known_timestamp() {
         // 2023-11-14T22:13:20.000Z = 1700000000000 ms (well-known Unix timestamp)
-        assert_eq!(parse_iso8601_utc_ms("2023-11-14T22:13:20.000Z"), Some(1_700_000_000_000.0));
+        assert_eq!(
+            parse_iso8601_utc_ms("2023-11-14T22:13:20.000Z"),
+            Some(1_700_000_000_000.0)
+        );
     }
 
     #[test]
     fn parse_iso8601_fractional_ms() {
         // 1 second + 500ms
         assert_eq!(parse_iso8601_utc_ms("1970-01-01T00:00:01.5Z"), Some(1500.0));
-        assert_eq!(parse_iso8601_utc_ms("1970-01-01T00:00:01.123Z"), Some(1123.0));
+        assert_eq!(
+            parse_iso8601_utc_ms("1970-01-01T00:00:01.123Z"),
+            Some(1123.0)
+        );
         // microseconds truncated to ms
-        assert_eq!(parse_iso8601_utc_ms("1970-01-01T00:00:01.123456Z"), Some(1123.0));
+        assert_eq!(
+            parse_iso8601_utc_ms("1970-01-01T00:00:01.123456Z"),
+            Some(1123.0)
+        );
     }
 
     #[test]
