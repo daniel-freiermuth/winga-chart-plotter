@@ -254,11 +254,17 @@ function dedupCoords(coords: [number, number][]): [number, number][] {
  * @param historyHours Number of hours of history to fetch (default 24)
  */
 export async function fetchTrack(serverBase: string, historyHours = 24): Promise<[number, number][]> {
-  const startTime = new Date(Date.now() - historyHours * 3_600_000).toISOString();
-  const v2Params = new URLSearchParams({ paths: 'navigation.position', from: startTime });
+  const hours     = Math.round(historyHours);   // guard against float values from old localStorage
+  const startTime = new Date(Date.now() - hours * 3_600_000).toISOString();
+  const v2Params  = new URLSearchParams({ paths: 'navigation.position', from: startTime });
+  const signal    = () => AbortSignal.timeout(15_000);
 
-  const [v2Result, v1Result] = await Promise.allSettled([
-    fetch(`${serverBase}/signalk/v2/api/history/values?${v2Params.toString()}`).then(async res => {
+  // Three sources queried in parallel; all gracefully return [] on failure or timeout.
+  //  • v2 History API     — persistent history plugin (time-windowed)
+  //  • /api/self/track    — server in-memory circular buffer (time-windowed + downsampled)
+  //  • /api/tracks        — @signalk/tracks plugin LevelDB store (large-radius geo query)
+  const [v2Result, v1Result, tracksResult] = await Promise.allSettled([
+    fetch(`${serverBase}/signalk/v2/api/history/values?${v2Params.toString()}`, { signal: signal() }).then(async res => {
       if (!res.ok) return [] as [number, number][];
       const body = await res.json() as {
         data?: [string, { longitude?: number; latitude?: number } | null][];
@@ -271,21 +277,39 @@ export async function fetchTrack(serverBase: string, historyHours = 24): Promise
       }
       return coords;
     }),
-    fetch(`${serverBase}/signalk/v1/api/self/track?timespan=${String(historyHours)}h`).then(async res => {
+    // v1 in-memory track buffer.
+    fetch(`${serverBase}/signalk/v1/api/self/track?timespan=${String(hours)}h`, { signal: signal() }).then(async res => {
+      if (!res.ok) {
+        console.warn(`[track] v1 self/track failed: ${String(res.status)} ${res.statusText}`);
+        return [] as [number, number][];
+      }
+      const geojson = await res.json() as unknown;
+      const coords = extractTrackCoords(geojson);
+      console.debug(`[track] v1 returned ${String(coords.length)} points (type: ${(geojson as { type?: string }).type ?? 'unknown'})`);
+      return coords;
+    }),
+    // @signalk/tracks plugin — persistent per-vessel track database.
+    // context=vessels.self restricts to own vessel (omitting it returns all vessels' tracks).
+    // radius=500000 (500 km) captures a full multi-day offshore passage.
+    fetch(`${serverBase}/signalk/v1/api/tracks?context=vessels.self&radius=500000`, { signal: signal() }).then(async res => {
       if (!res.ok) return [] as [number, number][];
-      return extractTrackCoords(await res.json() as unknown);
+      const geojson = await res.json() as unknown;
+      const coords = extractTrackCoords(geojson);
+      console.debug(`[track] /api/tracks returned ${String(coords.length)} points`);
+      return coords;
     }),
   ]);
 
-  const v2Coords = v2Result.status === 'fulfilled' ? v2Result.value : [];
-  const v1Coords = v1Result.status === 'fulfilled' ? v1Result.value : [];
+  const v2Coords     = v2Result.status     === 'fulfilled' ? v2Result.value     : [];
+  const v1Coords     = v1Result.status     === 'fulfilled' ? v1Result.value     : [];
+  const tracksCoords = tracksResult.status === 'fulfilled' ? tracksResult.value : [];
+  console.debug(`[track] v2=${String(v2Coords.length)} v1=${String(v1Coords.length)} tracks=${String(tracksCoords.length)}`);
 
-  if (v2Coords.length === 0) return v1Coords;
-  if (v1Coords.length === 0) return v2Coords;
-
-  // Merge: v2 provides the historical base; v1 may add very recent points
-  // not yet flushed to the persistent store. Deduplicate overlapping points.
-  return dedupCoords([...v2Coords, ...v1Coords]);
+  // Collect non-empty sources; dedup the union.
+  // Concatenation order (v2 → v1 → tracks) is roughly oldest-first; dedup tolerates
+  // overlapping coverage between sources.
+  const all = [...v2Coords, ...v1Coords, ...tracksCoords];
+  return all.length === 0 ? [] : dedupCoords(all);
 }
 
 /**
@@ -324,7 +348,7 @@ export async function fetchAisVesselTrack(
       }
       return coords;
     }),
-    fetch(`${serverBase}/signalk/v1/api/vessels/${encodedId}/track?timespan=${String(historyHours)}h`).then(async res => {
+    fetch(`${serverBase}/signalk/v1/api/vessels/${encodedId}/track?timespan=${String(Math.round(historyHours))}h`, { signal: AbortSignal.timeout(15_000) }).then(async res => {
       if (!res.ok) return [] as [number, number][];
       return extractTrackCoords(await res.json() as unknown);
     }),
