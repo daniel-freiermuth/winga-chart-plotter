@@ -3426,9 +3426,6 @@
   </svg>
 </button>
 
-<!-- Debug: current zoom level -->
-<div class="zoom-debug">{mapZoom.toFixed(1)}</div>
-
 {#if rulerPopup}
 <div
   class="ruler-popup"
@@ -3676,22 +3673,6 @@
     :global(.maplibregl-ctrl button.zoom-ctrl-btn:hover) {
       background: rgba(0, 0, 0, 0.7);
     }
-  }
-
-  .zoom-debug {
-    position: absolute;
-    bottom: 30px;
-    left: 50%;
-    transform: translateX(-50%);
-    z-index: 10;
-    background: rgba(0, 0, 0, 0.65);
-    color: rgba(255, 255, 255, 0.85);
-    font-family: monospace;
-    font-size: 11px;
-    padding: 2px 7px;
-    border-radius: 4px;
-    pointer-events: none;
-    user-select: none;
   }
 
 </style>
