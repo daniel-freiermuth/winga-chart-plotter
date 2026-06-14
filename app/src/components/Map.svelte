@@ -3108,6 +3108,119 @@
     canvas.addEventListener('pointercancel', onPointerCancel);
     canvas.addEventListener('contextmenu',   onContextMenu);
 
+    // When following, disable all of MapLibre's two-finger handlers (touchZoomRotate
+    // and touchPitch) and replace them with a single pointer-event loop that handles
+    // zoom, bearing (MAN only), and pitch simultaneously — all anchored to the vessel.
+    //
+    // Why disable rather than patch: every map.easeTo() call fires movestart into
+    // MapLibre's internal event bus. touchPitch and touchZoomRotate both watch for
+    // movestart to detect competing camera movements and abort their gesture tracking.
+    // Any "correct after the fact" approach (pitchend re-anchor, pitch-event correction)
+    // therefore kills the very gesture it's trying to fix after the first frame.
+    //
+    // Gesture math mirrors MapLibre's internal TouchZoomRotateHandler:
+    //   zoom    = log2(newSpan / prevSpan)  — finger span ratio
+    //   bearing = –atan2(dy, dx) angle delta (neg sign flips screen-Y so CW = positive)
+    //   pitch   = midpoint-Y delta × 0.5   — matching right-click convention
+    if (isFollowing) {
+      map.touchZoomRotate.disable();
+      map.touchPitch.disable();
+
+      interface TpEntry { id: number; x: number; y: number }
+      let tp: TpEntry[] = [];
+      // prevDist NaN = gesture not yet started; used as the single gate for all three.
+      let prevDist = NaN, prevAngle = NaN, prevMidY = NaN;
+
+      const onTPDown = (e: PointerEvent) => {
+        if (e.pointerType !== 'touch') return;
+        if (!tp.some(p => p.id === e.pointerId))
+          tp.push({ id: e.pointerId, x: e.clientX, y: e.clientY });
+        prevDist = NaN; // reset gesture state on any finger-count change
+      };
+
+      const onTPMove = (e: PointerEvent) => {
+        if (e.pointerType !== 'touch' || !map) return;
+        const entry = tp.find(p => p.id === e.pointerId);
+        if (!entry) return;
+        entry.x = e.clientX;
+        entry.y = e.clientY;
+        if (tp.length !== 2) return;
+
+        const dx    = tp[1]!.x - tp[0]!.x;
+        const dy    = tp[1]!.y - tp[0]!.y;
+        const dist  = Math.hypot(dx, dy);
+        // Negate atan2 so CW screen rotation = positive angle, matching MapLibre convention.
+        const angle = -Math.atan2(dy, dx) * 180 / Math.PI;
+        const midY  = (tp[0]!.y + tp[1]!.y) / 2;
+
+        if (Number.isNaN(prevDist)) {
+          prevDist = dist; prevAngle = angle; prevMidY = midY;
+          return;
+        }
+
+        const zoomDelta = dist > 0 && prevDist > 0 ? Math.log2(dist / prevDist) : 0;
+        // Bearing only in MAN mode; normalise to [-180, 180] to handle atan2 wrap.
+        let dAngle = isManual ? angle - prevAngle : 0;
+        if (dAngle >  180) dAngle -= 360;
+        if (dAngle < -180) dAngle += 360;
+        const pitchDelta = midY - prevMidY;
+
+        prevDist  = dist;
+        prevAngle = angle;
+        prevMidY  = midY;
+
+        const newZoom    = map.getZoom()    + zoomDelta;
+        const newBearing = map.getBearing() + dAngle;
+        const newPitch   = Math.max(0, Math.min(map.getMaxPitch(), map.getPitch() - pitchDelta * 0.5));
+        const pos        = get(vesselState).position;
+        const around: [number, number] | undefined = pos ? [pos.longitude, pos.latitude] : undefined;
+
+        map.easeTo({
+          zoom:    newZoom,
+          bearing: newBearing,
+          pitch:   newPitch,
+          ...(around ? { around } : {}),
+          duration: 0,
+        });
+      };
+
+      const onTPUp = (e: PointerEvent) => {
+        if (e.pointerType !== 'touch') return;
+        tp     = tp.filter(p => p.id !== e.pointerId);
+        prevDist = NaN;
+      };
+
+      // Prevent the browser's native pinch-to-zoom. MapLibre's touchZoomRotate handler
+      // normally does this by calling preventDefault() on touchmove. With it disabled,
+      // we must do it ourselves — otherwise the whole page scales instead of the map.
+      const onTouchMove = (e: TouchEvent) => {
+        if (e.touches.length >= 2) e.preventDefault();
+      };
+
+      canvas.addEventListener('pointerdown',   onTPDown);
+      canvas.addEventListener('pointermove',   onTPMove);
+      canvas.addEventListener('pointerup',     onTPUp);
+      canvas.addEventListener('pointercancel', onTPUp);
+      canvas.addEventListener('touchmove',     onTouchMove, { passive: false });
+
+      return () => {
+        canvas.removeEventListener('pointerdown',   onPointerDown);
+        canvas.removeEventListener('pointermove',   onPointerMove);
+        canvas.removeEventListener('pointerup',     onPointerUp);
+        canvas.removeEventListener('pointercancel', onPointerCancel);
+        canvas.removeEventListener('contextmenu',   onContextMenu);
+        canvas.removeEventListener('pointerdown',   onTPDown);
+        canvas.removeEventListener('pointermove',   onTPMove);
+        canvas.removeEventListener('pointerup',     onTPUp);
+        canvas.removeEventListener('pointercancel', onTPUp);
+        canvas.removeEventListener('touchmove',     onTouchMove);
+        map!.touchPitch.enable();
+        map!.touchZoomRotate.enable();
+        map!.touchZoomRotate.enableRotation();
+        map!.dragRotate.enable();
+      };
+    }
+
     return () => {
       canvas.removeEventListener('pointerdown',   onPointerDown);
       canvas.removeEventListener('pointermove',   onPointerMove);
@@ -3312,6 +3425,9 @@
       fill="rgba(255,255,255,0.55)" transform="rotate({-mapBearing}, 22, 22)">N</text>
   </svg>
 </button>
+
+<!-- Debug: current zoom level -->
+<div class="zoom-debug">{mapZoom.toFixed(1)}</div>
 
 {#if rulerPopup}
 <div
@@ -3538,5 +3654,21 @@
   }
   :global(.zoom-ctrl-btn:hover) { background: rgba(40, 40, 80, 0.9); }
   :global(.zoom-ctrl-btn:active) { background: rgba(60, 60, 120, 0.95); }
+
+  .zoom-debug {
+    position: absolute;
+    bottom: 30px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 10;
+    background: rgba(0, 0, 0, 0.65);
+    color: rgba(255, 255, 255, 0.85);
+    font-family: monospace;
+    font-size: 11px;
+    padding: 2px 7px;
+    border-radius: 4px;
+    pointer-events: none;
+    user-select: none;
+  }
 
 </style>
