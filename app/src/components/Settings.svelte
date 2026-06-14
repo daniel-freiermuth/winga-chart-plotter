@@ -1,5 +1,6 @@
 <script lang="ts">
   import { settings, type AppearanceSettings, type SettingsTab } from '../stores/settings.svelte';
+  import { plotterExtensions } from '../stores/plotterExtensions.svelte';
   import { visibility } from '../stores/visibility.svelte';
   import { auth } from '../stores/auth.svelte';
   import { fpsStore } from '../stores/fps.svelte';
@@ -132,8 +133,9 @@
       <button class="tab" class:active={tab === 'connection'} onclick={() => tab = 'connection'}>Connection</button>
       <button class="tab" class:active={tab === 'vessel'}     onclick={() => tab = 'vessel'}>Own vessel</button>
       <button class="tab" class:active={tab === 'ais'}        onclick={() => tab = 'ais'}>AIS</button>
-      <button class="tab" class:active={tab === 'routes'}     onclick={() => tab = 'routes'}>Routes</button>
-      <button class="tab" class:active={tab === 'about'}      onclick={() => tab = 'about'}>About</button>
+      <button class="tab" class:active={tab === 'routes'}  onclick={() => { tab = 'routes'; }}>Routes</button>
+      <button class="tab" class:active={tab === 'widgets'} onclick={() => { tab = 'widgets'; }}>Widgets</button>
+      <button class="tab" class:active={tab === 'about'}   onclick={() => { tab = 'about'; }}>About</button>
     </div>
 
     {#if tab === 'connection'}
@@ -576,6 +578,29 @@
           <span class="unit">px</span>
         </div>
       </div>
+    {/if}
+
+    {#if tab === 'widgets'}
+      {#if plotterExtensions.extensions.size === 0}
+        <p class="hint">No extension widgets available. Make sure your Signal K server has instrument plugins installed and you are connected.</p>
+      {:else}
+        {#each [...plotterExtensions.extensions.entries()] as [extId, manifest] (extId)}
+          {#if manifest.widgets && manifest.widgets.length > 0}
+            <p class="section-title">{manifest.name} <span style="opacity:.5;font-size:11px;">v{manifest.version}</span></p>
+            {#each manifest.widgets as wDef (wDef.id)}
+              <div class="row">
+                <span class="field-label">{wDef.title || wDef.id}</span>
+                <span style="color:var(--text-dim,rgba(255,255,255,.45));font-size:11px;margin-right:auto;">{wDef.size}</span>
+                <button
+                  class="btn btn-save"
+                  style="padding:4px 12px;font-size:12px;"
+                  onclick={() => { plotterExtensions.addWidget(extId, wDef.id); isOpen = false; }}
+                >Add to map</button>
+              </div>
+            {/each}
+          {/if}
+        {/each}
+      {/if}
     {/if}
 
     {#if tab === 'about'}

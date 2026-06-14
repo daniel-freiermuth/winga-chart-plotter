@@ -44,6 +44,8 @@
   import Settings from './components/Settings.svelte';
   import ChartPicker from './components/ChartPicker.svelte';
   import LayerVisibility from './components/LayerVisibility.svelte';
+  import WidgetPanel from './components/WidgetPanel.svelte';
+  import ExtPanel from './components/ExtPanel.svelte';
   import { vesselState } from './stores/vessel';
   import { settings, type SettingsTab } from './stores/settings.svelte';
   import { followMode } from './stores/follow.svelte';
@@ -58,6 +60,9 @@
   import { routes } from './stores/routes.svelte';
   import { auth } from './stores/auth.svelte';
   import { connection } from './stores/connection.svelte';
+  import { plotterExtensions, type ButtonDef } from './stores/plotterExtensions.svelte';
+  import { createSkRelay } from './lib/sk-relay';
+  import { type MapControl, type PanelControl } from './lib/plotterext-host';
 
   // Message types received from the SignalK worker.
   interface WsState {
@@ -72,15 +77,60 @@
     | { type: 'ais';    hot: ArrayBuffer; ids: string[]; cold: AisColdData[] }
     | { type: 'error';  message: string };
 
-  let mapComp          = $state<ReturnType<typeof Map>      | null>(null);
-  let settingsComp     = $state<ReturnType<typeof Settings>  | null>(null);
-  let chartPickerComp  = $state<ReturnType<typeof ChartPicker> | null>(null);
-  let chartPickerOpen  = $state(false);
-  let layerVisibilityComp = $state<ReturnType<typeof LayerVisibility> | null>(null);
+  // Explicit interface matching Map.svelte's exported functions, so TypeScript
+  // can fully verify the calls without `eslint-disable` suppression.
+  interface MapInstance {
+    getView(): { center: [number, number]; zoom: number; bounds: [number, number, number, number] };
+    flyTo(position: [number, number], zoom?: number): void;
+    fitBounds(bounds: [number, number, number, number]): void;
+    flyToVessel(): void;
+    addRuler(): void;
+    setProjection(proj: string): void;
+    toggleFullscreen(): void;
+  }
+
+  let mapComp             = $state<MapInstance | null>(null);
+  let settingsComp        = $state<{ open(): void; openTo(t: SettingsTab): void } | null>(null);
+  let chartPickerComp     = $state<{ open(): void } | null>(null);
+  let chartPickerOpen     = $state(false);
+  let layerVisibilityComp = $state<{ open(): void } | null>(null);
   let layerVisibilityOpen = $state(false);
   let worker: Worker | null = null;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let reconnectDelay = 2000; // ms, doubles on each failure up to 30s
+
+  // Plotter-extensions relay and control objects
+  const relay = createSkRelay();
+
+  const mapControl: MapControl = {
+    getView:   ()        => mapComp!.getView(),
+    flyTo:     (pos, z)  => { mapComp!.flyTo(pos, z); },
+    fitBounds: (b)       => { mapComp!.fitBounds(b); },
+  };
+
+  const panelControl: PanelControl = {
+    openPanel:        (extId, panelId) => { plotterExtensions.openPanelFor({ extensionId: extId, panelId, isConfig: false }); },
+    togglePanel:      (extId, panelId) => { plotterExtensions.togglePanelFor(extId, panelId); },
+    closePanel:       ()               => { plotterExtensions.closePanelFor(); },
+    openConfigPanel:  (extId, instanceId, widgetId) => {
+      const manifest = plotterExtensions.extensions.get(extId);
+      const wDef = manifest?.widgets?.find(w => w.id === widgetId);
+      if (wDef?.configPanel) {
+        plotterExtensions.openPanelFor({ extensionId: extId, panelId: wDef.configPanel, isConfig: true, targetInstance: instanceId, targetWidget: widgetId });
+      }
+    },
+    toggleConfigPanel: (extId, instanceId, widgetId) => {
+      const manifest = plotterExtensions.extensions.get(extId);
+      const wDef = manifest?.widgets?.find(w => w.id === widgetId);
+      if (!wDef?.configPanel) return;
+      const cur = plotterExtensions.openPanel;
+      if (cur !== null && cur.extensionId === extId && cur.panelId === wDef.configPanel) {
+        plotterExtensions.closePanelFor();
+      } else {
+        plotterExtensions.openPanelFor({ extensionId: extId, panelId: wDef.configPanel, isConfig: true, targetInstance: instanceId, targetWidget: widgetId });
+      }
+    },
+  };
 
   // Latest compass heading from DeviceOrientation API, shared between the two effects below.
   let latestCompassHeadingRad: number | null = null;
@@ -329,6 +379,7 @@
     void routes.load(httpUrl);
     void waypoints.load(httpUrl);
     void auth.init(httpUrl);
+    void plotterExtensions.load(httpUrl);
 
     if (vesselInfoTimer !== null) clearInterval(vesselInfoTimer);
     const refresh = () => void fetchVesselInfo(httpUrl).then(info => { ais.setInfoCache(info); });
@@ -366,38 +417,31 @@
     reconnectDelay = 2000;
     if (reconnectTimer !== null) { clearTimeout(reconnectTimer); reconnectTimer = null; }
     worker?.postMessage({ type: 'connect', url });
+    relay.connect(url);
   });
 
   function handleOpenSettings(tab: SettingsTab): void {
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-call
     settingsComp?.openTo(tab);
   }
   function handleOpenSettingsModal(): void {
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-call
     settingsComp?.open();
   }
   function handleOpenChartPicker(): void {
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-call
     chartPickerComp?.open();
   }
   function handleOpenLayerVisibility(): void {
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-call
     layerVisibilityComp?.open();
   }
   function handleFlyToVessel(): void {
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-call
     mapComp?.flyToVessel();
   }
   function handleAddRuler(): void {
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-call
     mapComp?.addRuler();
   }
   function handleToggleProjection(): void {
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-call
     mapComp?.setProjection(mapView.projection === 'mercator' ? 'globe' : 'mercator');
   }
   function handleToggleFullscreen(): void {
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-call
     mapComp?.toggleFullscreen();
   }
 
@@ -408,6 +452,16 @@
       console.error('[mob] raise failed', e);
     }
   }
+
+  function handleExtButton(extensionId: string, btn: ButtonDef): void {
+    const { action } = btn;
+    if (action.type === 'togglePanel' && action.panel) {
+      plotterExtensions.togglePanelFor(extensionId, action.panel);
+    } else if (action.type === 'openPanel' && action.panel) {
+      plotterExtensions.openPanelFor({ extensionId, panelId: action.panel, isConfig: false });
+    }
+    // sendMessage not yet implemented (no background runtimes)
+  }
 </script>
 
 <div style="position: relative; width: 100%; height: 100%;">
@@ -415,6 +469,14 @@
   <Settings bind:this={settingsComp} />
   <ChartPicker bind:this={chartPickerComp} bind:isOpen={chartPickerOpen} onToggleProjection={handleToggleProjection} />
   <LayerVisibility bind:this={layerVisibilityComp} bind:isOpen={layerVisibilityOpen} />
+  {#each plotterExtensions.layout as placement (placement.instanceId)}
+    {@const manifest = plotterExtensions.extensions.get(placement.extensionId)}
+    {@const wDef = manifest?.widgets?.find(w => w.id === placement.widgetId)}
+    {#if manifest && wDef}
+      <WidgetPanel {placement} widgetDef={wDef} {mapControl} {panelControl} {relay} />
+    {/if}
+  {/each}
+  <ExtPanel {mapControl} {panelControl} {relay} />
 
   <!-- Consolidated map toolbar -->
   <div class="map-toolbar">
@@ -438,6 +500,20 @@
       title="Layer visibility"
       onclick={handleOpenLayerVisibility}
     ><FaIcon icon={faEye} /></button>
+    {#each [...plotterExtensions.extensions.entries()] as [extId, manifest] (extId)}
+      {#each (manifest.buttons ?? []) as btn (btn.id)}
+        {#if btn.slot === 'mapToolbar'}
+          {@const op = plotterExtensions.openPanel}
+          <button
+            class="map-btn"
+            class:map-btn--open={op !== null && op.extensionId === extId && !op.isConfig}
+            title={btn.title}
+            onclick={() => { handleExtButton(extId, btn); }}
+          >{btn.icon?.slice(0, 3) ?? '⚙'}</button>
+        {/if}
+      {/each}
+    {/each}
+
 
     <div class="map-toolbar-divider"></div>
 

@@ -526,6 +526,27 @@
     }
   }
 
+  /** Return the current map view for extension host API. */
+  export function getView(): { center: [number, number]; zoom: number; bounds: [number, number, number, number] } {
+    if (!map) return { center: [0, 0], zoom: 0, bounds: [0, 0, 0, 0] };
+    const c = map.getCenter();
+    const b = map.getBounds();
+    return {
+      center: [c.lng, c.lat],
+      zoom: map.getZoom(),
+      bounds: [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()],
+    };
+  }
+
+  /** Fly to a position, optionally changing zoom. Used by extension map.center. */
+  export function flyTo(position: [number, number], zoom?: number): void {
+    map?.flyTo({ center: position, ...(zoom !== undefined ? { zoom } : {}) });
+  }
+
+  /** Fit the map to a bounding box [west, south, east, north]. Used by extension map.fitBounds. */
+  export function fitBounds(bounds: [number, number, number, number]): void {
+    map?.fitBounds([[bounds[0], bounds[1]], [bounds[2], bounds[3]]], { padding: 20 });
+  }
 
   /** Add a new ruler in the lower third of the screen, endpoints ¼ screen-width apart. */
   export function addRuler() {

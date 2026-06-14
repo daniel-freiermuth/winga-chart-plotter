@@ -2,7 +2,7 @@ const STORAGE_KEY = 'signalk-chart-settings';
 
 export type LineStyle = 'solid' | 'dashed' | 'dotted' | 'dash-dot';
 
-export type SettingsTab = 'connection' | 'vessel' | 'ais' | 'routes' | 'about';
+export type SettingsTab = 'connection' | 'vessel' | 'ais' | 'routes' | 'widgets' | 'about';
 
 export interface LineAppearance {
   color: string;
