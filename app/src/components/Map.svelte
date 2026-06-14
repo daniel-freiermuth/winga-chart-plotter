@@ -570,7 +570,7 @@
     mapContainer.style.cursor = hovering ? 'grab' : '';
     if (hovering) {
       map?.dragPan.disable();
-    } else if (!rulerDrag) {
+    } else if (!rulerDrag && !followMode.following) {
       map?.dragPan.enable();
     }
   }
@@ -662,7 +662,7 @@
     if (plannerDrag) {
       plannerDrag = null;
       mapContainer.style.cursor = isHoveringHandle ? 'grab' : '';
-      if (!isHoveringHandle) map?.dragPan.enable();
+      if (!isHoveringHandle && !followMode.following) map?.dragPan.enable();
       mapContainer.releasePointerCapture(e.pointerId);
       return;
     }
@@ -688,7 +688,7 @@
     rulers.snapEndpoint(rulerDrag.rulerId, rulerDrag.endpoint, snapId, snapLon, snapLat);
     rulerDrag = null;
     mapContainer.style.cursor = isHoveringHandle ? 'grab' : '';
-    if (!isHoveringHandle) map.dragPan.enable();
+    if (!isHoveringHandle && !followMode.following) map.dragPan.enable();
     mapContainer.releasePointerCapture(e.pointerId);
   }
 
