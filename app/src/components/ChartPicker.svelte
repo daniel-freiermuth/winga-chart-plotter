@@ -1,8 +1,17 @@
 <script lang="ts">
   import { charts } from '../stores/charts.svelte';
   import { baseLayers, BASE_LAYERS } from '../stores/baseLayers.svelte';
+  import { mapView } from '../stores/mapView.svelte';
+  import FaIcon from '../lib/FaIcon.svelte';
+  import { faGlobe, faMap } from '@fortawesome/free-solid-svg-icons';
 
-  let { isOpen = $bindable(false) }: { isOpen?: boolean } = $props();
+  let {
+    isOpen = $bindable(false),
+    onToggleProjection,
+  }: {
+    isOpen?: boolean;
+    onToggleProjection?: () => void;
+  } = $props();
   // Track pending manual URL inputs per chart id
   let manualInputs = $state<Record<string, string>>({});
 
@@ -22,6 +31,24 @@
     <div class="panel-header">
       <span class="panel-title">Layers</span>
       <button class="close-btn" onclick={close} title="Close">✕</button>
+    </div>
+
+    <div class="proj-bar">
+      <span class="proj-label">Projection</span>
+      <div class="proj-seg">
+        <button
+          class="proj-opt"
+          class:proj-opt--active={mapView.projection === 'mercator'}
+          title="Mercator projection"
+          onclick={() => { if (mapView.projection !== 'mercator') onToggleProjection?.(); }}
+        ><FaIcon icon={faMap} /> Mercator</button>
+        <button
+          class="proj-opt"
+          class:proj-opt--active={mapView.projection === 'globe'}
+          title="Globe projection"
+          onclick={() => { if (mapView.projection !== 'globe') onToggleProjection?.(); }}
+        ><FaIcon icon={faGlobe} /> Globe</button>
+      </div>
     </div>
 
     <ul class="chart-list">
@@ -112,6 +139,7 @@
         {/each}
       {/if}
     </ul>
+
   </div>
 {/if}
 
@@ -133,7 +161,7 @@
     padding: 0;
     min-width: 280px;
     max-width: 360px;
-    max-height: 70vh;
+    max-height: calc(100vh - 54px);
     display: flex;
     flex-direction: column;
     box-shadow: 0 8px 32px rgba(0,0,0,0.5);
@@ -300,5 +328,49 @@
   }
   @media (hover: hover) and (pointer: fine) {
     .wmts-showall-label:hover { color: #a0a0c0; }
+  }
+
+  .proj-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 16px;
+    border-bottom: 1px solid #2a2a3e;
+    flex-shrink: 0;
+  }
+  .proj-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: #888aaa;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  .proj-seg {
+    display: flex;
+    gap: 2px;
+    background: rgba(255,255,255,0.06);
+    border-radius: 6px;
+    padding: 2px;
+  }
+  .proj-opt {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    background: none;
+    border: none;
+    color: #888aaa;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 4px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    letter-spacing: 0.03em;
+  }
+  .proj-opt--active {
+    background: rgba(255,255,255,0.12);
+    color: white;
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .proj-opt:not(.proj-opt--active):hover { color: #ccccee; }
   }
 </style>

@@ -4,7 +4,7 @@
   import FaIcon from './lib/FaIcon.svelte';
   import {
     faGear, faLayerGroup, faEye, faLocationCrosshairs, faRuler, faPencil,
-    faGlobe, faMap, faExpand, faCompress,
+    faExpand, faCompress,
   } from '@fortawesome/free-solid-svg-icons';
   import { routePlanner } from './stores/routePlanner.svelte';
   import { waypoints } from './stores/waypoints.svelte';
@@ -413,7 +413,7 @@
 <div style="position: relative; width: 100%; height: 100%;">
   <Map bind:this={mapComp} openSettings={handleOpenSettings} />
   <Settings bind:this={settingsComp} />
-  <ChartPicker bind:this={chartPickerComp} bind:isOpen={chartPickerOpen} />
+  <ChartPicker bind:this={chartPickerComp} bind:isOpen={chartPickerOpen} onToggleProjection={handleToggleProjection} />
   <LayerVisibility bind:this={layerVisibilityComp} bind:isOpen={layerVisibilityOpen} />
 
   <!-- Consolidated map toolbar -->
@@ -438,12 +438,6 @@
       title="Layer visibility"
       onclick={handleOpenLayerVisibility}
     ><FaIcon icon={faEye} /></button>
-
-    <button
-      class="map-btn"
-      title="Switch to {mapView.projection === 'mercator' ? 'Globe' : 'Mercator'}"
-      onclick={handleToggleProjection}
-    ><FaIcon icon={mapView.projection === 'mercator' ? faGlobe : faMap} /></button>
 
     <div class="map-toolbar-divider"></div>
 
