@@ -77,6 +77,7 @@ export interface SettingsData {
   signalkProtocol: 'ws' | 'wss';
   signalkHost: string;
   signalkPort: number;
+  useGeoLocation: boolean;
   appearance: AppearanceSettings;
   targetFps: number;
   resourcePollIntervalSeconds: number;
@@ -84,6 +85,7 @@ export interface SettingsData {
 
 const DEFAULTS: SettingsData = {
   ...detectSignalkOrigin(),
+  useGeoLocation: false,
   targetFps: 60,
   resourcePollIntervalSeconds: 5,
   appearance: {
@@ -181,6 +183,7 @@ function load(): SettingsData {
         return {
           ...DEFAULTS, ...p,
           ...normalizedConn,
+          useGeoLocation: typeof p.useGeoLocation === 'boolean' ? p.useGeoLocation : DEFAULTS.useGeoLocation,
           targetFps: typeof p.targetFps === 'number' && p.targetFps > 0 ? p.targetFps : DEFAULTS.targetFps,
           resourcePollIntervalSeconds: typeof p.resourcePollIntervalSeconds === 'number' && p.resourcePollIntervalSeconds > 0 ? p.resourcePollIntervalSeconds : DEFAULTS.resourcePollIntervalSeconds,
           appearance: {
@@ -213,11 +216,17 @@ function load(): SettingsData {
 
 function createSettings() {
   const data = $state<SettingsData>(load());
+  let geoError    = $state<string | null>(null);
+  let geoAccuracy = $state<number | null>(null); // metres, null = no fix yet
 
   return {
     get protocol(): 'ws' | 'wss' { return data.signalkProtocol; },
     get host(): string            { return data.signalkHost; },
     get port(): number            { return data.signalkPort; },
+    get useGeoLocation(): boolean { return data.useGeoLocation; },
+    get geoError(): string | null { return geoError; },
+    /** Current position accuracy in metres. null = no fix yet. */
+    get geoAccuracy(): number | null { return geoAccuracy; },
     get appearance(): AppearanceSettings { return data.appearance; },
     get targetFps(): number       { return data.targetFps; },
     get resourcePollIntervalSeconds(): number { return data.resourcePollIntervalSeconds; },
@@ -238,10 +247,20 @@ function createSettings() {
       data.signalkProtocol = conn.signalkProtocol;
       data.signalkHost = conn.signalkHost;
       data.signalkPort = conn.signalkPort;
+      if (next.useGeoLocation  !== undefined) {
+        data.useGeoLocation = next.useGeoLocation;
+        if (next.useGeoLocation) { geoError = null; geoAccuracy = null; }
+      }
       if (next.appearance      !== undefined) data.appearance      = next.appearance;
       if (next.targetFps       !== undefined) data.targetFps       = next.targetFps;
       if (next.resourcePollIntervalSeconds !== undefined) data.resourcePollIntervalSeconds = next.resourcePollIntervalSeconds;
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    },
+    setGeoError(msg: string | null) {
+      geoError = msg;
+    },
+    setGeoAccuracy(metres: number | null) {
+      geoAccuracy = metres;
     },
     setTargetFps(fps: number) {
       data.targetFps = fps;
