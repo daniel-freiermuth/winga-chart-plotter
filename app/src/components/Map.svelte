@@ -880,8 +880,8 @@
           interface MidDatum { ruler: Ruler; lon: number; lat: number }
 
           // Exact GC midpoint — land on the line, not the chord.
-          // Omit entries where the two handles are <100px apart (label would overlap handles).
-          const LABEL_MIN_PX = 100;
+          // Omit entries where the two handles are <200px apart (label would overlap handles).
+          const LABEL_MIN_PX = 200;
           const midData: MidDatum[] = currentRulers.flatMap(r => {
             if (map) {
               const pA = map.project([r.a.lon, r.a.lat]);
@@ -967,7 +967,7 @@
 
             // Build per-segment label data: midpoint + bearing + distance for each leg.
             interface PlannerLabelDatum { lon: number; lat: number; text: string }
-            const LABEL_MIN_PX = 60;
+            const LABEL_MIN_PX = 150;
             const segmentLabels: PlannerLabelDatum[] = [];
             const paths: [number, number][][] = [];
 
