@@ -3468,7 +3468,9 @@
     font-weight: 600;
     transition: background 0.15s;
   }
-  .ruler-popup-remove:hover { background: #c53030; }
+  @media (hover: hover) and (pointer: fine) {
+    .ruler-popup-remove:hover { background: #c53030; }
+  }
 
   .north-indicator {
     position: absolute;
@@ -3482,9 +3484,11 @@
     border-radius: 50%;
     transition: opacity 0.15s ease;
   }
-  .north-indicator:hover { opacity: 0.8; }
-  /* circle fill is set inline; darken on hover via brightness filter */
-  .north-indicator:hover svg { filter: brightness(1.25); }
+  @media (hover: hover) and (pointer: fine) {
+    .north-indicator:hover { opacity: 0.8; }
+    /* circle fill is set inline; darken on hover via brightness filter */
+    .north-indicator:hover svg { filter: brightness(1.25); }
+  }
 
   :global(.ais-popup) {
     font-family: system-ui, sans-serif;
@@ -3539,8 +3543,10 @@
     border-radius: 4px;
     background: rgba(96,165,250,0.1);
   }
-  :global(.ais-links a:hover) {
-    background: rgba(96,165,250,0.2);
+  @media (hover: hover) and (pointer: fine) {
+    :global(.ais-links a:hover) {
+      background: rgba(96,165,250,0.2);
+    }
   }
   :global(.maplibregl-popup-content) {
     background: #1e1e2e;
@@ -3562,9 +3568,11 @@
     transition: background 0.12s;
     white-space: nowrap;
   }
-  :global(.ais-disambig-item:hover) {
-    background: rgba(96, 165, 250, 0.18);
-    color: #93c5fd;
+  @media (hover: hover) and (pointer: fine) {
+    :global(.ais-disambig-item:hover) {
+      background: rgba(96, 165, 250, 0.18);
+      color: #93c5fd;
+    }
   }
   :global(.maplibregl-popup-tip) { border-top-color: #1e1e2e; }
   :global(.maplibregl-popup-close-button) { color: #888; font-size: 16px; }
@@ -3584,9 +3592,11 @@
     white-space: nowrap;
     text-align: center;
   }
-  :global(.vessel-self-settings-btn:hover),
-  :global(.popup-settings-btn:hover) {
-    background: rgba(96,165,250,0.28);
+  @media (hover: hover) and (pointer: fine) {
+    :global(.vessel-self-settings-btn:hover),
+    :global(.popup-settings-btn:hover) {
+      background: rgba(96,165,250,0.28);
+    }
   }
   :global(.popup-settings-btn:disabled) {
     opacity: 0.45;
@@ -3652,8 +3662,21 @@
     align-items: center;
     justify-content: center;
   }
-  :global(.zoom-ctrl-btn:hover) { background: rgba(40, 40, 80, 0.9); }
+  @media (hover: hover) and (pointer: fine) {
+    :global(.zoom-ctrl-btn:hover) { background: rgba(40, 40, 80, 0.9); }
+  }
   :global(.zoom-ctrl-btn:active) { background: rgba(60, 60, 120, 0.95); }
+  /* MapLibre's own CSS applies:
+   *   @media (hover:hover) { .maplibregl-ctrl button:not(:disabled):hover { background-color: rgba(0,0,0,.05) } }
+   * That rule has specificity 0,3,1 — higher than our .zoom-ctrl-btn:hover (0,2,0) — and only
+   * guards on hover:hover, not pointer:fine. So on touch devices that still report hover:hover
+   * (e.g. phones with a stylus) it fires and makes the button transparent. We counter it with
+   * the same specificity (0,3,1) scoped to coarse/no-hover devices so source-order gives us the win. */
+  @media (hover: none), (pointer: coarse) {
+    :global(.maplibregl-ctrl button.zoom-ctrl-btn:hover) {
+      background: rgba(0, 0, 0, 0.7);
+    }
+  }
 
   .zoom-debug {
     position: absolute;

@@ -164,7 +164,9 @@
     font-size: 14px;
     padding: 0 2px;
   }
-  .close-btn:hover { color: white; }
+  @media (hover: hover) and (pointer: fine) {
+    .close-btn:hover { color: white; }
+  }
 
   .hint-row {
     font-size: 12px;
@@ -237,7 +239,9 @@
     cursor: pointer;
     white-space: nowrap;
   }
-  .wmts-apply:hover { background: #1d4ed8; }
+  @media (hover: hover) and (pointer: fine) {
+    .wmts-apply:hover { background: #1d4ed8; }
+  }
   .wmts-ok {
     font-size: 11px;
     color: #34d399;
@@ -259,7 +263,9 @@
     margin-top: 2px;
     align-self: flex-start;
   }
-  .wmts-clear:hover { color: #f87171; border-color: #f87171; }
+  @media (hover: hover) and (pointer: fine) {
+    .wmts-clear:hover { color: #f87171; border-color: #f87171; }
+  }
 
   .wmts-layer-row {
     display: flex;
@@ -292,5 +298,7 @@
     white-space: nowrap;
     flex-shrink: 0;
   }
-  .wmts-showall-label:hover { color: #a0a0c0; }
+  @media (hover: hover) and (pointer: fine) {
+    .wmts-showall-label:hover { color: #a0a0c0; }
+  }
 </style>

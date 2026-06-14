@@ -95,7 +95,9 @@
     font-size: 14px;
     padding: 0 2px;
   }
-  .close-btn:hover { color: white; }
+  @media (hover: hover) and (pointer: fine) {
+    .close-btn:hover { color: white; }
+  }
 
   .layer-list {
     list-style: none;

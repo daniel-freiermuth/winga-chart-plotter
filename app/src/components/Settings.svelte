@@ -710,7 +710,9 @@
   .about-desc { font-size: 13px; color: #a0a0c0; margin: 0 0 20px; }
   .about-links { display: flex; gap: 16px; justify-content: center; }
   .about-links a { color: #4a6cf7; font-size: 13px; text-decoration: none; }
-  .about-links a:hover { text-decoration: underline; }
+  @media (hover: hover) and (pointer: fine) {
+    .about-links a:hover { text-decoration: underline; }
+  }
 
   .toggle { display: inline-flex; align-items: center; cursor: pointer; flex-shrink: 0; }
   .toggle input { position: absolute; opacity: 0; width: 0; height: 0; }

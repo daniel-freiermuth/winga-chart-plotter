@@ -596,12 +596,18 @@
     min-width: 36px;
     text-align: center;
   }
-  .map-btn:hover:not(:disabled)  { background: rgba(40,40,80,0.9); }
+  @media (hover: hover) and (pointer: fine) {
+    .map-btn:hover:not(:disabled)  { background: rgba(40,40,80,0.9); }
+  }
   .map-btn:disabled              { opacity: 0.35; cursor: default; }
   .map-btn--active               { background: rgba(255,255,255,0.9); color: #111827; }
-  .map-btn--active:hover:not(:disabled) { background: rgba(220,220,240,0.95); }
+  @media (hover: hover) and (pointer: fine) {
+    .map-btn--active:hover:not(:disabled) { background: rgba(220,220,240,0.95); }
+  }
   .map-btn--open                 { background: rgba(80,100,140,0.85); border-bottom: 2px solid rgba(150,200,255,0.8); }
-  .map-btn--open:hover:not(:disabled)  { background: rgba(90,115,160,0.9); }
+  @media (hover: hover) and (pointer: fine) {
+    .map-btn--open:hover:not(:disabled)  { background: rgba(90,115,160,0.9); }
+  }
   /* Label-only buttons (rotation mode): fixed width so the toolbar doesn't jump */
   .map-btn--label                { font-size: 12px; font-weight: 700; letter-spacing: 0.03em; width: 40px; display: flex; align-items: center; justify-content: center; padding-left: 0; padding-right: 0; }
 
@@ -642,6 +648,8 @@
     justify-content: center;
   }
   .mob-btn svg { width: 100%; height: 100%; display: block; }
-  .mob-btn:hover { background: #991b1b; transform: scale(1.04); }
+  @media (hover: hover) and (pointer: fine) {
+    .mob-btn:hover { background: #991b1b; transform: scale(1.04); }
+  }
   .mob-btn:active { transform: scale(0.97); }
 </style>
