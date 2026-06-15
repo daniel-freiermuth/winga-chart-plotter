@@ -66,7 +66,7 @@ Chrome on Android doesn't seem to like the shaders by deck.gl. After closing the
 ### Game changers
 - Highly customizable appearance
 - WebGL rendering
-- Lookahead by move and lock
+- Pin vessel position on screen
 - Multiple, permanent and sticky rulers. Like the one in Navionics, but more.
 
 ### Quality of life
