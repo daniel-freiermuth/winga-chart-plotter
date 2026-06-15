@@ -3392,16 +3392,23 @@
       });
     }
 
-    // After any zoom NOT from our wheel handler (buttons, touch pinch, keyboard,
-    // double-click), re-anchor the vessel to its pinned screen pixel.
+    // After any external zoom (scroll wheel, double-click, gesture), re-anchor
+    // the vessel to its pinned screen pixel.
+    // Re-entry guard: in globe projection easeTo({ center, offset }) internally
+    // adjusts zoom to compensate for globe curvature at the new latitude, which
+    // fires another zoomend → infinite recursion without this flag.
+    let reanchoring = false;
     function onZoomEnd(): void {
       if (scrollTimer !== null) return; // our own scroll animation is still active
+      if (reanchoring) return;
       const pos = get(vesselState).position;
       if (!pos || !map) return;
       const W = mapContainer.clientWidth;
       const H = mapContainer.clientHeight;
       const offset: [number, number] = [_centerOffset.left * W / 2, _centerOffset.top * H / 2];
+      reanchoring = true;
       map.easeTo({ center: [pos.longitude, pos.latitude], offset, duration: 0 });
+      reanchoring = false;
     }
 
     mapContainer.addEventListener('wheel', onWheel, { passive: false });
