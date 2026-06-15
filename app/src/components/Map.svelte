@@ -3194,13 +3194,20 @@
         const newBearing = map.getBearing() + dAngle;
         const newPitch   = Math.max(0, Math.min(map.getMaxPitch(), map.getPitch() - pitchDelta * 0.5));
         const pos        = get(vesselState).position;
-        const around: [number, number] | undefined = pos ? [pos.longitude, pos.latitude] : undefined;
+
+        // Use center+offset instead of `around` to keep the vessel at its pinned
+        // screen position. `around` triggers _calcMatrices → calcMatrices → _calcMatrices
+        // infinite recursion in MapLibre's globe projection; center+offset uses
+        // the same code path as the follow-mode effect and has no such issue.
+        const W   = mapContainer.clientWidth;
+        const H   = mapContainer.clientHeight;
+        const offset: [number, number] = [_centerOffset.left * W / 2, _centerOffset.top * H / 2];
 
         map.easeTo({
           zoom:    newZoom,
           bearing: newBearing,
           pitch:   newPitch,
-          ...(around ? { around } : {}),
+          ...(pos ? { center: [pos.longitude, pos.latitude] as [number, number], offset } : {}),
           duration: 0,
         });
       };
@@ -3388,7 +3395,10 @@
         // Use zoomTarget as base so rapid scroll accumulates correctly even while
         // a previous easeTo animation is still in flight.
         zoomTarget = (zoomTarget ?? map.getZoom()) + Math.log2(scale);
-        map.easeTo({ zoom: zoomTarget, around: [pos.longitude, pos.latitude], duration: 200 });
+        const W = mapContainer.clientWidth;
+        const H = mapContainer.clientHeight;
+        const offset: [number, number] = [_centerOffset.left * W / 2, _centerOffset.top * H / 2];
+        map.easeTo({ zoom: zoomTarget, center: [pos.longitude, pos.latitude], offset, duration: 200 });
       });
     }
 
