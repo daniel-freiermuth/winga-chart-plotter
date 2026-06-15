@@ -7,7 +7,7 @@
   import { vesselState, vesselPosition } from '../stores/vessel';
   import { settings, type LineAppearance, type LineStyle, type SettingsTab } from '../stores/settings.svelte';
   import { fpsStore } from '../stores/fps.svelte';
-  import { followMode } from '../stores/follow.svelte';
+  import { followMode, type FollowOffset } from '../stores/follow.svelte';
   import { rotateMode } from '../stores/rotateMode.svelte';
   import { charts } from '../stores/charts.svelte';
   import { baseLayers, BASE_LAYERS } from '../stores/baseLayers.svelte';
@@ -65,38 +65,35 @@
   // t 1, l 0 -> top middle
   // t 0, l 1 -> middle left
 
-  interface CameraOffset { top: number; left: number }
-  const ZERO_OFFSET: CameraOffset = { top: 0, left: 0 };
-
-  /** Computes MapLibre padding as fractions [0..1] of the viewport so that the vessel
-   *  appears at its current screen pixel when passed to easeTo/flyTo as pixel values.
-   *  Multiply top/bottom by H and left/right by W before passing to MapLibre. */
-  function calcVesselOffset(pos: { longitude: number; latitude: number }): CameraOffset {
-    if (!map) return ZERO_OFFSET;
+  /** Computes the vessel's screen position as viewport fractions in (-1, 1).
+   *  Multiply left by W/2, top by H/2 to get pixel offsets for easeTo/flyTo. */
+  function calcVesselOffset(pos: { longitude: number; latitude: number }): FollowOffset {
+    if (!map) return { left: 0, top: 0 };
     const W = mapContainer.clientWidth;
     const H = mapContainer.clientHeight;
     const px = map.project([pos.longitude, pos.latitude] as [number, number]);
     return {
-      left: px.x/W * 2 - 1,
-      top: px.y/H * 2 - 1,
+      left: px.x / W * 2 - 1,
+      top:  px.y / H * 2 - 1,
     };
   }
 
   export function flyToVessel() {
     if (followMode.following) {
-      _centerOffset = ZERO_OFFSET;
-      followMode.following = false;
+      followMode.offset = null;
       return;
     }
     const pos = get(vesselState).position;
     if (pos) {
-      const vesselOffset = calcVesselOffset(pos);
-      const isInView = Object.values(vesselOffset).every(o => o < 0.9 && o > -0.9);
-      _centerOffset = isInView ? vesselOffset : ZERO_OFFSET;
-    } else {
-      _centerOffset = ZERO_OFFSET;
+      const { left, top } = calcVesselOffset(pos);
+      const inView = Math.abs(left) < 0.9 && Math.abs(top) < 0.9;
+      followMode.offset = inView ? { left, top } : { left: 0, top: 0 };
+      // Seed the position deduplication cache atomically with the follow state.
+      // inView → vessel is already here, posChanged stays false on first tick.
+      // !inView → NaN forces posChanged true, triggering the re-centring flyTo.
+      _easedLon = inView ? pos.longitude : NaN;
+      _easedLat = inView ? pos.latitude  : NaN;
     }
-    followMode.following = true;
   }
   /** Zoom in one step, keeping the vessel at its current screen pixel when following. */
   export function zoomIn() {
@@ -161,11 +158,7 @@
   let _easedLon = NaN;
   let _easedLat = NaN;
   let _lastRm = '';
-  let _lastFollowing = false;
   let _lastNonFollowBearing: number | undefined = undefined;
-  // When follow is activated with the vessel already in view, stores the MapLibre center-offset
-  // that pins the vessel to its current screen pixel. 
-  let _centerOffset: CameraOffset = ZERO_OFFSET;
 
   // Own-vessel setData coalescing: multiple Signal K field updates (lat, lon, COG, SOG, heading)
   // arrive per epoch and each triggers the $effect. We batch them into one setData per rAF frame
@@ -3190,7 +3183,7 @@
         // the same code path as the follow-mode effect and has no such issue.
         const W   = mapContainer.clientWidth;
         const H   = mapContainer.clientHeight;
-        const offset: [number, number] = [_centerOffset.left * W / 2, _centerOffset.top * H / 2];
+        const offset: [number, number] = [followMode.offset!.left * W / 2, followMode.offset!.top * H / 2];
 
         map.easeTo({
           zoom:    newZoom,
@@ -3276,22 +3269,6 @@
     else if (rm === 'bearing' && pos !== null && route.nextPoint !== null) {
       bearing = gcBearingDeg(pos.longitude, pos.latitude, route.nextPoint.longitude, route.nextPoint.latitude);
     }
-
-    // Reset position cache when follow is re-enabled so the map re-centres immediately.
-    // In pinned mode, seed the cache instead so posChanged stays false on this first tick
-    // and we avoid a spurious flyTo (which would zoom out/in) at low zoom levels.
-    if (following && !_lastFollowing) {
-      const isPinned = _centerOffset !== ZERO_OFFSET;
-      if (isPinned && pos) {
-        _easedLon = pos.longitude;
-        _easedLat = pos.latitude;
-      } else {
-        _easedLon = NaN;
-        _easedLat = NaN;
-      }
-    }
-    _lastFollowing = following;
-
     const posChanged = pos !== null && (pos.longitude !== _easedLon || pos.latitude !== _easedLat);
     const rmChanged  = rm !== _lastRm;
     if (posChanged) { _easedLon = pos.longitude; _easedLat = pos.latitude; }
@@ -3301,8 +3278,8 @@
       const W = mapContainer.clientWidth;
       const H = mapContainer.clientHeight;
       const offset : [number, number] = [
-        _centerOffset.left * W/2,
-        _centerOffset.top * H/2,
+        followMode.offset!.left * W/2,
+        followMode.offset!.top * H/2,
       ];
       if (posChanged || rmChanged || rm === 'heading' || rm === 'cog') {
         const center = map.getCenter();
@@ -3386,7 +3363,7 @@
         zoomTarget = (zoomTarget ?? map.getZoom()) + Math.log2(scale);
         const W = mapContainer.clientWidth;
         const H = mapContainer.clientHeight;
-        const offset: [number, number] = [_centerOffset.left * W / 2, _centerOffset.top * H / 2];
+        const offset: [number, number] = [followMode.offset!.left * W / 2, followMode.offset!.top * H / 2];
         map.easeTo({ zoom: zoomTarget, center: [pos.longitude, pos.latitude], offset, duration: 0 });
       });
     }
@@ -3404,7 +3381,7 @@
       if (!pos || !map) return;
       const W = mapContainer.clientWidth;
       const H = mapContainer.clientHeight;
-      const offset: [number, number] = [_centerOffset.left * W / 2, _centerOffset.top * H / 2];
+      const offset: [number, number] = [followMode.offset!.left * W / 2, followMode.offset!.top * H / 2];
       reanchoring = true;
       map.easeTo({ center: [pos.longitude, pos.latitude], offset, duration: 0 });
       reanchoring = false;

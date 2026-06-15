@@ -536,7 +536,7 @@
       class="map-btn"
       class:map-btn--active={followMode.following}
       title={followMode.following ? 'Stop following vessel' : 'Follow vessel'}
-      disabled={!$vesselState.position}
+      disabled={!followMode.following && !$vesselState.position}
       onclick={handleFlyToVessel}
     ><FaIcon icon={faLocationCrosshairs} /></button>
 
