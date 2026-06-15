@@ -1408,6 +1408,13 @@
 
       mapZoom    = m.getZoom();
       mapBearing = m.getBearing();
+      // Re-apply the stored projection on every style (re)load.
+      // DEFAULT_STYLE hardcodes 'mercator'; setStyle() on chart-source switches
+      // also resets it. Without this, new layers render in Mercator while MapLibre
+      // still calculates globe coordinates, causing visible geometry mismatches.
+      // setProjection() also re-injects the cached globe correction if applicable.
+      setProjection(mapView.projection);
+
       mapLoaded  = true;
     }); // end style.load
 
