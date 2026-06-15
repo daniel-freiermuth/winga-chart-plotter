@@ -1105,17 +1105,6 @@
     map.on('moveend',   () => {
       _isInteracting = false;
     });
-    // User dragging the map cancels follow mode — but only when not in follow/lock mode.
-    // When following, dragPan is disabled so pan drags cannot fire; a dragstart in that
-    // state can only come from dragRotate (right-click / two-finger rotation), which is
-    // explicitly allowed while following. No camera operation here — any camera call on
-    // dragstart interferes with the drag gesture and requires a second grab.
-    map.on('dragstart', () => {
-      if (!rulerDrag && !followMode.following) {
-        _centerOffset = ZERO_OFFSET;
-        followMode.following = false;
-      }
-    });
 
     // Cursor feedback for interactive MapLibre layers.
     const routeClickLayers = ['route-full', 'route-leg', 'route-bearing', 'route-waypoints'];
