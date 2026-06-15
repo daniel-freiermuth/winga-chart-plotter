@@ -3398,7 +3398,7 @@
         const W = mapContainer.clientWidth;
         const H = mapContainer.clientHeight;
         const offset: [number, number] = [_centerOffset.left * W / 2, _centerOffset.top * H / 2];
-        map.easeTo({ zoom: zoomTarget, center: [pos.longitude, pos.latitude], offset, duration: 200 });
+        map.easeTo({ zoom: zoomTarget, center: [pos.longitude, pos.latitude], offset, duration: 0 });
       });
     }
 
