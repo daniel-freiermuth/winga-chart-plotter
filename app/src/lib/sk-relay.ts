@@ -73,7 +73,9 @@ export function createSkRelay(): SkRelay {
       reconnectTimer = null;
     }
 
-    const url = wsUrl.includes('?') ? `${wsUrl}&subscribe=none` : `${wsUrl}?subscribe=none`;
+    const parsed = new URL(wsUrl);
+    parsed.searchParams.set('subscribe', 'none');
+    const url = parsed.toString();
     ws = new WebSocket(url);
 
     ws.addEventListener('open', () => {
