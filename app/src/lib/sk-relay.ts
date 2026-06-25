@@ -1,3 +1,5 @@
+import { randomUuid } from './uuid';
+
 export type SkValueCallback = (path: string, value: unknown, timestamp: string) => void;
 
 export interface SkRelay {
@@ -137,7 +139,7 @@ export function createSkRelay(): SkRelay {
   }
 
   function subscribe(path: string, cb: SkValueCallback): string {
-    const subId = crypto.randomUUID();
+    const subId = randomUuid();
     subs.set(subId, { path, cb });
 
     const existing = pathSubs.get(path);

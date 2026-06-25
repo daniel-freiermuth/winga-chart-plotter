@@ -1,4 +1,5 @@
 import { SvelteMap, SvelteSet } from 'svelte/reactivity';
+import { randomUuid } from '../lib/uuid';
 
 // ── Manifest types ────────────────────────────────────────────────────────────
 
@@ -192,7 +193,7 @@ function createPlotterExtensions(): PlotterExtensions {
   // ── Layout helpers ─────────────────────────────────────────────────────────
 
   function addWidget(extensionId: string, widgetId: string): string {
-    const instanceId = crypto.randomUUID();
+    const instanceId = randomUuid();
     // Stagger so multiple widgets don't land exactly on top of each other.
     const n = layout.length % 6;
     layout = [...layout, { instanceId, extensionId, widgetId, x: 80 + n * 28, y: 80 + n * 28 }];
