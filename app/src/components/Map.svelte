@@ -31,7 +31,7 @@
   import { VesselIconLayer, ANCHOR_DOT_GEOMETRY, AGROUND_CIRCLE_GEOMETRY, MOORING_BARS_GEOMETRY, FISHING_GEAR_GEOMETRY, NUC_GEOMETRY, RESTRICTED_MANOEUVRING_GEOMETRY, DRAUGHT_GEOMETRY, MOB_GEOMETRY } from '../layers/VesselIconLayer';
   import { extrapolatePos } from '../lib/deadReckoning';
   import { SvelteMap, SvelteSet } from 'svelte/reactivity';
-  import { mapView } from '../stores/mapView.svelte';
+  import { mapView, loadSavedView, saveView } from '../stores/mapView.svelte';
   import { visibility } from '../stores/visibility.svelte';
 
   const { openSettings = () => { /* noop */ } }: { openSettings?: (tab: SettingsTab) => void } = $props();
@@ -153,6 +153,14 @@
   // movestart fires for both user gestures and programmatic easeTo/flyTo; originalEvent is only
   // present for gestures. moveend always fires, resetting the flag.
   let _isInteracting = false;
+  // True once the user has panned/zoomed/rotated the map by hand (gesture, not programmatic
+  // easeTo/flyTo) — for the lifetime of this page load, never reset. Gates the one-shot
+  // auto-fly-to-vessel below: once the user has shown intent to look elsewhere, never yank
+  // the camera out from under them again this session.
+  let _userHasInteracted = false;
+  // One-shot guard: fires at most once per page load, the first time a real Signal K
+  // position arrives while the user hasn't touched the map yet.
+  let _didAutoFlyToFirstFix = false;
 
   // Camera deduplication state: used to avoid redundant easeTo/flyTo calls.
   let _easedLon = NaN;
@@ -755,11 +763,14 @@
 
   onMount(() => {
     mapView.isFullscreen = !!document.fullscreenElement;
+    // Seed the camera from the last-persisted view instead of a hardcoded fallback (Oslo is
+    // only used the very first time the app ever runs — see loadSavedView()).
+    const savedView = loadSavedView();
     map = new maplibregl.Map({
       container: mapContainer,
       style: DEFAULT_STYLE,
-      center: [10.75, 59.91],
-      zoom: 10,
+      center: savedView.center,
+      zoom: savedView.zoom,
       maxPitch: 85,
       bearingSnap: 0,
       attributionControl: false,
@@ -1089,10 +1100,12 @@
     map.on('zoom',   () => { mapZoom    = map?.getZoom()    ?? mapZoom; });
     map.on('rotate', () => { mapBearing = map?.getBearing() ?? mapBearing; });
     // Track user interactions so programmatic easeTo calls don't interrupt gestures.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access
-    map.on('movestart', (e: any) => { if (e.originalEvent) _isInteracting = true; });
+    map.on('movestart', (e: { originalEvent?: unknown }) => {
+      if (e.originalEvent) { _isInteracting = true; _userHasInteracted = true; }
+    });
     map.on('moveend',   () => {
       _isInteracting = false;
+      if (map) { const c = map.getCenter(); saveView([c.lng, c.lat], map.getZoom()); }
     });
 
     // Cursor feedback for interactive MapLibre layers. The route-full/-leg/-bearing
@@ -3288,6 +3301,19 @@
     };
   });
 
+  // One-shot: fly to the vessel's first real position fix, but only if the user hasn't
+  // already panned/zoomed/rotated the map by hand and isn't already in follow mode. Center
+  // only (no zoom change) — same camera move as clicking "center on vessel" once, but never
+  // engages follow mode itself ("not lock"), so the user can immediately pan away again.
+  // Persisted-view restore (loadSavedView() in onMount) already avoided the old Oslo flash;
+  // this corrects that persisted/stale view to the boat's actual position once we know it.
+  $effect(() => {
+    const pos = $vesselPosition;
+    if (!map || !mapLoaded || !pos) return;
+    if (_didAutoFlyToFirstFix || _userHasInteracted || followMode.following) return;
+    _didAutoFlyToFirstFix = true;
+    map.flyTo({ center: [pos.longitude, pos.latitude] });
+  });
 
   // Follow + rotation mode: combined into one effect so we never issue two competing
   // easeTo/flyTo calls in the same reactive flush.
