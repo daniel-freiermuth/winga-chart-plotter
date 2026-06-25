@@ -4,8 +4,8 @@
   import 'maplibre-gl/dist/maplibre-gl.css';
   import type * as GeoJSON from 'geojson';
   import { get } from 'svelte/store';
-  import { vesselState, vesselPosition } from '../stores/vessel';
-  import { settings, type LineAppearance, type LineStyle, type SettingsTab } from '../stores/settings.svelte';
+  import { vesselState, vesselPosition, type VesselState } from '../stores/vessel';
+  import { settings, type LineAppearance, type LineStyle, type SettingsTab, type AppearanceSettings } from '../stores/settings.svelte';
   import { fpsStore } from '../stores/fps.svelte';
   import { followMode, type FollowOffset } from '../stores/follow.svelte';
   import { rotateMode } from '../stores/rotateMode.svelte';
@@ -160,14 +160,9 @@
   let _lastRm = '';
   let _lastNonFollowBearing: number | undefined = undefined;
 
-  // Own-vessel setData coalescing: multiple Signal K field updates (lat, lon, COG, SOG, heading)
-  // arrive per epoch and each triggers the $effect. We batch them into one setData per rAF frame
-  // so a burst of field updates causes exactly one MapLibre repaint.
-  let _vesselRafId: number | null = null;
-  let _vesselCancelFn: (() => void) | null = null;
-  let _pendingVesselSetData: (() => void) | null = null;
-
-  // Own vessel deck.gl layer group — rendered last (on top of all AIS layers).
+  // Own vessel deck.gl layer group (heading/COG/GC predictor lines + icon) — rendered last
+  // (on top of all AIS layers and the course/route lines) so it's never obscured.
+  // Rebuilt synchronously on every position tick — see buildOwnVesselLayers().
   let ownVesselLayerGroup: Layer[] = [];
 
   // AIS-label setData throttle: individual vessel updates trigger rebuilds of the whole
@@ -229,11 +224,7 @@
     }
   }
 
-  const COG_SOURCE      = 'vessel-cog';
-  const HDG_SOURCE      = 'vessel-hdg';
-  const GC_SOURCE       = 'vessel-gc';
   const AIS_SOURCE      = 'ais-targets'; // kept for ais-label text layer
-  const ROUTE_LINE_SRC  = 'route-lines';
   const ROUTE_WPT_SRC   = 'route-waypoints';
   const ALL_ROUTES_SRC   = 'all-routes';
   const ALL_WAYPOINTS_SRC = 'all-waypoints';
@@ -729,6 +720,11 @@
   let aisLayerGroup: Layer[] = [];
   let rulerLayerGroup: Layer[] = [];
   let plannerLayerGroup: Layer[] = [];
+  // Active route lines (full polyline, active leg, bearing) — deck.gl, not MapLibre.
+  // MapLibre layers render below the deck.gl overlay's own canvas (interleaved: false,
+  // see overlay setup), so a MapLibre line can never sit on top of an AIS target or the
+  // own-vessel icon. Composed into flushLayers() like the other groups below.
+  let courseLayerGroup: Layer[] = [];
 
   function flushLayers() {
     // Read visibility without establishing reactive dependency — callers should not
@@ -738,7 +734,7 @@
     const aisFiltered = (showVessels && showPredictors)
       ? aisLayerGroup
       : aisLayerGroup.filter(l => (l instanceof PathLayer ? (showVessels && showPredictors) : showVessels));
-    overlay?.setProps({ layers: [...aisFiltered, ...rulerLayerGroup, ...plannerLayerGroup, ...ownVesselLayerGroup] });
+    overlay?.setProps({ layers: [...aisFiltered, ...courseLayerGroup, ...rulerLayerGroup, ...plannerLayerGroup, ...ownVesselLayerGroup] });
   }
 
   let rafId = 0;
@@ -1099,12 +1095,11 @@
       _isInteracting = false;
     });
 
-    // Cursor feedback for interactive MapLibre layers.
-    const routeClickLayers = ['route-full', 'route-leg', 'route-bearing', 'route-waypoints'];
-    for (const id of routeClickLayers) {
-      map.on('mouseenter', id, () => { if (map) map.getCanvas().style.cursor = 'pointer'; });
-      map.on('mouseleave', id, () => { if (map) map.getCanvas().style.cursor = ''; });
-    }
+    // Cursor feedback for interactive MapLibre layers. The route-full/-leg/-bearing
+    // lines moved to deck.gl (see buildCourseLayers()) and don't get hover-cursor
+    // feedback here — only the click handler below picks them.
+    map.on('mouseenter', 'route-waypoints', () => { if (map) map.getCanvas().style.cursor = 'pointer'; });
+    map.on('mouseleave', 'route-waypoints', () => { if (map) map.getCanvas().style.cursor = ''; });
     map.on('mouseenter', 'all-routes-line',      () => { if (map) map.getCanvas().style.cursor = 'pointer'; });
     map.on('mouseleave', 'all-routes-line',      () => { if (map) map.getCanvas().style.cursor = ''; });
     map.on('mouseenter', 'all-waypoints-circle', () => { if (map) map.getCanvas().style.cursor = 'pointer'; });
@@ -1170,9 +1165,10 @@
       const waypointFeats = m.queryRenderedFeatures(e.point, { layers: ['all-waypoints-circle'] });
       if (waypointFeats.length > 0) { showWaypointPopup(e.lngLat, waypointFeats[0]!); return; }
 
-      // 6. Active route layers (MapLibre).
-      const activeRouteFeats = m.queryRenderedFeatures(e.point, { layers: routeClickLayers });
-      if (activeRouteFeats.length > 0) { showActiveRoutePopup(e.lngLat); return; }
+      // 6. Active route: deck.gl lines (full/leg/bearing) + MapLibre waypoint markers.
+      const routeLinePick = overlay.pickObject({ x, y, radius: 6, layerIds: ['route-full', 'route-leg', 'route-bearing'] });
+      const routeWptFeats = m.queryRenderedFeatures(e.point, { layers: ['route-waypoints'] });
+      if (routeLinePick?.object || routeWptFeats.length > 0) { showActiveRoutePopup(e.lngLat); return; }
 
       // 7. All routes on map (MapLibre).
       const allRouteFeats = m.queryRenderedFeatures(e.point, { layers: ['all-routes-line'] });
@@ -1252,11 +1248,7 @@
       if (!m) return;
       const ap = settings.appearance;
 
-      if (!m.getSource(COG_SOURCE))    m.addSource(COG_SOURCE,    { type: 'geojson', data: EMPTY_FC });
-      if (!m.getSource(HDG_SOURCE))    m.addSource(HDG_SOURCE,    { type: 'geojson', data: EMPTY_FC });
-      if (!m.getSource(GC_SOURCE))     m.addSource(GC_SOURCE,     { type: 'geojson', data: EMPTY_FC });
       if (!m.getSource(AIS_SOURCE))    m.addSource(AIS_SOURCE,    { type: 'geojson', data: EMPTY_FC }); // for ais-label only
-      if (!m.getSource(ROUTE_LINE_SRC)) m.addSource(ROUTE_LINE_SRC, { type: 'geojson', data: EMPTY_FC });
       if (!m.getSource(ROUTE_WPT_SRC))  m.addSource(ROUTE_WPT_SRC,  { type: 'geojson', data: EMPTY_FC });
       if (!m.getSource(ALL_ROUTES_SRC))   m.addSource(ALL_ROUTES_SRC,   { type: 'geojson', data: EMPTY_FC });
       if (!m.getSource(ALL_WAYPOINTS_SRC)) m.addSource(ALL_WAYPOINTS_SRC, { type: 'geojson', data: EMPTY_FC });
@@ -1264,10 +1256,6 @@
       if (!m.getSource(TRACK_OVERFLOW_SOURCE)) m.addSource(TRACK_OVERFLOW_SOURCE, { type: 'geojson', data: EMPTY_FC });
       if (!m.getSource(AIS_TRACK_SOURCE))          m.addSource(AIS_TRACK_SOURCE,          { type: 'geojson', data: EMPTY_FC, lineMetrics: true });
       if (!m.getSource(AIS_TRACK_OVERFLOW_SOURCE)) m.addSource(AIS_TRACK_OVERFLOW_SOURCE, { type: 'geojson', data: EMPTY_FC });
-
-      // Vessel + AIS layers must be added first because route layers are inserted before them.
-      if (!m.getLayer('vessel-gc-line')) m.addLayer({ id: 'vessel-gc-line', type: 'line', source: GC_SOURCE,
-        paint: { 'line-color': ap.gc.color, 'line-width': ap.gc.width, ...(dashArray(ap.gc.style, ap.gc.width) !== null && { 'line-dasharray': dashArray(ap.gc.style, ap.gc.width) as number[] }) } });
 
       // AIS vessel icon, hull, and COG line are rendered by deck.gl (see $effect below).
       // Only the text label stays in MapLibre for quality text rendering + collision detection.
@@ -1285,16 +1273,11 @@
         paint: { 'text-color': settings.appearance.ais.vesselColor, 'text-halo-color': '#000', 'text-halo-width': 1 },
       });
 
-      if (!m.getLayer('vessel-cog-line')) m.addLayer({ id: 'vessel-cog-line', type: 'line', source: COG_SOURCE,
-        paint: { 'line-color': ap.cog.color, 'line-width': ap.cog.width, ...(dashArray(ap.cog.style, ap.cog.width) !== null && { 'line-dasharray': dashArray(ap.cog.style, ap.cog.width) as number[] }) } });
-
-      if (!m.getLayer('vessel-hdg-line')) m.addLayer({ id: 'vessel-hdg-line', type: 'line', source: HDG_SOURCE,
-        paint: { 'line-color': ap.heading.color, 'line-width': ap.heading.width } });
-
-      // Own vessel icon is rendered by deck.gl (see ownVesselLayerGroup / position $effect below).
+      // Own vessel icon and heading/COG/GC predictor lines are rendered by deck.gl
+      // (see buildOwnVesselLayers()) — MapLibre layers can't render above the deck.gl
+      // overlay's own canvas, so they could never sit on top of an AIS target.
 
       // Track layer — below all vessel/route layers, above chart tiles.
-      // Inserted before 'vessel-gc-line' first so subsequent route insertions land above it.
       // AIS track is below the own-vessel track so own vessel always reads clearly on top.
       if (!m.getLayer('ais-track-overflow-line')) m.addLayer({
         id: 'ais-track-overflow-line', type: 'line', source: AIS_TRACK_OVERFLOW_SOURCE,
@@ -1304,7 +1287,7 @@
           'line-width':   ap.ais.track.width,
           'line-opacity': ap.ais.track.show ? 1 : 0,
         },
-      }, 'vessel-gc-line');
+      });
       if (!m.getLayer('ais-track-line')) m.addLayer({
         id: 'ais-track-line', type: 'line', source: AIS_TRACK_SOURCE,
         layout: { 'line-cap': 'round', 'line-join': 'round' },
@@ -1313,7 +1296,7 @@
           'line-width':    ap.ais.track.width,
           'line-opacity':  ap.ais.track.show ? 1 : 0,
         },
-      }, 'vessel-gc-line');
+      });
       // Overflow track: older segments that fall outside MapLibre's ±540° rendering window,
       // shifted by 720° multiples back into view. Rendered below the main track (no gradient).
       if (!m.getLayer('vessel-track-overflow-line')) m.addLayer({
@@ -1324,7 +1307,7 @@
           'line-width':   ap.track.width,
           'line-opacity': 1,
         },
-      }, 'vessel-gc-line');
+      });
       // Uses line-gradient (requires lineMetrics: true on source) for solid style fade.
       // line-gradient and line-dasharray are mutually exclusive in MapLibre, so non-solid
       // styles fall back to plain line-color (no fade, but dashes render correctly).
@@ -1336,35 +1319,18 @@
           'line-width':    ap.track.width,
           'line-opacity':  1,
         },
-      }, 'vessel-gc-line');
+      });
 
-      // Route layers — inserted before the anchor vessel layers so they render below them.
-      // All server routes (background) — subtle, clickable via appearance settings.
+      // Route layers — appended above the track layers (added just above) and below
+      // anything added after them in this same handler.
       if (!m.getLayer('all-routes-line')) m.addLayer({
         id: 'all-routes-line', type: 'line', source: ALL_ROUTES_SRC,
         paint: { 'line-color': '#7cc8e8', 'line-width': 1.5, 'line-opacity': 0.45 },
-      }, 'vessel-gc-line');
+      });
 
-      // Full planned route: dashed magenta line.
-      if (!m.getLayer('route-full')) m.addLayer({
-        id: 'route-full', type: 'line', source: ROUTE_LINE_SRC,
-        filter: ['==', ['get', 'kind'], 'full'],
-        paint: { 'line-color': '#e040fb', 'line-width': 2, 'line-dasharray': [6, 4], 'line-opacity': 0.65 },
-      }, 'vessel-gc-line');
-
-      // Active leg: previousPoint → nextPoint (planned segment).
-      if (!m.getLayer('route-leg')) m.addLayer({
-        id: 'route-leg', type: 'line', source: ROUTE_LINE_SRC,
-        filter: ['==', ['get', 'kind'], 'leg'],
-        paint: { 'line-color': '#e040fb', 'line-width': 2.5 },
-      }, 'vessel-gc-line');
-
-      // Bearing line: vessel → nextPoint (where to actually steer), bright solid.
-      if (!m.getLayer('route-bearing')) m.addLayer({
-        id: 'route-bearing', type: 'line', source: ROUTE_LINE_SRC,
-        filter: ['==', ['get', 'kind'], 'bearing'],
-        paint: { 'line-color': '#ff6d00', 'line-width': 2, 'line-dasharray': [4, 3] },
-      }, 'vessel-gc-line');
+      // Full route polyline, active leg, and bearing line are deck.gl PathLayers
+      // (see buildCourseLayers()) — not MapLibre — so they render above AIS targets
+      // and the own-vessel icon instead of underneath the deck.gl overlay's canvas.
 
       // Waypoint markers: above route lines, below deck.gl layers (own vessel + AIS).
       if (!m.getLayer('route-waypoints')) m.addLayer({
@@ -1451,7 +1417,6 @@
   onDestroy(() => {
     cancelAnimationFrame(rafId);
     clearTimeout(rafId);
-    _vesselCancelFn?.();
     overlay?.finalize();
     document.removeEventListener('fullscreenchange', onFsChange);
     mapContainer.removeEventListener('pointerdown',   handleRulerPointerDown, { capture: true });
@@ -1975,11 +1940,19 @@
         }
       }
       if (!m.getLayer(layerId)) {
+        // Anchor below 'ais-track-overflow-line': chart layers are added by this effect
+        // long after the initial style.load (e.g. on first chart selection, or any later
+        // switch), well after route/track layers already exist. addLayer(layer, beforeId)
+        // always inserts directly below beforeId, so anchoring on a layer added earlier in
+        // style.load (e.g. the own-vessel predictor lines, which are deck.gl now anyway)
+        // would stack new chart tiles above tracks/routes. 'ais-track-overflow-line' is the
+        // documented bottom of the MapLibre track/route stack (see style.load above), so
+        // chart layers added here always render below tracks, routes, and waypoint markers.
         if (chart.format === 'pbf') {
           const sourceLayer = chart.layers?.[0] ?? id;
-          m.addLayer({ id: layerId, type: 'fill', source: sourceId, 'source-layer': sourceLayer }, 'vessel-gc-line');
+          m.addLayer({ id: layerId, type: 'fill', source: sourceId, 'source-layer': sourceLayer }, 'ais-track-overflow-line');
         } else {
-          m.addLayer({ id: layerId, type: 'raster', source: sourceId }, 'vessel-gc-line');
+          m.addLayer({ id: layerId, type: 'raster', source: sourceId }, 'ais-track-overflow-line');
         }
       }
     }
@@ -2632,22 +2605,119 @@
     flushLayers();
   });
 
+  /**
+   * Builds the own-vessel deck.gl layers: heading/COG/GC predictor lines plus the vessel
+   * icon. Rendered via deck.gl (not MapLibre) for the same reason as buildCourseLayers() —
+   * the deck.gl overlay (interleaved: false) always draws on its own canvas above MapLibre's,
+   * so a MapLibre predictor line could never be drawn on top of an AIS target.
+   * Pure function of its arguments — callers control what's tracked as an effect dependency.
+   * The position effect tracks $vesselState (60 Hz orientation ticks); the appearance effect
+   * must not, so it reads state/zoom/projection via untrack() and passes them in here instead.
+   */
+  function buildOwnVesselLayers(
+    ap: AppearanceSettings,
+    state: VesselState,
+    zoom: number,
+    projection: import('../stores/mapView.svelte').ProjectionId,
+  ): Layer[] {
+    const layers: Layer[] = [];
+    if (!state.position) return layers;
+    const { longitude, latitude } = state.position;
+
+    function lineDistM(line: LineAppearance, sogMs: number | null): number {
+      if (line.lengthUnit === 'nm')  return line.lengthValue * 1852;
+      if (line.lengthUnit === 'min') return sogMs !== null ? line.lengthValue * 60 * sogMs : 0;
+      // px → meters per pixel at current zoom & latitude (WebMercator, 512px tile)
+      const mpp = (Math.cos(latitude * Math.PI / 180) * 40075016.686) / (512 * Math.pow(2, zoom));
+      return line.lengthValue * mpp;
+    }
+
+    if (state.cog !== null) {
+      const cogDashProps = { getDashArray: lineStyleDash(ap.cog.style, ap.cog.width) };
+      layers.push(new PathLayer<[number, number][]>({
+        id: 'vessel-cog-line',
+        data: [rhumbCoords(longitude, latitude, state.cog, lineDistM(ap.cog, state.sog))],
+        getPath: d => d,
+        getColor: hexToRgba(ap.cog.color, 255),
+        getWidth: ap.cog.width,
+        ...cogDashProps,
+        widthUnits: 'pixels',
+        widthMinPixels: 1,
+        pickable: false,
+        extensions: [new PathStyleExtension({ dash: true })],
+      }));
+
+      const gcDashProps = { getDashArray: lineStyleDash(ap.gc.style, ap.gc.width) };
+      layers.push(new PathLayer<[number, number][]>({
+        id: 'vessel-gc-line',
+        data: [gcCoords(longitude, latitude, state.cog, lineDistM(ap.gc, state.sog))],
+        getPath: d => d,
+        getColor: hexToRgba(ap.gc.color, 255),
+        getWidth: ap.gc.width,
+        ...gcDashProps,
+        widthUnits: 'pixels',
+        widthMinPixels: 1,
+        pickable: false,
+        extensions: [new PathStyleExtension({ dash: true })],
+      }));
+    }
+
+    if (state.heading !== null) {
+      const hdgDashProps = { getDashArray: lineStyleDash(ap.heading.style, ap.heading.width) };
+      const project = projection === 'globe' ? gcCoords : rhumbCoords;
+      layers.push(new PathLayer<[number, number][]>({
+        id: 'vessel-hdg-line',
+        data: [project(longitude, latitude, state.heading, lineDistM(ap.heading, state.sog))],
+        getPath: d => d,
+        getColor: hexToRgba(ap.heading.color, 255),
+        getWidth: ap.heading.width,
+        ...hdgDashProps,
+        widthUnits: 'pixels',
+        widthMinPixels: 1,
+        pickable: false,
+        extensions: [new PathStyleExtension({ dash: true })],
+      }));
+    }
+
+    // Own vessel icon — rendered last (on top of its own predictor lines).
+    // VesselIconLayer handles globe mode, map-aligned rotation, and picking correctly.
+    const orientRad     = state.heading ?? state.cog ?? null;
+    const ownVesselColor = hexToRgba(ap.vesselColor, 255);
+    const ownVesselSize  = ap.vesselSize / 64;
+    layers.push(new VesselIconLayer<number>({
+      id: 'own-vessel-icon',
+      data: [0],
+      getPosition:    () => [longitude, latitude, 0],
+      getSog:         () => 0,
+      getCog:         () => 0,
+      getHeading:     () => orientRad ?? 0,
+      getRot:         () => 0,
+      getAgeAtUpload: () => 0,
+      getLength:      () => 0,
+      getColor:       () => ownVesselColor,
+      uploadTimestamp: 0,
+      selfAnimate: false,
+      settingsIconSize: ownVesselSize,
+      pickable: true,
+    }));
+
+    return layers;
+  }
   // Appearance-only effect: paint/layout properties that change only when settings change.
   // Deliberately does NOT read $vesselState so 60 Hz orientation updates don't trigger it.
   $effect(() => {
     const ap = settings.appearance;
     const ra = ap.route;
     if (!map || !mapLoaded) return;
-    map.setPaintProperty('vessel-gc-line',     'line-color',     ap.gc.color);
-    map.setPaintProperty('vessel-gc-line',     'line-width',     ap.gc.width);
-    map.setPaintProperty('vessel-gc-line',     'line-dasharray', dashArray(ap.gc.style, ap.gc.width) ?? undefined);
-    map.setPaintProperty('vessel-cog-line',    'line-color',     ap.cog.color);
-    map.setPaintProperty('vessel-cog-line',    'line-width',     ap.cog.width);
-    map.setPaintProperty('vessel-cog-line',    'line-dasharray', dashArray(ap.cog.style, ap.cog.width) ?? undefined);
-    map.setPaintProperty('vessel-hdg-line',    'line-color',     ap.heading.color);
-    map.setPaintProperty('vessel-hdg-line',    'line-width',     ap.heading.width);
-    map.setPaintProperty('vessel-hdg-line',    'line-dasharray', dashArray(ap.heading.style, ap.heading.width) ?? undefined);
-    // Own vessel icon size/color are handled reactively in the position $effect (deck.gl layer).
+    // vessel-gc/-cog/-hdg-line moved to deck.gl (see buildOwnVesselLayers()) since MapLibre
+    // layers can't render above the deck.gl overlay's own canvas. Reads $vesselState/zoom/
+    // projection untracked — only ap/ra are this effect's dependencies.
+    {
+      const { state, zoom, projection } = untrack(() => ({
+        state: $vesselState, zoom: mapZoom, projection: mapView.projection,
+      }));
+      ownVesselLayerGroup = buildOwnVesselLayers(ap, state, zoom, projection);
+    }
     // Track: solid style uses line-gradient for the fade effect (incompatible with line-dasharray).
     // Non-solid styles fall back to line-color + line-dasharray (no fade).
     if (ap.track.style === 'solid') {
@@ -2670,106 +2740,26 @@
     map.setPaintProperty('all-routes-line', 'line-width',     ra.allRoutes.width);
     map.setPaintProperty('all-routes-line', 'line-opacity',   0.55);
     map.setPaintProperty('all-routes-line', 'line-dasharray', dashArray(ra.allRoutes.style, ra.allRoutes.width) ?? undefined);
-    map.setPaintProperty('route-full',    'line-color',     ra.remaining.color);
-    map.setPaintProperty('route-full',    'line-width',     ra.remaining.width);
-    map.setPaintProperty('route-full',    'line-dasharray', dashArray(ra.remaining.style, ra.remaining.width) ?? undefined);
-    map.setPaintProperty('route-leg',     'line-color',     ra.segment.color);
-    map.setPaintProperty('route-leg',     'line-width',     ra.segment.width);
-    map.setPaintProperty('route-leg',     'line-dasharray', dashArray(ra.segment.style, ra.segment.width) ?? undefined);
-    map.setPaintProperty('route-bearing', 'line-color',     ra.bearing.color);
-    map.setPaintProperty('route-bearing', 'line-width',     ra.bearing.width);
-    map.setPaintProperty('route-bearing', 'line-dasharray', dashArray(ra.bearing.style, ra.bearing.width) ?? undefined);
+    // route-full/-leg/-bearing moved to deck.gl (see buildCourseLayers()) since MapLibre
+    // layers can't render above the deck.gl overlay's own canvas.
+    courseLayerGroup = buildCourseLayers();
+    flushLayers();
   });
 
-  // Position effect: GeoJSON sources updated whenever vessel state or zoom changes.
-  // rAF-coalesced so MapLibre only gets one setData call per rendered frame even if
-  // $vesselState changes at 60 Hz (orientation events).
+  // Position effect: own-vessel deck.gl layers + track sources updated whenever vessel
+  // state or zoom changes. $vesselState changes at 60 Hz (orientation events); the deck.gl
+  // rebuild below is synchronous per tick (cheap — same cost as the icon rebuild already was).
   $effect(() => {
     const ap    = settings.appearance;
     const state = $vesselState;
     const zoom  = mapZoom;
+    const projection = mapView.projection;
     if (!map || !mapLoaded || !state.position) return;
 
-    const { longitude, latitude } = state.position;
-
-    function lineDistM(line: LineAppearance, sogMs: number | null): number {
-      if (line.lengthUnit === 'nm')  return line.lengthValue * 1852;
-      if (line.lengthUnit === 'min') return sogMs !== null ? line.lengthValue * 60 * sogMs : 0;
-      // px → meters per pixel at current zoom & latitude (WebMercator, 512px tile)
-      const mpp = (Math.cos(latitude * Math.PI / 180) * 40075016.686) / (512 * Math.pow(2, zoom));
-      return line.lengthValue * mpp;
-    }
-
-    const orientRad  = state.heading ?? state.cog ?? null;
-
-    // Own vessel deck.gl layer — rendered as the topmost layer (on top of all AIS).
-    // Rebuilt each effect run so position, heading, color, and size stay current.
-    // VesselIconLayer handles globe mode, map-aligned rotation, and picking correctly.
-    const ownVesselColor = hexToRgba(ap.vesselColor, 255);
-    const ownVesselSize  = ap.vesselSize / 64;
-    ownVesselLayerGroup = [
-      new VesselIconLayer<number>({
-        id: 'own-vessel-icon',
-        data: [0],
-        getPosition:    () => [longitude, latitude, 0],
-        getSog:         () => 0,
-        getCog:         () => 0,
-        getHeading:     () => orientRad ?? 0,
-        getRot:         () => 0,
-        getAgeAtUpload: () => 0,
-        getLength:      () => 0,
-        getColor:       () => ownVesselColor,
-        uploadTimestamp: 0,
-        selfAnimate: false,
-        settingsIconSize: ownVesselSize,
-        pickable: true,
-      }),
-    ];
+    ownVesselLayerGroup = buildOwnVesselLayers(ap, state, zoom, projection);
     flushLayers();
-
-    const cogFC: GeoJSON.FeatureCollection = state.cog !== null ? { type: 'FeatureCollection', features: [{
-      type: 'Feature',
-      geometry: { type: 'LineString', coordinates: rhumbCoords(longitude, latitude, state.cog, lineDistM(ap.cog, state.sog)) },
-      properties: {},
-    }]} : EMPTY_FC;
-    const gcFC: GeoJSON.FeatureCollection = state.cog !== null ? { type: 'FeatureCollection', features: [{
-      type: 'Feature',
-      geometry: { type: 'LineString', coordinates: gcCoords(longitude, latitude, state.cog, lineDistM(ap.gc, state.sog)) },
-      properties: {},
-    }]} : EMPTY_FC;
-    const hdgFC: GeoJSON.FeatureCollection = state.heading !== null ? { type: 'FeatureCollection', features: [{
-      type: 'Feature',
-      geometry: { type: 'LineString', coordinates: (mapView.projection === 'globe' ? gcCoords : rhumbCoords)(longitude, latitude, state.heading, lineDistM(ap.heading, state.sog)) },
-      properties: {},
-    }]} : EMPTY_FC;
-
-    const m = map; // stable reference for the rAF closure
-
-    // Coalesce: multiple store updates (lat, lon, COG, SOG, heading) can fire this effect
-    // in rapid succession. Only call setData once per animation frame.
-    _pendingVesselSetData = () => {
-      const cogSrc    = m.getSource(COG_SOURCE);
-      const gcSrc     = m.getSource(GC_SOURCE);
-      const hdgSrc    = m.getSource(HDG_SOURCE);
-      if (!(cogSrc    instanceof maplibregl.GeoJSONSource)) return;
-      if (!(gcSrc     instanceof maplibregl.GeoJSONSource)) return;
-      if (!(hdgSrc    instanceof maplibregl.GeoJSONSource)) return;
-      cogSrc.setData(cogFC);
-      gcSrc.setData(gcFC);
-      hdgSrc.setData(hdgFC);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access
-      if ((window as any).__mapDiag) (window as any).__mapDiag.ownVessel++;
-    };
-
-    if (_vesselRafId === null) {
-      _vesselRafId = requestAnimationFrame(() => {
-        _vesselRafId = null;
-        _vesselCancelFn = null;
-        _pendingVesselSetData?.();
-        _pendingVesselSetData = null;
-      });
-      _vesselCancelFn = () => { if (_vesselRafId !== null) cancelAnimationFrame(_vesselRafId); };
-    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access
+    if ((window as any).__mapDiag) (window as any).__mapDiag.ownVessel++;
   });
 
   // Track data effect: updates when track coordinates change (new point appended or historical data loaded).
@@ -2906,51 +2896,100 @@
       ta.style !== 'solid' ? dashArray(ta.style, ta.width) ?? undefined : undefined);
   });
 
-  // Route/course rendering — updates when route geometry, course points, or own position changes.
-  // Reads $vesselPosition (not $vesselState) so compass ticks at 60 Hz don't trigger this:
-  // heading updates leave the position reference unchanged, so the derived store stays quiet.
-  $effect(() => {
+  /**
+   * Builds the active-route deck.gl layers: full planned polyline, active leg
+   * (previousPoint → nextPoint), and bearing line (own vessel → nextPoint).
+   * Rendered via deck.gl rather than MapLibre so they sit above AIS targets and the
+   * own-vessel icon — the deck.gl overlay (interleaved: false) always draws on its
+   * own canvas above MapLibre's, so a MapLibre line can never appear on top of them.
+   */
+  function buildCourseLayers(): Layer[] {
     const geo     = route.geometry;
     const nxtPt   = route.nextPoint;
     const prevPt  = route.previousPoint;
     const ownPos  = $vesselPosition;
-    if (!map || !mapLoaded) return;
+    const ra      = settings.appearance.route;
+    const layers: Layer[] = [];
 
-    const lineSrc = map.getSource(ROUTE_LINE_SRC);
-    const wptSrc  = map.getSource(ROUTE_WPT_SRC);
-    if (!(lineSrc instanceof maplibregl.GeoJSONSource)) return;
-    if (!(wptSrc  instanceof maplibregl.GeoJSONSource)) return;
-
-    const lineFeatures: GeoJSON.Feature[] = [];
     // Full planned route polyline from the REST resource — GC-densified, antimeridian-unwrapped,
     // and split bidirectionally so globe-circling routes render across all world copies.
     if (geo) {
       const processed = processRouteCoords(geo.geometry.coordinates as [number, number][]);
-      for (const seg of splitRouteSegments(processed)) {
-        lineFeatures.push({
-          type: 'Feature',
-          geometry: { type: 'LineString', coordinates: seg },
-          properties: { kind: 'full' },
-        });
-      }
+      const segments  = splitRouteSegments(processed);
+      // getDashArray is a PathStyleExtension prop; spread from a variable to bypass the
+      // excess-property check (same technique as cogDashProps above).
+      const fullDashProps = { getDashArray: lineStyleDash(ra.remaining.style, ra.remaining.width) };
+      layers.push(new PathLayer<[number, number][]>({
+        id: 'route-full',
+        data: segments,
+        getPath: d => d,
+        getColor: hexToRgba(ra.remaining.color, 255),
+        getWidth: ra.remaining.width,
+        ...fullDashProps,
+        opacity: 0.65,
+        widthUnits: 'pixels',
+        widthMinPixels: 1,
+        pickable: true,
+        extensions: [new PathStyleExtension({ dash: true })],
+      }));
     }
+
     // Active leg: previousPoint → nextPoint (the current planned segment) — GC path.
     if (nxtPt && prevPt) {
-      lineFeatures.push({
-        type: 'Feature',
-        geometry: { type: 'LineString', coordinates: processRouteCoords([[prevPt.longitude, prevPt.latitude], [nxtPt.longitude, nxtPt.latitude]]) },
-        properties: { kind: 'leg' },
-      });
+      const path = processRouteCoords([[prevPt.longitude, prevPt.latitude], [nxtPt.longitude, nxtPt.latitude]]);
+      const legDashProps = { getDashArray: lineStyleDash(ra.segment.style, ra.segment.width) };
+      layers.push(new PathLayer<[number, number][]>({
+        id: 'route-leg',
+        data: [path],
+        getPath: d => d,
+        getColor: hexToRgba(ra.segment.color, 255),
+        getWidth: ra.segment.width,
+        ...legDashProps,
+        widthUnits: 'pixels',
+        widthMinPixels: 1,
+        pickable: true,
+        extensions: [new PathStyleExtension({ dash: true })],
+      }));
     }
+
     // Bearing line: own vessel → nextPoint (where I need to actually steer) — GC path.
     if (nxtPt && ownPos) {
-      lineFeatures.push({
-        type: 'Feature',
-        geometry: { type: 'LineString', coordinates: processRouteCoords([[ownPos.longitude, ownPos.latitude], [nxtPt.longitude, nxtPt.latitude]]) },
-        properties: { kind: 'bearing' },
-      });
+      const path = processRouteCoords([[ownPos.longitude, ownPos.latitude], [nxtPt.longitude, nxtPt.latitude]]);
+      const bearingDashProps = { getDashArray: lineStyleDash(ra.bearing.style, ra.bearing.width) };
+      layers.push(new PathLayer<[number, number][]>({
+        id: 'route-bearing',
+        data: [path],
+        getPath: d => d,
+        getColor: hexToRgba(ra.bearing.color, 255),
+        getWidth: ra.bearing.width,
+        ...bearingDashProps,
+        widthUnits: 'pixels',
+        widthMinPixels: 1,
+        pickable: true,
+        extensions: [new PathStyleExtension({ dash: true })],
+      }));
     }
-    lineSrc.setData({ type: 'FeatureCollection', features: lineFeatures });
+
+    return layers;
+  }
+
+  // Route/course rendering — updates when route geometry, course points, own position,
+  // or route appearance settings change.
+  // Reads $vesselPosition (not $vesselState) so compass ticks at 60 Hz don't trigger this:
+  // heading updates leave the position reference unchanged, so the derived store stays quiet.
+  $effect(() => {
+    const nxtPt   = route.nextPoint;
+    const prevPt  = route.previousPoint;
+    void route.geometry;
+    void $vesselPosition;
+    void settings.appearance.route;
+    if (!map || !mapLoaded) return;
+
+    const wptSrc = map.getSource(ROUTE_WPT_SRC);
+    if (!(wptSrc instanceof maplibregl.GeoJSONSource)) return;
+
+    courseLayerGroup = buildCourseLayers();
+    flushLayers();
 
     const wptFeatures: GeoJSON.Feature[] = [];
     if (nxtPt) wptFeatures.push({ type: 'Feature', geometry: { type: 'Point', coordinates: [nxtPt.longitude, nxtPt.latitude] }, properties: { wtype: 'next' } });
