@@ -161,6 +161,10 @@
   // One-shot guard: fires at most once per page load, the first time a real Signal K
   // position arrives while the user hasn't touched the map yet.
   let _didAutoFlyToFirstFix = false;
+  // One-shot guard: the restored rotation mode (from localStorage) must not be collapsed
+  // by ensureAvailable() just because cog/heading/route haven't arrived yet on a fresh
+  // page load — that data starting out null means "not received yet", not "lost".
+  let _receivedVesselData = false;
 
   // Camera deduplication state: used to avoid redundant easeTo/flyTo calls.
   let _easedLon = NaN;
@@ -771,6 +775,7 @@
       style: DEFAULT_STYLE,
       center: savedView.center,
       zoom: savedView.zoom,
+      bearing: savedView.bearing,
       maxPitch: 85,
       bearingSnap: 0,
       attributionControl: false,
@@ -1105,7 +1110,7 @@
     });
     map.on('moveend',   () => {
       _isInteracting = false;
-      if (map) { const c = map.getCenter(); saveView([c.lng, c.lat], map.getZoom()); }
+      if (map) { const c = map.getCenter(); saveView([c.lng, c.lat], map.getZoom(), map.getBearing()); }
     });
 
     // Cursor feedback for interactive MapLibre layers. The route-full/-leg/-bearing
@@ -3061,13 +3066,16 @@
   });
 
   // Auto-fallback: if the current rotation mode becomes unavailable (e.g. route cleared),
-  // drop back to COG → north.
+  // drop back to COG → north. Gated on _receivedVesselData so a mode restored from
+  // localStorage on a fresh load isn't collapsed before real data has even arrived —
+  // null cog/heading/route at mount means "not received yet", not "lost".
   $effect(() => {
-    rotateMode.ensureAvailable(
-      $vesselState.cog     !== null,
-      $vesselState.heading !== null,
-      route.nextPoint      !== null,
-    );
+    const hasCog     = $vesselState.cog     !== null;
+    const hasHeading = $vesselState.heading !== null;
+    const hasCourse  = route.nextPoint      !== null;
+    if (hasCog || hasHeading || hasCourse) _receivedVesselData = true;
+    if (!_receivedVesselData) return;
+    rotateMode.ensureAvailable(hasCog, hasHeading, hasCourse);
   });
   // Gesture-rotation lock.
   //
