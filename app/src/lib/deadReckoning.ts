@@ -2,7 +2,7 @@
  * Dead reckoning helpers for AIS vessel extrapolation.
  *
  * All math is flat-earth approximation (accurate for <3 min at <20 kts ≈ 1.8 km).
- * The GPU vertex shader in AisHullLayer uses the same formulas for smooth animation.
+ * The GPU vertex shader in VesselMorphLayer uses the same formulas for smooth animation.
  */
 
 import type { AisTarget } from '../stores/ais.svelte';

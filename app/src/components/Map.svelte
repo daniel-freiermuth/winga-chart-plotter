@@ -27,8 +27,8 @@
   import { fetchAndResolveStyle } from '../lib/resolveStyle';
   import { auth } from '../stores/auth.svelte';
   import { fetchAisVesselTrack, navigateToPoint, clearCourse, activateRoute, setActiveRoutePointIndex, deleteRoute, saveWaypoint, updateWaypoint, deleteWaypoint } from '../lib/signalk-api';
-  import { AisHullLayer, AisHullDecorationLayer, AisHullBorderLayer, HULL_ANCHOR_DOT, HULL_MOORING_BARS, HULL_AGROUND_RING, HULL_FISHING_GEAR, HULL_NUC, HULL_RESTRICTED, HULL_DRAUGHT } from '../layers/AisHullLayer';
-  import { VesselIconLayer, ANCHOR_DOT_GEOMETRY, AGROUND_CIRCLE_GEOMETRY, MOORING_BARS_GEOMETRY, FISHING_GEAR_GEOMETRY, NUC_GEOMETRY, RESTRICTED_MANOEUVRING_GEOMETRY, DRAUGHT_GEOMETRY, MOB_GEOMETRY } from '../layers/VesselIconLayer';
+  import { VesselMorphLayer, MORPH_ARROW, MORPH_ANCHOR_DOT, MORPH_AGROUND_RING, MORPH_MOORING_BARS, MORPH_FISHING_GEAR, MORPH_NUC, MORPH_RESTRICTED, MORPH_DRAUGHT, type MorphGeometry } from '../layers/VesselMorphLayer';
+  import { VesselIconLayer, MOB_GEOMETRY } from '../layers/VesselIconLayer';
   import { extrapolatePos } from '../lib/deadReckoning';
   import { SvelteMap, SvelteSet } from 'svelte/reactivity';
   import { mapView, loadSavedView, saveView } from '../stores/mapView.svelte';
@@ -820,8 +820,8 @@
     // far-hemisphere geometry. However, the IconLayer's billboard:false path applies a
     // pixelOffset.y flip before the globe orientation matrix, resulting in CW (back-face)
     // winding in screen space — culled invisible. We override to 'none' to keep all
-    // overlay layers visible. Far-hemisphere hull artifacts are handled by the per-vertex
-    // hemisphere discard in AisHullLayer instead.
+    // overlay layers visible. Far-hemisphere hull/icon artifacts are handled by the
+    // per-vertex hemisphere discard in VesselMorphLayer/VesselIconLayer instead.
     overlay = new MapboxOverlay({
       layers: [],
       interleaved: false,
@@ -1162,7 +1162,7 @@
       if (ownPicked.length > 0) { showOwnVesselPopup(e.lngLat); return; }
 
       // 4. AIS vessels (deck.gl). Deduplicate by vessel index — multiple layers can match.
-      const aisLayerIds = ['ais-confirmed-icon', 'ais-hull-ghost', 'ais-hull-confirmed', 'ais-ghost-icon', 'ais-mob-icon'];
+      const aisLayerIds = ['ais-confirmed-main', 'ais-ghost-main', 'ais-mob-icon'];
       const allPicked = overlay.pickMultipleObjects({ x, y, radius: 5, layerIds: aisLayerIds });
       const seen = new SvelteSet<number>();
       const uniqueHits: { idx: number; coordinate: number[] }[] = [];
@@ -2126,26 +2126,20 @@
     //   Motion axis  (SOG):      ghostIndices, cogIndices
     //   Arrow axis   (always):   visIndices → all get a plain arrow
     //   State axis   (navState): all state/type decorations live here
-    //   Hull axis    (heading+dims): hullIndices
+    //   Hull gate    (heading+dims): hullIndices — gates the morph layers' getLength so
+    //                                vessels without a real hull stay icon-only forever.
     const visIndices:            number[] = []; // all vessels → arrow (SART excluded)
     const ghostIndices:          number[] = []; // SOG > 0.1 m/s → ghost DR arrow + COG
     const cogIndices:            number[] = [];
     const hullIndices:           number[] = [];
-    const anchoredIndices:       number[] = []; // nav state "anchored" → icon dot overlay
-    const agroundIndices:        number[] = []; // nav state "aground" → icon circle overlay
-    const mooredIndices:         number[] = []; // nav state "moored" → icon bars overlay
-    const fishingIndices:        number[] = []; // nav state "fishing" → icon gear overlay
-    const nucIndices:            number[] = []; // nav state 2 "notUnderCommand" → icon two-dot overlay
+    const anchoredIndices:       number[] = []; // nav state "anchored" → anchor-ball mark
+    const agroundIndices:        number[] = []; // nav state "aground" → aground-ring mark
+    const mooredIndices:         number[] = []; // nav state "moored" → mooring-bars mark
+    const fishingIndices:        number[] = []; // nav state "fishing" → fishing-gear mark
+    const nucIndices:            number[] = []; // nav state 2 "notUnderCommand" → two-dot mark
     const restrictedIndices:     number[] = []; // nav state 3 "restrictedManoeuvrability" → ball-diamond-ball
-    const draughtIndices:        number[] = []; // nav state 4 "constrainedByDraught" → side bars overlay
+    const draughtIndices:        number[] = []; // nav state 4 "constrainedByDraught" → side-bars mark
     const sarIndices:            number[] = []; // nav state 14 SART/MOB → special red icon, no arrow
-    const anchoredHullIndices:   number[] = []; // anchored + hull known → hull-space dot
-    const agroundHullIndices:    number[] = []; // aground  + hull known → hull-space ring
-    const mooredHullIndices:     number[] = []; // moored   + hull known → hull-space bars
-    const fishingHullIndices:    number[] = []; // fishing  + hull known → hull-space gear
-    const nucHullIndices:        number[] = []; // NUC      + hull known → hull-space two dots
-    const restrictedHullIndices: number[] = []; // restricted + hull known → hull-space ball-diamond-ball
-    const draughtHullIndices:    number[] = []; // draught  + hull known → hull-space side bars
 
     for (let i = 0; i < n; i++) {
       // Nav state lookup first — SART vessels are routed entirely to their own layer.
@@ -2168,37 +2162,33 @@
         cogIndices.push(i);
       }
 
-      // Hull — heading + dimensions only
+      // Hull gate — heading + dimensions known. Vessels failing this stay icon-only
+      // forever (VesselMorphLayer forces t=0 when getLength returns 0 for them).
       const ihdg = hotData[i * S + AIS_F_HDG]!;
       const hasHull = !isNaN(ihdg) && (cold?.lengthM ?? 0) > 0 && (cold?.beamM ?? 0) > 0;
       if (hasHull) {
         hullIndices.push(i);
       }
 
-      // State annotations — nav state only, SOG and ship type irrelevant.
+      // State annotations — nav state only, SOG and ship type irrelevant. One morph layer
+      // per state handles both the icon-zoom mark and the hull-zoom mark (and everything
+      // between); no separate hull-having subset needed.
       if (ns.includes('aground')) {
         agroundIndices.push(i);
-        if (hasHull) agroundHullIndices.push(i);
       } else if (ns.includes('anchor')) {
         anchoredIndices.push(i);
-        if (hasHull) anchoredHullIndices.push(i);
       } else if (ns.includes('moor')) {
         mooredIndices.push(i);
-        if (hasHull) mooredHullIndices.push(i);
       } else if (ns.includes('fishing')) {
         fishingIndices.push(i);
-        if (hasHull) fishingHullIndices.push(i);
       } else if (ns.includes('command')) {
         // "notUnderCommand" — only nav state containing "command"
         nucIndices.push(i);
-        if (hasHull) nucHullIndices.push(i);
       } else if (ns.includes('restrict')) {
         restrictedIndices.push(i);
-        if (hasHull) restrictedHullIndices.push(i);
       } else if (ns.includes('draught')) {
         // "constrainedByHerDraught" / "constrainedByDraught"
         draughtIndices.push(i);
-        if (hasHull) draughtHullIndices.push(i);
       }
     }
 
@@ -2209,220 +2199,79 @@
 
     const vesselColor      = hexToRgba(ap.vesselColor, 220);
     const ghostVesselColor = hexToRgba(ap.vesselColor, 130);
-    // Adaptive border: mix vessel color toward white (dark vessel) or black (bright vessel),
-    // mirroring the icon outline shader logic.
-    const [vr, vg, vb] = vesselColor;
-    const luma = (vr * 0.299 + vg * 0.587 + vb * 0.114) / 255;
-    const mix  = (a: number, b: number, t: number) => Math.round(a + (b - a) * t);
-    const target = luma < 0.5 ? 255 : 0;
-    const br = mix(vr, target, 0.5), bg = mix(vg, target, 0.5), bb = mix(vb, target, 0.5);
-    const borderColor:      [number,number,number,number] = [br, bg, bb, 220];
-    const ghostBorderColor: [number,number,number,number] = [br, bg, bb, 160];
 
     // Accessor lambdas — close over hotData, coldMap, ids. Zero allocations per frame.
     const getPos  = (i: number): [number, number, number] => [hotData[i * S + AIS_F_LON]!, hotData[i * S + AIS_F_LAT]!, 0];
     const getSog  = (i: number) => { const v = hotData[i * S + AIS_F_SOG]!; return isNaN(v) ? 0 : v; };
     const getCog  = (i: number) => { const v = hotData[i * S + AIS_F_COG]!; return isNaN(v) ? 0 : v; };
     const getHdg  = (i: number) => { const h = hotData[i * S + AIS_F_HDG]!; if (!isNaN(h)) return h; const c = hotData[i * S + AIS_F_COG]!; return isNaN(c) ? 0 : c; };
-    const getHdgStrict = (i: number) => { const h = hotData[i * S + AIS_F_HDG]!; return isNaN(h) ? 0 : h; };
     const getRot  = (i: number) => { const v = hotData[i * S + AIS_F_ROT]!; return isNaN(v) ? 0 : v; };
     const getAge  = (i: number) => hotData[i * S + AIS_F_AGE]!;
     const getLen  = (i: number, fallback: number) => coldMap.get(ids[i]!)?.lengthM ?? fallback;
     const getBeam = (i: number, fallback: number) => coldMap.get(ids[i]!)?.beamM ?? fallback;
-    // Icon cross-fade only fires when a hull polygon is actually drawn for this vessel.
-    // A vessel with length but no heading has no hull → icon must stay at full opacity.
+    // The morph only fires when a hull polygon can actually be drawn for this vessel.
+    // A vessel with length but no heading has no hull → VesselMorphLayer forces t=0 and
+    // it stays icon-only forever (see hasHull in the bucketing loop above).
     const hullSet = new Set(hullIndices);
-    const getLenForIcon = (i: number) => hullSet.has(i) ? getLen(i, 0) : 0;
+    const getLengthForMorph = (i: number) => hullSet.has(i) ? getLen(i, 50) : 0;
 
-    const ghostIconLayer = ghostIndices.length > 0
-      ? new VesselIconLayer({
-          id: 'ais-ghost-icon',
-          data: ghostIndices,
-          getPosition:    getPos,
-          getSog:         getSog,
-          getCog:         getCog,
-          getHeading:     getHdg,
-          getRot:         getRot,
-          getAgeAtUpload: getAge,
-          getLength:      getLenForIcon,
-          getColor:       ghostVesselColor,
-          uploadTimestamp: uploadTs,
-          selfAnimate: true,
-          animationIntervalMs: 1000 / settings.targetFps,
-          settingsIconSize,
-          drCapSeconds: cogLengthMinutes * 60,
-          pickable: true,
-        })
-      : null;
+    // Builds one VesselMorphLayer instance for a nav-state category. `animate` selects
+    // confirmed (static, last-known position) vs ghost (GPU dead-reckoned) motion — both
+    // exist simultaneously, mirroring the old confirmed/ghost hull pair, so a moving
+    // vessel's state marks keep tracking its predicted position once morphed into the
+    // hull silhouette, not just at icon zoom.
+    const makeMorphLayer = (
+      id: string,
+      data: number[],
+      morphGeometry: MorphGeometry,
+      animate: boolean,
+      pickable: boolean,
+    ) =>
+      data.length > 0
+        ? new VesselMorphLayer({
+            id,
+            data,
+            getPosition:    getPos,
+            getSog:         animate ? getSog : () => 0,
+            getCog:         animate ? getCog : () => 0,
+            getHeading:     getHdg,
+            getRot:         animate ? getRot : () => 0,
+            getAgeAtUpload: animate ? getAge : () => 0,
+            getLength:      getLengthForMorph,
+            getBeam:        (i: number) => getBeam(i, 10),
+            getColor:       animate ? ghostVesselColor : vesselColor,
+            uploadTimestamp: uploadTs,
+            selfAnimate: animate,
+            animationIntervalMs: animate ? 1000 / settings.targetFps : 0,
+            settingsIconSize,
+            drCapSeconds: cogLengthMinutes * 60,
+            morphGeometry,
+            pickable,
+          })
+        : null;
 
-    // Arrow layer — all vessels, always.
-    const confirmedIconLayer = new VesselIconLayer({
-      id: 'ais-confirmed-icon',
-      data: visIndices,
-      getPosition:    getPos,
-      getSog:         () => 0,
-      getCog:         () => 0,
-      getHeading:     getHdg,
-      getRot:         () => 0,
-      getAgeAtUpload: () => 0,
-      getLength:      getLenForIcon,
-      getColor:       vesselColor,
-      uploadTimestamp: uploadTs,
-      selfAnimate: false,
-      settingsIconSize,
-      pickable: true,
-    });
+    const confirmedMainLayer   = makeMorphLayer('ais-confirmed-main',   visIndices,        MORPH_ARROW,        false, true);
+    const ghostMainLayer       = makeMorphLayer('ais-ghost-main',       ghostIndices,      MORPH_ARROW,        true,  true);
+    const anchoredLayer        = makeMorphLayer('ais-anchored',         anchoredIndices,   MORPH_ANCHOR_DOT,   false, false);
+    const anchoredGhostLayer   = makeMorphLayer('ais-anchored-ghost',   anchoredIndices,   MORPH_ANCHOR_DOT,   true,  false);
+    const mooredLayer          = makeMorphLayer('ais-moored',           mooredIndices,     MORPH_MOORING_BARS, false, false);
+    const mooredGhostLayer     = makeMorphLayer('ais-moored-ghost',     mooredIndices,     MORPH_MOORING_BARS, true,  false);
+    const agroundLayer         = makeMorphLayer('ais-aground',          agroundIndices,    MORPH_AGROUND_RING, false, false);
+    const agroundGhostLayer    = makeMorphLayer('ais-aground-ghost',    agroundIndices,    MORPH_AGROUND_RING, true,  false);
+    const fishingLayer         = makeMorphLayer('ais-fishing',          fishingIndices,    MORPH_FISHING_GEAR, false, false);
+    const fishingGhostLayer    = makeMorphLayer('ais-fishing-ghost',    fishingIndices,    MORPH_FISHING_GEAR, true,  false);
+    const nucLayer             = makeMorphLayer('ais-nuc',              nucIndices,        MORPH_NUC,          false, false);
+    const nucGhostLayer        = makeMorphLayer('ais-nuc-ghost',        nucIndices,        MORPH_NUC,          true,  false);
+    const restrictedLayer      = makeMorphLayer('ais-restricted',       restrictedIndices, MORPH_RESTRICTED,   false, false);
+    const restrictedGhostLayer = makeMorphLayer('ais-restricted-ghost', restrictedIndices, MORPH_RESTRICTED,   true,  false);
+    const draughtLayer         = makeMorphLayer('ais-draught',          draughtIndices,    MORPH_DRAUGHT,      false, false);
+    const draughtGhostLayer    = makeMorphLayer('ais-draught-ghost',    draughtIndices,    MORPH_DRAUGHT,      true,  false);
 
-    // Anchor-dot overlay — nav state only, arrow already drawn above.
-    const anchoredIconLayer = anchoredIndices.length > 0
-      ? new VesselIconLayer({
-          id: 'ais-anchored-icon',
-          data: anchoredIndices,
-          getPosition:    getPos,
-          getSog:         () => 0,
-          getCog:         () => 0,
-          getHeading:     getHdg,
-          getRot:         () => 0,
-          getAgeAtUpload: () => 0,
-          getLength:      getLenForIcon,
-          getColor:       vesselColor,
-          uploadTimestamp: uploadTs,
-          selfAnimate: false,
-          settingsIconSize,
-          iconGeometry: ANCHOR_DOT_GEOMETRY,
-          pickable: false,
-        })
-      : null;
-
-    // Mooring-bars overlay — nav state only, arrow already drawn above.
-    const mooredIconLayer = mooredIndices.length > 0
-      ? new VesselIconLayer({
-          id: 'ais-moored-icon',
-          data: mooredIndices,
-          getPosition:    getPos,
-          getSog:         () => 0,
-          getCog:         () => 0,
-          getHeading:     getHdg,
-          getRot:         () => 0,
-          getAgeAtUpload: () => 0,
-          getLength:      getLenForIcon,
-          getColor:       vesselColor,
-          uploadTimestamp: uploadTs,
-          selfAnimate: false,
-          settingsIconSize,
-          iconGeometry: MOORING_BARS_GEOMETRY,
-          pickable: false,
-        })
-      : null;
-
-    // Aground circle overlay — nav state only, arrow already drawn above.
-    const agroundIconLayer = agroundIndices.length > 0
-      ? new VesselIconLayer({
-          id: 'ais-aground-icon',
-          data: agroundIndices,
-          getPosition:    getPos,
-          getSog:         () => 0,
-          getCog:         () => 0,
-          getHeading:     getHdg,
-          getRot:         () => 0,
-          getAgeAtUpload: () => 0,
-          getLength:      getLenForIcon,
-          getColor:       vesselColor,
-          uploadTimestamp: uploadTs,
-          selfAnimate: false,
-          settingsIconSize,
-          iconGeometry: AGROUND_CIRCLE_GEOMETRY,
-          pickable: false,
-        })
-      : null;
-
-    // Fishing gear overlay — nav state "fishing" / "engagedInFishing".
-    const fishingIconLayer = fishingIndices.length > 0
-      ? new VesselIconLayer({
-          id: 'ais-fishing-icon',
-          data: fishingIndices,
-          getPosition:    getPos,
-          getSog:         () => 0,
-          getCog:         () => 0,
-          getHeading:     getHdg,
-          getRot:         () => 0,
-          getAgeAtUpload: () => 0,
-          getLength:      getLenForIcon,
-          getColor:       vesselColor,
-          uploadTimestamp: uploadTs,
-          selfAnimate: false,
-          settingsIconSize,
-          iconGeometry: FISHING_GEAR_GEOMETRY,
-          pickable: false,
-        })
-      : null;
-
-    // NUC overlay — nav state 2.
-    const nucIconLayer = nucIndices.length > 0
-      ? new VesselIconLayer({
-          id: 'ais-nuc-icon',
-          data: nucIndices,
-          getPosition:    getPos,
-          getSog:         () => 0,
-          getCog:         () => 0,
-          getHeading:     getHdg,
-          getRot:         () => 0,
-          getAgeAtUpload: () => 0,
-          getLength:      getLenForIcon,
-          getColor:       vesselColor,
-          uploadTimestamp: uploadTs,
-          selfAnimate: false,
-          settingsIconSize,
-          iconGeometry: NUC_GEOMETRY,
-          pickable: false,
-        })
-      : null;
-
-    // Restricted manoeuvrability overlay — nav state 3.
-    const restrictedIconLayer = restrictedIndices.length > 0
-      ? new VesselIconLayer({
-          id: 'ais-restricted-icon',
-          data: restrictedIndices,
-          getPosition:    getPos,
-          getSog:         () => 0,
-          getCog:         () => 0,
-          getHeading:     getHdg,
-          getRot:         () => 0,
-          getAgeAtUpload: () => 0,
-          getLength:      getLenForIcon,
-          getColor:       vesselColor,
-          uploadTimestamp: uploadTs,
-          selfAnimate: false,
-          settingsIconSize,
-          iconGeometry: RESTRICTED_MANOEUVRING_GEOMETRY,
-          pickable: false,
-        })
-      : null;
-
-    // Constrained by draught overlay — nav state 4.
-    const draughtIconLayer = draughtIndices.length > 0
-      ? new VesselIconLayer({
-          id: 'ais-draught-icon',
-          data: draughtIndices,
-          getPosition:    getPos,
-          getSog:         () => 0,
-          getCog:         () => 0,
-          getHeading:     getHdg,
-          getRot:         () => 0,
-          getAgeAtUpload: () => 0,
-          getLength:      getLenForIcon,
-          getColor:       vesselColor,
-          uploadTimestamp: uploadTs,
-          selfAnimate: false,
-          settingsIconSize,
-          iconGeometry: DRAUGHT_GEOMETRY,
-          pickable: false,
-        })
-      : null;
-
-    // MOB / AIS-SART — nav state 14. Replaces the arrow with a red swimmer icon.
-    // getLength = 0 disables cross-fade → icon always visible regardless of zoom.
-    // getHeading = 0 keeps the swimmer north-up (no meaningful orientation for a beacon).
+    // MOB / AIS-SART — nav state 14. Replaces the arrow with a red swimmer icon. No hull
+    // counterpart exists (a person overboard / SART beacon has no AIS length/beam) — it
+    // stays icon-only forever via the plain VesselIconLayer (getLength = 0 disables any
+    // morph/cross-fade attempt). getHeading = 0 keeps the swimmer north-up (no meaningful
+    // orientation for a beacon).
     const mobIconLayer = sarIndices.length > 0
       ? new VesselIconLayer({
           id: 'ais-mob-icon',
@@ -2443,141 +2292,28 @@
         })
       : null;
 
-    const ghostHullLayer = hullIndices.length > 0
-      ? new AisHullLayer({
-          id: 'ais-hull-ghost',
-          data: hullIndices,
-          getPosition:    getPos,
-          getSog:         getSog,
-          getCog:         getCog,
-          getHeading:     getHdgStrict,
-          getRot:         getRot,
-          getAgeAtUpload: getAge,
-          getLength:      (i) => getLen(i, 50),
-          getBeam:        (i) => getBeam(i, 10),
-          getColor:       vesselColor,
-          uploadTimestamp: uploadTs,
-          selfAnimate: true,
-          animationIntervalMs: 1000 / settings.targetFps,
-          settingsIconSize,
-          opacity: 0.75,
-          drCapSeconds: cogLengthMinutes * 60,
-          pickable: true,
-        })
-      : null;
-
-    const confirmedHullLayer = hullIndices.length > 0
-      ? new AisHullLayer({
-          id: 'ais-hull-confirmed',
-          data: hullIndices,
-          getPosition:    getPos,
-          getSog:         () => 0,
-          getCog:         () => 0,
-          getHeading:     getHdgStrict,
-          getRot:         () => 0,
-          getAgeAtUpload: () => 0,
-          getLength:      (i) => getLen(i, 50),
-          getBeam:        (i) => getBeam(i, 10),
-          getColor:       vesselColor,
-          uploadTimestamp: uploadTs,
-          selfAnimate: false,
-          settingsIconSize,
-          opacity: 1,
-          pickable: true,
-        })
-      : null;
-
-    // Hull-space decoration layers — fade in/out with the hull polygon.
-    const makeHullDecoration = (id: string, data: number[], decoration: typeof HULL_ANCHOR_DOT, animate: boolean) =>
-      data.length > 0
-        ? new AisHullDecorationLayer({
-            id,
-            data,
-            getPosition:    getPos,
-            getSog:         animate ? getSog : () => 0,
-            getCog:         animate ? getCog : () => 0,
-            getHeading:     getHdgStrict,
-            getRot:         animate ? getRot : () => 0,
-            getAgeAtUpload: animate ? getAge : () => 0,
-            getLength:      (i) => getLen(i, 50),
-            getBeam:        (i) => getBeam(i, 10),
-            uploadTimestamp: uploadTs,
-            selfAnimate: animate,
-            animationIntervalMs: animate ? 1000 / settings.targetFps : 0,
-            settingsIconSize,
-            decoration,
-          })
-        : null;
-
-    const makeBorderLayer = (id: string, animate: boolean, color: [number,number,number,number], opacity: number) =>
-      hullIndices.length > 0
-        ? new AisHullBorderLayer({
-            id,
-            data: hullIndices,
-            getPosition:    getPos,
-            getSog:         animate ? getSog : () => 0,
-            getCog:         animate ? getCog : () => 0,
-            getHeading:     getHdgStrict,
-            getRot:         animate ? getRot : () => 0,
-            getAgeAtUpload: animate ? getAge : () => 0,
-            getLength:      (i) => getLen(i, 50),
-            getBeam:        (i) => getBeam(i, 10),
-            getBorderColor: () => color,
-            uploadTimestamp: uploadTs,
-            selfAnimate: animate,
-            animationIntervalMs: animate ? 1000 / settings.targetFps : 0,
-            settingsIconSize,
-            opacity,
-          })
-        : null;
-
-    const confirmedHullBorderLayer = makeBorderLayer('ais-hull-border-confirmed', false, borderColor, 1.0);
-    const ghostHullBorderLayer     = makeBorderLayer('ais-hull-border-ghost',     true,  ghostBorderColor, 0.75);
-
-    const anchoredHullDecoration = makeHullDecoration('ais-anchored-hull', anchoredHullIndices, HULL_ANCHOR_DOT, false);
-    const mooredHullDecoration   = makeHullDecoration('ais-moored-hull',   mooredHullIndices,   HULL_MOORING_BARS, false);
-    const agroundHullDecoration  = makeHullDecoration('ais-aground-hull',  agroundHullIndices,  HULL_AGROUND_RING, false);
-    const fishingHullDecoration  = makeHullDecoration('ais-fishing-hull',  fishingHullIndices,  HULL_FISHING_GEAR, false);
-    const nucHullDecoration      = makeHullDecoration('ais-nuc-hull',      nucHullIndices,      HULL_NUC, false);
-    const restrictedHullDecoration = makeHullDecoration('ais-restricted-hull', restrictedHullIndices, HULL_RESTRICTED, false);
-    const draughtHullDecoration  = makeHullDecoration('ais-draught-hull',  draughtHullIndices,  HULL_DRAUGHT, false);
-    // Ghost variants animate with the DR hull
-    const anchoredGhostDecoration = makeHullDecoration('ais-anchored-hull-ghost', anchoredHullIndices, HULL_ANCHOR_DOT, true);
-    const mooredGhostDecoration   = makeHullDecoration('ais-moored-hull-ghost',   mooredHullIndices,   HULL_MOORING_BARS, true);
-    const agroundGhostDecoration  = makeHullDecoration('ais-aground-hull-ghost',  agroundHullIndices,  HULL_AGROUND_RING, true);
-    const fishingGhostDecoration  = makeHullDecoration('ais-fishing-hull-ghost',  fishingHullIndices,  HULL_FISHING_GEAR, true);
-    const nucGhostDecoration      = makeHullDecoration('ais-nuc-hull-ghost',      nucHullIndices,      HULL_NUC, true);
-    const restrictedGhostDecoration = makeHullDecoration('ais-restricted-hull-ghost', restrictedHullIndices, HULL_RESTRICTED, true);
-    const draughtGhostDecoration  = makeHullDecoration('ais-draught-hull-ghost',  draughtHullIndices,  HULL_DRAUGHT, true);
-
     // getDashArray is a PathStyleExtension prop; spread from variable to bypass excess-property check.
     const cogDashProps = { getDashArray: lineStyleDash(cogStyle, cogWidth) };
 
     aisLayerGroup = [
-      // bottom: confirmed hull at last-known position (full opacity, static)
-      ...(confirmedHullLayer ? [confirmedHullLayer] : []),
-      // border outline on confirmed hull (above fill, below decorations)
-      ...(confirmedHullBorderLayer ? [confirmedHullBorderLayer] : []),
-      // hull-space decorations at confirmed position (static)
-      ...(anchoredHullDecoration    ? [anchoredHullDecoration]    : []),
-      ...(mooredHullDecoration      ? [mooredHullDecoration]      : []),
-      ...(agroundHullDecoration     ? [agroundHullDecoration]     : []),
-      ...(fishingHullDecoration     ? [fishingHullDecoration]     : []),
-      ...(nucHullDecoration         ? [nucHullDecoration]         : []),
-      ...(restrictedHullDecoration  ? [restrictedHullDecoration]  : []),
-      ...(draughtHullDecoration     ? [draughtHullDecoration]     : []),
-      // ghost hull polygon (GPU animated, 75% opacity)
-      ...(ghostHullLayer ? [ghostHullLayer] : []),
-      // border outline on ghost hull (tracks dead-reckoned position)
-      ...(ghostHullBorderLayer ? [ghostHullBorderLayer] : []),
-      // hull-space decorations on ghost (animated, tracks DR hull)
-      ...(anchoredGhostDecoration   ? [anchoredGhostDecoration]   : []),
-      ...(mooredGhostDecoration     ? [mooredGhostDecoration]     : []),
-      ...(agroundGhostDecoration    ? [agroundGhostDecoration]    : []),
-      ...(fishingGhostDecoration    ? [fishingGhostDecoration]    : []),
-      ...(nucGhostDecoration        ? [nucGhostDecoration]        : []),
-      ...(restrictedGhostDecoration ? [restrictedGhostDecoration] : []),
-      ...(draughtGhostDecoration    ? [draughtGhostDecoration]    : []),
+      // bottom: confirmed vessels at their last-known position, then their state marks
+      ...(confirmedMainLayer  ? [confirmedMainLayer]  : []),
+      ...(anchoredLayer       ? [anchoredLayer]       : []),
+      ...(mooredLayer         ? [mooredLayer]         : []),
+      ...(agroundLayer        ? [agroundLayer]        : []),
+      ...(fishingLayer        ? [fishingLayer]        : []),
+      ...(nucLayer            ? [nucLayer]            : []),
+      ...(restrictedLayer     ? [restrictedLayer]     : []),
+      ...(draughtLayer        ? [draughtLayer]        : []),
+      // ghost (GPU dead-reckoned) vessels and their state marks, drawn above confirmed
+      ...(ghostMainLayer      ? [ghostMainLayer]      : []),
+      ...(anchoredGhostLayer  ? [anchoredGhostLayer]  : []),
+      ...(mooredGhostLayer    ? [mooredGhostLayer]    : []),
+      ...(agroundGhostLayer   ? [agroundGhostLayer]   : []),
+      ...(fishingGhostLayer   ? [fishingGhostLayer]   : []),
+      ...(nucGhostLayer       ? [nucGhostLayer]       : []),
+      ...(restrictedGhostLayer ? [restrictedGhostLayer] : []),
+      ...(draughtGhostLayer   ? [draughtGhostLayer]   : []),
       // COG arc prediction line
       new PathLayer<number>({
         id: 'ais-cog',
@@ -2619,18 +2355,6 @@
           getDashArray: [cogStyle, cogWidth],
         },
       }),
-      // ghost icon (self-animating, above hull) — SOG-driven
-      ...(ghostIconLayer ? [ghostIconLayer] : []),
-      // confirmed arrow icon — all vessels, always
-      confirmedIconLayer,
-      // decoration overlays — nav state driven, rendered on top of arrows
-      ...(anchoredIconLayer   ? [anchoredIconLayer]   : []),
-      ...(agroundIconLayer    ? [agroundIconLayer]    : []),
-      ...(mooredIconLayer     ? [mooredIconLayer]     : []),
-      ...(fishingIconLayer    ? [fishingIconLayer]    : []),
-      ...(nucIconLayer        ? [nucIconLayer]        : []),
-      ...(restrictedIconLayer ? [restrictedIconLayer] : []),
-      ...(draughtIconLayer    ? [draughtIconLayer]    : []),
       // MOB/SART — rendered last (always on top) with its own icon replacing the arrow
       ...(mobIconLayer        ? [mobIconLayer]        : []),
     ];
@@ -2716,7 +2440,7 @@
     const orientRad     = state.heading ?? state.cog ?? null;
     const ownVesselColor = hexToRgba(ap.vesselColor, 255);
     const ownVesselSize  = ap.vesselSize / 64;
-    layers.push(new VesselIconLayer<number>({
+    layers.push(new VesselMorphLayer<number>({
       id: 'own-vessel-icon',
       data: [0],
       getPosition:    () => [longitude, latitude, 0],
@@ -2727,6 +2451,7 @@
       getAgeAtUpload: () => 0,
       getLength:      () => 0,
       getColor:       () => ownVesselColor,
+      morphGeometry:  MORPH_ARROW,
       uploadTimestamp: 0,
       selfAnimate: false,
       settingsIconSize: ownVesselSize,

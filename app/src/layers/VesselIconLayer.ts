@@ -1,15 +1,17 @@
 /**
- * VesselIconLayer — custom deck.gl Layer that renders vessel arrow icons with GPU dead reckoning.
+ * VesselIconLayer — custom deck.gl Layer that renders a fixed-pixel vessel icon with GPU
+ * dead reckoning.
+ *
+ * MOB/AIS-SART ONLY. Every other nav-state (the plain arrow, anchored, moored, aground,
+ * fishing, NUC, restricted, draught) is now rendered by VesselMorphLayer, which morphs
+ * continuously between the icon silhouette and the real-world hull polygon as you zoom —
+ * see that file's header for why. MOB has no hull counterpart (a person overboard or a
+ * SART beacon has no AIS-reported length/beam) and always stays icon-only at a constant
+ * screen size, exactly like a real chart plotter's MOB marker — so it keeps this simpler,
+ * single-shape layer with no morph.
  *
  * Per-frame cost: only the `timeSinceUpload` and `zoom` uniforms change.
  * GPU buffers (position, heading, sog, cog, …) are uploaded once per AIS tick.
- *
- * The icon cross-fades with the hull: it fades OUT as zoom increases (hull fades IN).
- * Vessels without a known length (instanceLength == 0) skip cross-fading and are
- * always rendered at full opacity.
- *
- * Globe hemisphere discard matches AisHullLayer — far-side vessels are culled
- * before they can appear as mirrored ghosts through the globe.
  */
 
 import { Layer, project32, picking } from '@deck.gl/core';
@@ -51,15 +53,15 @@ const vs = /* glsl */`\
 #version 300 es
 #define SHADER_NAME ais-icon-layer-vertex-shader
 
-// Per-vertex: arrow mesh in local space (bow = +Y, starboard = +X, range [-1, 1])
+// Per-vertex: icon mesh in local space (bow = +Y, starboard = +X, range [-1, 1])
 in vec3 positions;
 // 1.0 = outline pass (white, larger), 0.0 = fill pass (vessel color, smaller)
 in float aIsOutline;
 // 1.0 = state indicator vertex (renders black in fill pass; white in outline pass)
 in float aIsIndicator;
-// 1.0 = vertex belongs to an indicator/overlay shape (anchor dot, mooring bars, …) in
-// EITHER pass — pins the GPU scale to fillSize so these shapes are never grown from the
-// icon's local origin (see buildIconGeometry doc comment for why that would displace them).
+// 1.0 = vertex belongs to an indicator/overlay shape (the MOB swimmer) in EITHER pass —
+// pins the GPU scale to fillSize so it is never grown from the icon's local origin (see
+// buildIconGeometry doc comment for why that would displace it).
 in float aIsIndicatorShape;
 
 // Per-instance vessel data
@@ -70,7 +72,7 @@ in float instanceCog;        // radians, north = 0, CW positive
 in float instanceHeading;    // radians
 in float instanceRot;        // rad/s
 in float instanceAgeAtUpload;// seconds already elapsed when data was uploaded
-in float instanceLength;     // metres; 0 = unknown → no cross-fade
+in float instanceLength;     // metres; always 0 for MOB → always full opacity, never fades
 in vec4 instanceColor;       // base RGBA [0..1]; alpha encodes ghost/confirmed opacity
 in vec3 instancePickingColors;
 
@@ -98,7 +100,7 @@ void main(void) {
   }
 
   // ------------------------------------------------------------------
-  // 3. Scale arrow vertex to pixel size.
+  // 3. Scale icon vertex to pixel size.
   //    Outline pass is slightly larger than fill pass (white ring effect).
   //    Indicator/overlay shapes are pinned to fillSize regardless of pass — their own
   //    outline-pass vertices already encode a small ring grown around their own centroid
@@ -114,7 +116,7 @@ void main(void) {
   float localY = positions.y * halfCommon;
 
   // ------------------------------------------------------------------
-  // 4. Rotate arrow from local space (bow = +Y) into ENU-aligned common space
+  // 4. Rotate icon from local space (bow = +Y) into ENU-aligned common space
   //    using the dead-reckoned heading.
   // ------------------------------------------------------------------
   float heading = instanceHeading + instanceRot * dt;
@@ -126,8 +128,8 @@ void main(void) {
   // ------------------------------------------------------------------
   // 5. Total offset: DR movement (metres → common) + rotated icon corner
   //
-  // geometry.worldPosition must be set BEFORE project_size() — see AisHullLayer
-  // for details on the Mercator latitude correction.
+  // geometry.worldPosition must be set BEFORE project_size() for the Mercator latitude
+  // correction (1/cos(lat)) to use the vessel's actual latitude.
   //
   // In globe mode, project_position_to_clipspace applies orientation matrix
   // mat3(-East, -North, up), which inverts both ENU axes. Negate the total
@@ -150,7 +152,7 @@ void main(void) {
   DECKGL_FILTER_GL_POSITION(gl_Position, geometry);
 
   // ------------------------------------------------------------------
-  // 6b. Far-hemisphere discard (globe mode) — see AisHullLayer for details.
+  // 6b. Far-hemisphere discard (globe mode) — mirrors VesselMorphLayer.
   // ------------------------------------------------------------------
   if (project.projectionMode == PROJECTION_MODE_GLOBE &&
       dot(worldPos.xyz, project.cameraPosition) < 0.0) {
@@ -158,20 +160,10 @@ void main(void) {
   }
 
   // ------------------------------------------------------------------
-  // 7. Cross-fade: icon fades OUT as zoom increases (hull fades IN).
-  //    Mirrors the hull's transition formula but inverts the t01 factor.
-  //    Vessels with instanceLength == 0 are always rendered at full alpha.
-  //    Use fillSize for the transition zoom so the hull takes over cleanly.
+  // 7. instanceLength is always 0 for MOB, so there is no cross-fade here — the icon is
+  //    always rendered at full alpha, exactly like a real chart plotter's MOB marker.
   // ------------------------------------------------------------------
   float iconAlpha = instanceColor.a * aisIcon.opacity;
-  if (instanceLength > 0.0) {
-    float lat_rad = instancePositions.y * radians(1.0);
-    float transitionZoom = log2(
-      fillSize * 64.0 * 40075016.686 * cos(lat_rad) / (instanceLength * 256.0)
-    );
-    float t01 = clamp((aisIcon.zoom - transitionZoom + 1.0) / 2.0, 0.0, 1.0);
-    iconAlpha *= (1.0 - t01);
-  }
 
   // Outline pass → halfway between vessel color and white (dark vessels) or black (bright vessels).
   // fill pass → black for state indicators, vessel color otherwise.
@@ -203,33 +195,6 @@ void main(void) {
   DECKGL_FILTER_COLOR(fragColor, geometry);
 }
 `;
-
-// ---------------------------------------------------------------------------
-// ---------------------------------------------------------------------------
-// Arrow mesh — double-pass: outline vertices first, fill vertices second.
-// Within each instance the GPU renders outline first, then fill on top —
-// giving each vessel its own painter's-algorithm border regardless of clusters.
-//
-// Shape: 6-point arrowhead with stern notch. Fan-triangulated from bow:
-// 4 triangles × 3 vertices = 12 vertices per pass.
-// Coordinates: bow = +Y, starboard = +X, normalised to [-1, 1].
-// ---------------------------------------------------------------------------
-
-const ARROW_SHAPE = [
-  //  X        Y
-   0.00,  1.000, 0.0,   // 1: bow
-   0.50,  0.333, 0.0,   //    SB shoulder
-   0.50, -0.750, 0.0,   //    SB aft
-   0.00,  1.000, 0.0,   // 2: bow
-   0.50, -0.750, 0.0,   //    SB aft
-   0.00, -0.500, 0.0,   //    stern notch
-   0.00,  1.000, 0.0,   // 3: bow
-   0.00, -0.500, 0.0,   //    stern notch
-  -0.50, -0.750, 0.0,   //    port aft
-   0.00,  1.000, 0.0,   // 4: bow
-  -0.50, -0.750, 0.0,   //    port aft
-  -0.50,  0.333, 0.0,   //    port shoulder
-];
 
 // ---------------------------------------------------------------------------
 // Icon geometry helpers
@@ -268,15 +233,6 @@ function lineSeg(x0: number, y0: number, x1: number, y1: number, halfWidth: numb
   ];
 }
 
-function diamondVerts(cx: number, cy: number, w: number, h: number): number[] {
-  return [
-    cx, cy, 0,  cx,   cy+h, 0,  cx+w, cy,   0,
-    cx, cy, 0,  cx+w, cy,   0,  cx,   cy-h, 0,
-    cx, cy, 0,  cx,   cy-h, 0,  cx-w, cy,   0,
-    cx, cy, 0,  cx-w, cy,   0,  cx,   cy+h, 0,
-  ];
-}
-
 /** Upper semicircle (bump pointing +Y) fan from center — used for wave crests. */
 function waveBumpVerts(cx: number, cy: number, r: number, sides: number): number[] {
   const v: number[] = [];
@@ -290,47 +246,21 @@ function waveBumpVerts(cx: number, cy: number, r: number, sides: number): number
   return v;
 }
 
-function arcVerts(
-  cx: number, cy: number,
-  inner: number, outer: number,
-  a_start_deg: number, a_end_deg: number,
-  steps: number,
-): number[] {
-  const v: number[] = [];
-  for (let i = 0; i < steps; i++) {
-    const a0 = (a_start_deg + (a_end_deg - a_start_deg) * (i       / steps)) * Math.PI / 180;
-    const a1 = (a_start_deg + (a_end_deg - a_start_deg) * ((i + 1) / steps)) * Math.PI / 180;
-    const s0 = Math.sin(a0), c0 = Math.cos(a0);
-    const s1 = Math.sin(a1), c1 = Math.cos(a1);
-    v.push(
-      cx + inner * s0, cy + inner * c0, 0,
-      cx + outer * s0, cy + outer * c0, 0,
-      cx + outer * s1, cy + outer * c1, 0,
-      cx + inner * s0, cy + inner * c0, 0,
-      cx + outer * s1, cy + outer * c1, 0,
-      cx + inner * s1, cy + inner * c1, 0,
-    );
-  }
-  return v;
-}
-
 /**
  * Build an icon geometry with two passes (outline=halo, fill=vessel-color/indicator-black)
  * plus optional indicator triangles that render black in the fill pass.
  *
- * The outline pass for the BASE shape (the arrow, or MOB's disc) is grown by the icon's
- * global zoom-dependent scale in the vertex shader — correct because those shapes are
- * centered on the icon's local origin, so scaling from the origin grows them symmetrically
- * about themselves.
+ * The outline pass for the BASE shape (MOB's disc) is grown by the icon's global
+ * zoom-dependent scale in the vertex shader — correct because the disc is centered on the
+ * icon's local origin, so scaling from the origin grows it symmetrically about itself.
  *
- * Indicator/overlay shapes (anchor dot, mooring bars, …) are usually NOT centered on the
- * icon's origin — they're deliberately offset to sit alongside the arrow. Scaling those
- * from the origin would shift the whole shape outward by (distance × scale delta) rather
- * than growing it about its own centroid, which reads as a second, displaced shape once
- * that shift exceeds the shape's own half-size (see VesselIconLayer outline-bug history).
- * So indicator outline vertices are supplied separately — pre-grown around each shape's
- * OWN centroid by the helpers below — and pinned to the fill-pass GPU scale via
- * aIsIndicatorShape, so the global zoom-dependent scale never touches them.
+ * The indicator shape (the swimmer) is NOT centered on the icon's origin. Scaling it from
+ * the origin would shift the whole shape outward by (distance × scale delta) rather than
+ * growing it about its own centroid, which reads as a second, displaced shape once that
+ * shift exceeds the shape's own half-size. So the indicator outline vertices are supplied
+ * separately — pre-grown around the swimmer's own centroid by the helpers below — and
+ * pinned to the fill-pass GPU scale via aIsIndicatorShape, so the global zoom-dependent
+ * scale never touches them.
  *
  * Layout of the combined buffer:
  *   [base outline | indicator outline | base fill | indicator fill]
@@ -338,7 +268,7 @@ function arcVerts(
  * aIsOutline:        1 for the first half, 0 for the second half.
  * aIsIndicator:      1 only for the indicator-fill slice (renders black).
  * aIsIndicatorShape: 1 for every indicator vertex in BOTH halves (pins GPU scale to fillSize
- *                    regardless of aIsOutline, so indicator shapes never get origin-scaled).
+ *                    regardless of aIsOutline, so the indicator shape never gets origin-scaled).
  *
  * `indicatorOutlineVerts` must have the same vertex count as `indicatorVerts` (each grow*
  * helper below preserves vertex count/order, only moving coordinates) — defaults to
@@ -367,7 +297,7 @@ function buildIconGeometry(
   };
 }
 
-/** Local-unit half-width growth applied to indicator-shape outline rings (see buildIconGeometry). */
+/** Local-unit half-width growth applied to the swimmer's outline ring (see buildIconGeometry). */
 const RING_MARGIN = 0.05;
 
 function growRect(x0: number, y0: number, x1: number, y1: number, m = RING_MARGIN): number[] {
@@ -376,17 +306,8 @@ function growRect(x0: number, y0: number, x1: number, y1: number, m = RING_MARGI
 function growCircle(cx: number, cy: number, r: number, sides: number, m = RING_MARGIN): number[] {
   return circleVerts(cx, cy, r + m, sides);
 }
-function growDiamond(cx: number, cy: number, w: number, h: number, m = RING_MARGIN): number[] {
-  return diamondVerts(cx, cy, w + m, h + m);
-}
 function growLineSeg(x0: number, y0: number, x1: number, y1: number, halfWidth: number, m = RING_MARGIN): number[] {
   return lineSeg(x0, y0, x1, y1, halfWidth + m);
-}
-function growArc(
-  cx: number, cy: number, inner: number, outer: number,
-  a_start_deg: number, a_end_deg: number, steps: number, m = RING_MARGIN,
-): number[] {
-  return arcVerts(cx, cy, inner - m, outer + m, a_start_deg, a_end_deg, steps);
 }
 function growWaveBump(cx: number, cy: number, r: number, sides: number, m = RING_MARGIN): number[] {
   return waveBumpVerts(cx, cy, r + m, sides);
@@ -404,127 +325,8 @@ export interface IconGeometry {
   vertexCount:       number;
 }
 
-/** Standard arrow — all vessels always get this. */
-export const ARROW_GEOMETRY: IconGeometry = buildIconGeometry(ARROW_SHAPE);
-
 /**
- * Anchor dot only — overlaid on the arrow for anchored vessels.
- * Black dot with white ring at bow position (Y=0.65), radius 0.18.
- * Rendered as a separate layer so motion rendering (ghost, COG) is unaffected.
- */
-export const ANCHOR_DOT_GEOMETRY: IconGeometry = buildIconGeometry(
-  [],
-  circleVerts(0, 0.65, 0.18, 8),
-  growCircle(0, 0.65, 0.18, 8),
-);
-
-/**
- * Circle ring around the vessel — overlaid for aground vessels.
- * Black 16-gon ring (outer r=1.55, inner r=1.35) surrounding the arrow shape.
- * Uses two concentric circles as a filled annulus approximation via triangle fans.
- */
-export const AGROUND_CIRCLE_GEOMETRY: IconGeometry = buildIconGeometry(
-  [],
-  arcVerts(0, 0, 1.35, 1.55, 0, 360, 16),
-  growArc(0, 0, 1.35, 1.55, 0, 360, 16),
-);
-
-/**
- * Mooring bars only — overlaid on the arrow for moored vessels.
- * Two black bars with white rings on port and starboard alongside the midsection.
- * Rendered as a separate layer so motion rendering (ghost, COG) is unaffected.
- */
-export const MOORING_BARS_GEOMETRY: IconGeometry = buildIconGeometry(
-  [],
-  [
-    ...rectVerts(-1.38, -0.55, -1.13, 0.22),  // port side bar
-    ...rectVerts( 1.13, -0.55,  1.38, 0.22),  // starboard side bar
-  ],
-  [
-    ...growRect(-1.38, -0.55, -1.13, 0.22),
-    ...growRect( 1.13, -0.55,  1.38, 0.22),
-  ],
-);
-
-/**
- * Fishing gear — overlaid on the arrow for fishing vessels.
- * Two diagonal boom arms extending to port/starboard from midship, plus a trawl
- * net arc curving around the stern between the boom tips.
- *
- * Icon-space coordinates: bow=+Y, stern=−Y, starboard=+X, port=−X; scale ≈ 1.
- * Angles use hull convention: x=r·sin(a), y=r·cos(a); 180°=stern.
- * Arc center (0, 0.3), r≈1.7 connects boom tips via the stern at Y≈−1.4.
- */
-export const FISHING_GEAR_GEOMETRY: IconGeometry = buildIconGeometry(
-  [],
-  [
-    // Port boom: from (−0.8, 0.0) to (−1.5, −0.5)
-    ...lineSeg(-0.8,  0.0, -1.5, -0.5, 0.08),
-    // Starboard boom: mirror
-    ...lineSeg( 0.8,  0.0,  1.5, -0.5, 0.08),
-    // Trawl net arc: center (0, 0.3), r=1.7, from 242° to 118° via stern (180°)
-    ...arcVerts(0, 0.3, 1.60, 1.78, 242, 118, 14),
-  ],
-  [
-    ...growLineSeg(-0.8,  0.0, -1.5, -0.5, 0.08),
-    ...growLineSeg( 0.8,  0.0,  1.5, -0.5, 0.08),
-    ...growArc(0, 0.3, 1.60, 1.78, 242, 118, 14),
-  ],
-);
-
-/**
- * Not Under Command — overlaid on the arrow for NUC vessels (nav state 2).
- * Two black balls stacked vertically in the bow half of the icon.
- */
-export const NUC_GEOMETRY: IconGeometry = buildIconGeometry(
-  [],
-  [
-    ...circleVerts(0, 0.45, 0.15, 10),  // upper ball
-    ...circleVerts(0, 0.10, 0.15, 10),  // lower ball
-  ],
-  [
-    ...growCircle(0, 0.45, 0.15, 10),
-    ...growCircle(0, 0.10, 0.15, 10),
-  ],
-);
-
-/**
- * Restricted Manoeuvrability — overlaid on the arrow for nav state 3.
- * Maritime dayshape: black ball / diamond / ball arranged vertically.
- */
-export const RESTRICTED_MANOEUVRING_GEOMETRY: IconGeometry = buildIconGeometry(
-  [],
-  [
-    ...circleVerts(0, 0.57, 0.13, 10),      // top ball
-    ...diamondVerts(0, 0.15, 0.17, 0.17),   // middle diamond
-    ...circleVerts(0, -0.28, 0.13, 10),     // bottom ball
-  ],
-  [
-    ...growCircle(0, 0.57, 0.13, 10),
-    ...growDiamond(0, 0.15, 0.17, 0.17),
-    ...growCircle(0, -0.28, 0.13, 10),
-  ],
-);
-
-/**
- * Constrained by Draught — overlaid on the arrow for nav state 4.
- * Two full-length bars along port and starboard, indicating the vessel fills
- * the navigable channel (cannot safely deviate laterally from its track).
- */
-export const DRAUGHT_GEOMETRY: IconGeometry = buildIconGeometry(
-  [],
-  [
-    ...rectVerts(-1.00, -0.80, -0.75, 0.85),  // port side full-length bar
-    ...rectVerts( 0.75, -0.80,  1.00, 0.85),  // starboard side full-length bar
-  ],
-  [
-    ...growRect(-1.00, -0.80, -0.75, 0.85),
-    ...growRect( 0.75, -0.80,  1.00, 0.85),
-  ],
-);
-
-/**
- * MOB / AIS-SART — replaces the vessel arrow for nav state 14.
+ * MOB / AIS-SART — the only nav-state still rendered by this layer.
  * A red disc (base geometry, rendered in instanceColor → set to bright red in the
  * layer) with a black swimmer silhouette (indicator geometry) on top.
  *
@@ -566,10 +368,10 @@ export interface VesselIconLayerProps<DataT = number> extends LayerProps {
   getHeading?:     Accessor<DataT, number>;
   getRot?:         Accessor<DataT, number>;
   getAgeAtUpload?: Accessor<DataT, number>;
-  /** Vessel length in metres. 0 = unknown → icon always visible, no cross-fade. */
+  /** Vessel length in metres. Always 0 for MOB — no hull, no cross-fade, always full opacity. */
   getLength?:      Accessor<DataT, number>;
   getColor?:       Accessor<DataT, [number, number, number, number]>;
-  /** Custom icon geometry. Defaults to the standard arrow. */
+  /** Custom icon geometry. Defaults to MOB_GEOMETRY (the only geometry this layer renders). */
   iconGeometry?: IconGeometry;
   /** Unix ms timestamp of the last data upload. draw() computes elapsed from this. */
   uploadTimestamp?: number;
@@ -701,7 +503,7 @@ export class VesselIconLayer<DataT = number> extends Layer<VesselIconLayerProps<
   }
 
   _getModel() {
-    const geo = this.props.iconGeometry ?? ARROW_GEOMETRY;
+    const geo = this.props.iconGeometry ?? MOB_GEOMETRY;
     // eslint-disable-next-line @typescript-eslint/no-unsafe-argument -- deck.gl's getShaders() returns any
     return new Model(this.context.device, {
       ...this.getShaders(),
