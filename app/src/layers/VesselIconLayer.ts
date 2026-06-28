@@ -57,6 +57,10 @@ in vec3 positions;
 in float aIsOutline;
 // 1.0 = state indicator vertex (renders black in fill pass; white in outline pass)
 in float aIsIndicator;
+// 1.0 = vertex belongs to an indicator/overlay shape (anchor dot, mooring bars, …) in
+// EITHER pass — pins the GPU scale to fillSize so these shapes are never grown from the
+// icon's local origin (see buildIconGeometry doc comment for why that would displace them).
+in float aIsIndicatorShape;
 
 // Per-instance vessel data
 in vec3 instancePositions;
@@ -96,11 +100,15 @@ void main(void) {
   // ------------------------------------------------------------------
   // 3. Scale arrow vertex to pixel size.
   //    Outline pass is slightly larger than fill pass (white ring effect).
+  //    Indicator/overlay shapes are pinned to fillSize regardless of pass — their own
+  //    outline-pass vertices already encode a small ring grown around their own centroid
+  //    on the CPU (see growRect/growCircle/… ), so the GPU must not also scale them from
+  //    the icon's local origin or the ring displaces into a visibly separate shape.
   //    Sizes are computed in settingsIconSize units (1 unit = 64 px).
   // ------------------------------------------------------------------
   float fillSize    = aisIcon.settingsIconSize - 3.0 / 64.0;
   float outlineSize = aisIcon.settingsIconSize * 1.1 + 1.0 / 64.0;
-  float effectiveSize = aIsOutline > 0.5 ? outlineSize : fillSize;
+  float effectiveSize = (aIsOutline > 0.5 && aIsIndicatorShape < 0.5) ? outlineSize : fillSize;
   float halfCommon = project_pixel_size(effectiveSize * 64.0) * 0.5;
   float localX = positions.x * halfCommon;
   float localY = positions.y * halfCommon;
@@ -307,29 +315,81 @@ function arcVerts(
 }
 
 /**
- * Build an icon geometry with two passes (outline=white, fill=vessel-color) plus
- * optional indicator triangles that render black in the fill pass.
+ * Build an icon geometry with two passes (outline=halo, fill=vessel-color/indicator-black)
+ * plus optional indicator triangles that render black in the fill pass.
+ *
+ * The outline pass for the BASE shape (the arrow, or MOB's disc) is grown by the icon's
+ * global zoom-dependent scale in the vertex shader — correct because those shapes are
+ * centered on the icon's local origin, so scaling from the origin grows them symmetrically
+ * about themselves.
+ *
+ * Indicator/overlay shapes (anchor dot, mooring bars, …) are usually NOT centered on the
+ * icon's origin — they're deliberately offset to sit alongside the arrow. Scaling those
+ * from the origin would shift the whole shape outward by (distance × scale delta) rather
+ * than growing it about its own centroid, which reads as a second, displaced shape once
+ * that shift exceeds the shape's own half-size (see VesselIconLayer outline-bug history).
+ * So indicator outline vertices are supplied separately — pre-grown around each shape's
+ * OWN centroid by the helpers below — and pinned to the fill-pass GPU scale via
+ * aIsIndicatorShape, so the global zoom-dependent scale never touches them.
  *
  * Layout of the combined buffer:
  *   [base outline | indicator outline | base fill | indicator fill]
  *
- * aIsOutline:   1 for the first half, 0 for the second half.
- * aIsIndicator: 1 only for the indicator-fill slice.
+ * aIsOutline:        1 for the first half, 0 for the second half.
+ * aIsIndicator:      1 only for the indicator-fill slice (renders black).
+ * aIsIndicatorShape: 1 for every indicator vertex in BOTH halves (pins GPU scale to fillSize
+ *                    regardless of aIsOutline, so indicator shapes never get origin-scaled).
+ *
+ * `indicatorOutlineVerts` must have the same vertex count as `indicatorVerts` (each grow*
+ * helper below preserves vertex count/order, only moving coordinates) — defaults to
+ * `indicatorVerts` unchanged, i.e. no ring, for indicator shapes close enough to the
+ * origin that none is needed.
  */
-function buildIconGeometry(baseVerts: number[], indicatorVerts: number[] = []): IconGeometry {
+function buildIconGeometry(
+  baseVerts: number[],
+  indicatorVerts: number[] = [],
+  indicatorOutlineVerts: number[] = indicatorVerts,
+): IconGeometry {
   const bN    = baseVerts.length / 3;
   const iN    = indicatorVerts.length / 3;
   const passN = bN + iN;
   return {
-    positions:   new Float32Array([...baseVerts, ...indicatorVerts,
+    positions:   new Float32Array([...baseVerts, ...indicatorOutlineVerts,
                                    ...baseVerts, ...indicatorVerts]),
     isOutline:   new Float32Array([...Array<number>(passN).fill(1),
                                    ...Array<number>(passN).fill(0)]),
     isIndicator: new Float32Array([...Array<number>(passN).fill(0),   // outline pass: unused
                                    ...Array<number>(bN   ).fill(0),   // base fill: vessel color
                                    ...Array<number>(iN   ).fill(1)]), // indicator fill: black
+    isIndicatorShape: new Float32Array([...Array<number>(bN).fill(0), ...Array<number>(iN).fill(1),  // outline pass
+                                        ...Array<number>(bN).fill(0), ...Array<number>(iN).fill(1)]), // fill pass
     vertexCount: passN * 2,
   };
+}
+
+/** Local-unit half-width growth applied to indicator-shape outline rings (see buildIconGeometry). */
+const RING_MARGIN = 0.05;
+
+function growRect(x0: number, y0: number, x1: number, y1: number, m = RING_MARGIN): number[] {
+  return rectVerts(x0 - m, y0 - m, x1 + m, y1 + m);
+}
+function growCircle(cx: number, cy: number, r: number, sides: number, m = RING_MARGIN): number[] {
+  return circleVerts(cx, cy, r + m, sides);
+}
+function growDiamond(cx: number, cy: number, w: number, h: number, m = RING_MARGIN): number[] {
+  return diamondVerts(cx, cy, w + m, h + m);
+}
+function growLineSeg(x0: number, y0: number, x1: number, y1: number, halfWidth: number, m = RING_MARGIN): number[] {
+  return lineSeg(x0, y0, x1, y1, halfWidth + m);
+}
+function growArc(
+  cx: number, cy: number, inner: number, outer: number,
+  a_start_deg: number, a_end_deg: number, steps: number, m = RING_MARGIN,
+): number[] {
+  return arcVerts(cx, cy, inner - m, outer + m, a_start_deg, a_end_deg, steps);
+}
+function growWaveBump(cx: number, cy: number, r: number, sides: number, m = RING_MARGIN): number[] {
+  return waveBumpVerts(cx, cy, r + m, sides);
 }
 
 // ---------------------------------------------------------------------------
@@ -337,10 +397,11 @@ function buildIconGeometry(baseVerts: number[], indicatorVerts: number[] = []): 
 // ---------------------------------------------------------------------------
 
 export interface IconGeometry {
-  positions:   Float32Array;
-  isOutline:   Float32Array;
-  isIndicator: Float32Array;
-  vertexCount: number;
+  positions:        Float32Array;
+  isOutline:         Float32Array;
+  isIndicator:       Float32Array;
+  isIndicatorShape:  Float32Array;
+  vertexCount:       number;
 }
 
 /** Standard arrow — all vessels always get this. */
@@ -354,6 +415,7 @@ export const ARROW_GEOMETRY: IconGeometry = buildIconGeometry(ARROW_SHAPE);
 export const ANCHOR_DOT_GEOMETRY: IconGeometry = buildIconGeometry(
   [],
   circleVerts(0, 0.65, 0.18, 8),
+  growCircle(0, 0.65, 0.18, 8),
 );
 
 /**
@@ -361,27 +423,11 @@ export const ANCHOR_DOT_GEOMETRY: IconGeometry = buildIconGeometry(
  * Black 16-gon ring (outer r=1.55, inner r=1.35) surrounding the arrow shape.
  * Uses two concentric circles as a filled annulus approximation via triangle fans.
  */
-export const AGROUND_CIRCLE_GEOMETRY: IconGeometry = (() => {
-  const sides = 16;
-  const outer = 1.55;
-  const inner = 1.35;
-  const verts: number[] = [];
-  for (let i = 0; i < sides; i++) {
-    const a0 = (i       / sides) * 2 * Math.PI;
-    const a1 = ((i + 1) / sides) * 2 * Math.PI;
-    // Two triangles per segment forming the annulus band
-    verts.push(
-      inner * Math.sin(a0), inner * Math.cos(a0), 0,
-      outer * Math.sin(a0), outer * Math.cos(a0), 0,
-      outer * Math.sin(a1), outer * Math.cos(a1), 0,
-
-      inner * Math.sin(a0), inner * Math.cos(a0), 0,
-      outer * Math.sin(a1), outer * Math.cos(a1), 0,
-      inner * Math.sin(a1), inner * Math.cos(a1), 0,
-    );
-  }
-  return buildIconGeometry([], verts);
-})();
+export const AGROUND_CIRCLE_GEOMETRY: IconGeometry = buildIconGeometry(
+  [],
+  arcVerts(0, 0, 1.35, 1.55, 0, 360, 16),
+  growArc(0, 0, 1.35, 1.55, 0, 360, 16),
+);
 
 /**
  * Mooring bars only — overlaid on the arrow for moored vessels.
@@ -393,6 +439,10 @@ export const MOORING_BARS_GEOMETRY: IconGeometry = buildIconGeometry(
   [
     ...rectVerts(-1.38, -0.55, -1.13, 0.22),  // port side bar
     ...rectVerts( 1.13, -0.55,  1.38, 0.22),  // starboard side bar
+  ],
+  [
+    ...growRect(-1.38, -0.55, -1.13, 0.22),
+    ...growRect( 1.13, -0.55,  1.38, 0.22),
   ],
 );
 
@@ -415,6 +465,11 @@ export const FISHING_GEAR_GEOMETRY: IconGeometry = buildIconGeometry(
     // Trawl net arc: center (0, 0.3), r=1.7, from 242° to 118° via stern (180°)
     ...arcVerts(0, 0.3, 1.60, 1.78, 242, 118, 14),
   ],
+  [
+    ...growLineSeg(-0.8,  0.0, -1.5, -0.5, 0.08),
+    ...growLineSeg( 0.8,  0.0,  1.5, -0.5, 0.08),
+    ...growArc(0, 0.3, 1.60, 1.78, 242, 118, 14),
+  ],
 );
 
 /**
@@ -426,6 +481,10 @@ export const NUC_GEOMETRY: IconGeometry = buildIconGeometry(
   [
     ...circleVerts(0, 0.45, 0.15, 10),  // upper ball
     ...circleVerts(0, 0.10, 0.15, 10),  // lower ball
+  ],
+  [
+    ...growCircle(0, 0.45, 0.15, 10),
+    ...growCircle(0, 0.10, 0.15, 10),
   ],
 );
 
@@ -440,6 +499,11 @@ export const RESTRICTED_MANOEUVRING_GEOMETRY: IconGeometry = buildIconGeometry(
     ...diamondVerts(0, 0.15, 0.17, 0.17),   // middle diamond
     ...circleVerts(0, -0.28, 0.13, 10),     // bottom ball
   ],
+  [
+    ...growCircle(0, 0.57, 0.13, 10),
+    ...growDiamond(0, 0.15, 0.17, 0.17),
+    ...growCircle(0, -0.28, 0.13, 10),
+  ],
 );
 
 /**
@@ -452,6 +516,10 @@ export const DRAUGHT_GEOMETRY: IconGeometry = buildIconGeometry(
   [
     ...rectVerts(-1.00, -0.80, -0.75, 0.85),  // port side full-length bar
     ...rectVerts( 0.75, -0.80,  1.00, 0.85),  // starboard side full-length bar
+  ],
+  [
+    ...growRect(-1.00, -0.80, -0.75, 0.85),
+    ...growRect( 0.75, -0.80,  1.00, 0.85),
   ],
 );
 
@@ -474,7 +542,16 @@ export const MOB_GEOMETRY: IconGeometry = (() => {
     ...waveBumpVerts( 0.42, -0.55, 0.18, 8),       // right wave crest
     ...rectVerts(-0.83, -0.80, 0.83, -0.55),       // water band below crests
   ];
-  return buildIconGeometry(disc, swimmer);
+  const swimmerOutline = [
+    ...growCircle(0, 0.62, 0.20, 12),
+    ...growLineSeg(-0.19, 0.32, -0.78, 0.50, 0.08),
+    ...growLineSeg( 0.19, 0.32,  0.78, 0.50, 0.08),
+    ...growRect(-0.15, -0.30, 0.15, 0.32),
+    ...growWaveBump(-0.42, -0.55, 0.18, 8),
+    ...growWaveBump( 0.42, -0.55, 0.18, 8),
+    ...growRect(-0.83, -0.80, 0.83, -0.55),
+  ];
+  return buildIconGeometry(disc, swimmer, swimmerOutline);
 })();
 
 // ---------------------------------------------------------------------------
@@ -633,9 +710,10 @@ export class VesselIconLayer<DataT = number> extends Layer<VesselIconLayerProps<
       geometry: new Geometry({
         topology: 'triangle-list',
         attributes: {
-          positions:    { size: 3, value: geo.positions },
-          aIsOutline:   { size: 1, value: geo.isOutline },
-          aIsIndicator: { size: 1, value: geo.isIndicator },
+          positions:        { size: 3, value: geo.positions },
+          aIsOutline:       { size: 1, value: geo.isOutline },
+          aIsIndicator:     { size: 1, value: geo.isIndicator },
+          aIsIndicatorShape:{ size: 1, value: geo.isIndicatorShape },
         },
         vertexCount: geo.vertexCount,
       }),
