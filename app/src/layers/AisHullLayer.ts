@@ -424,6 +424,13 @@ const decorationVs = /* glsl */`\
 #define SHADER_NAME ais-hull-decoration-vertex-shader
 
 in vec3 positions;
+// Fixed-pixel-equivalent offset from positions (the anchor) — scaled isotropically by
+// beam for BOTH axes (never by length), so day-shape marks (anchor dot, fishing gear,
+// NUC dots, restricted dayshape) render as true circles/diamonds instead of being
+// stretched into ellipses by the hull's length/beam aspect ratio. Zero for decorations
+// that should keep the existing fully anisotropic hull-local scaling (mooring bars,
+// aground ring, draught bars).
+in vec3 aOffset;
 in vec3 instancePositions;
 in vec3 instancePositions64Low;
 in float instanceSog;
@@ -452,8 +459,12 @@ void main(void) {
 
   float safelen  = max(instanceLength, 1.0);
   float safebeam = max(instanceBeam,  1.0);
-  float localX = positions.x * safebeam * 0.5;
-  float localY = positions.y * safelen  * 0.5;
+  // Anchor: existing anisotropic hull-local scaling (X by beam/2, Y by length/2) — keeps
+  // each mark's pivot at the right bow/stern, port/starboard position on the hull.
+  // Offset: isotropic, beam-scaled on both axes — keeps the mark's own shape undistorted
+  // regardless of how elongated the hull is.
+  float localX = positions.x * safebeam * 0.5 + aOffset.x * safebeam * 0.5;
+  float localY = positions.y * safelen  * 0.5 + aOffset.y * safebeam * 0.5;
 
   float heading = instanceHeading + instanceRot * dt;
   float sinH = sin(heading);
@@ -500,20 +511,66 @@ void main(void) {
 // ---------------------------------------------------------------------------
 // Decoration geometry presets (hull-local unit space, bow=+Y, starboard=+X)
 //
-// X is scaled by beam/2, Y by length/2 in the vertex shader.
+// X is scaled by beam/2, Y by length/2 in the vertex shader (anisotropic — matches
+// the hull polygon itself). Marks that should instead render as true, undistorted
+// circles/diamonds (anchor dot, fishing gear, NUC, restricted dayshape) are built via
+// `hullAnchoredAt`/`hullConcatAnchored` below: their own extent goes through the
+// isotropic, beam-only `offsets` attribute, while their anchor point still tracks the
+// hull anisotropically. Marks that should keep the existing fully-anisotropic look
+// (mooring bars, aground ring — see its own doc comment, draught bars) are built from a
+// plain flat array, same as before.
 // ---------------------------------------------------------------------------
 
 export interface HullDecorationGeometry {
   positions:   Float32Array;
+  offsets:     Float32Array;
   vertexCount: number;
 }
 
-function buildHullDecorationGeometry(verts: number[]): HullDecorationGeometry {
+/** A vertex set split into a per-mark anchor (anisotropic, hull-local) and an isotropic,
+ *  beam-only offset-from-anchor — see the section comment above. */
+interface HullAnchoredVerts {
+  anchors: number[];
+  offsets: number[];
+}
+
+/** Split a flat vertex array (built around (cx, cy)) into anchor + isotropic offset. */
+function hullAnchoredAt(cx: number, cy: number, verts: number[]): HullAnchoredVerts {
+  const n = verts.length / 3;
+  const anchors = new Array<number>(n * 3);
+  const offsets = new Array<number>(n * 3);
+  for (let i = 0; i < n; i++) {
+    anchors[i * 3] = cx; anchors[i * 3 + 1] = cy; anchors[i * 3 + 2] = 0;
+    offsets[i * 3]     = verts[i * 3]!     - cx;
+    offsets[i * 3 + 1] = verts[i * 3 + 1]! - cy;
+    offsets[i * 3 + 2] = 0;
+  }
+  return { anchors, offsets };
+}
+
+/** Concatenate several independently-anchored mark parts into one HullAnchoredVerts. */
+function hullConcatAnchored(...parts: HullAnchoredVerts[]): HullAnchoredVerts {
   return {
-    positions:   new Float32Array(verts),
-    vertexCount: verts.length / 3,
+    anchors: parts.flatMap(p => p.anchors),
+    offsets: parts.flatMap(p => p.offsets),
   };
 }
+
+/** Legacy/plain vertex array: anchor IS the vertex, offset is zero — the mark keeps the
+ *  existing fully-anisotropic hull-local scaling (mooring bars, aground ring, draught). */
+function hullUnanchored(verts: number[]): HullAnchoredVerts {
+  return { anchors: verts, offsets: new Array<number>(verts.length).fill(0) };
+}
+
+function buildHullDecorationGeometry(verts: number[] | HullAnchoredVerts): HullDecorationGeometry {
+  const v = Array.isArray(verts) ? hullUnanchored(verts) : verts;
+  return {
+    positions:   new Float32Array(v.anchors),
+    offsets:     new Float32Array(v.offsets),
+    vertexCount: v.anchors.length / 3,
+  };
+}
+
 
 function hullCircleVerts(cx: number, cy: number, r: number, sides: number): number[] {
   const v: number[] = [];
@@ -612,11 +669,13 @@ function hullArcVerts(
 }
 
 /**
- * Anchor ball at bow — circle at Y=0.65 (bow region), radius 0.12.
- * Scales with vessel length: for a 40 m vessel the dot sits 13 m from centre.
+ * Anchor ball at bow — circle at Y=0.65 (bow region), radius 0.20.
+ * Anchored at the bow position (scales anisotropically with vessel length, like the
+ * hull); the ball's own radius is isotropic (beam-scaled on both axes) so it renders as
+ * a true circle instead of being stretched into an ellipse by the length/beam ratio.
  */
 export const HULL_ANCHOR_DOT: HullDecorationGeometry = buildHullDecorationGeometry(
-  hullCircleVerts(0, 0.65, 0.12, 8),
+  hullAnchoredAt(0, 0.65, hullCircleVerts(0, 0.65, 0.20, 8)),
 );
 
 /**
@@ -647,6 +706,12 @@ export const HULL_AGROUND_RING: HullDecorationGeometry = buildHullDecorationGeom
  *   • Net arc: annulus arc centered at (0, 0.3), radius 1.7, sweeping from
  *     port-boom-tip (≈242°) through stern (180°) to starboard-boom-tip (≈118°).
  *
+ * Kept fully anisotropic (NOT anchor/offset split like the day-shape marks below) —
+ * this is an extended apparatus reaching well aft of the hull's own stern, not a
+ * compact point-symbol. Its aft reach depends on the same length-scaling as the hull
+ * itself; an isotropic (beam-only) offset would collapse that reach down near its
+ * anchor instead of trailing behind the stern as intended.
+ *
  * For a 40 m × 8 m vessel the booms extend ~6 m beyond the hull,
  * and the net arc reaches ~11 m aft of centre.
  */
@@ -662,20 +727,28 @@ export const HULL_FISHING_GEAR: HullDecorationGeometry = buildHullDecorationGeom
 
 /**
  * Not Under Command — two stacked balls in the forward (bow) section of the hull.
+ * Each ball is anchored at its own centre (anisotropic, tracks hull length); its own
+ * radius is isotropic so both balls render as true circles, not ellipses.
  */
-export const HULL_NUC: HullDecorationGeometry = buildHullDecorationGeometry([
-  ...hullCircleVerts(0, 0.45, 0.10, 10),  // upper ball
-  ...hullCircleVerts(0, 0.12, 0.10, 10),  // lower ball
-]);
+export const HULL_NUC: HullDecorationGeometry = buildHullDecorationGeometry(
+  hullConcatAnchored(
+    hullAnchoredAt(0, 0.45, hullCircleVerts(0, 0.45, 0.10, 10)),  // upper ball
+    hullAnchoredAt(0, 0.12, hullCircleVerts(0, 0.12, 0.10, 10)),  // lower ball
+  ),
+);
 
 /**
  * Restricted Manoeuvrability — ball / diamond / ball in hull-local space.
+ * Each part anchored at its own centre (anisotropic); each part's own shape is
+ * isotropic so the balls stay circular and the diamond stays an undistorted diamond.
  */
-export const HULL_RESTRICTED: HullDecorationGeometry = buildHullDecorationGeometry([
-  ...hullCircleVerts(0, 0.55, 0.09, 10),       // top ball
-  ...hullDiamondVerts(0, 0.15, 0.13, 0.13),    // middle diamond
-  ...hullCircleVerts(0, -0.25, 0.09, 10),      // bottom ball
-]);
+export const HULL_RESTRICTED: HullDecorationGeometry = buildHullDecorationGeometry(
+  hullConcatAnchored(
+    hullAnchoredAt(0, 0.55,  hullCircleVerts(0, 0.55, 0.09, 10)),     // top ball
+    hullAnchoredAt(0, 0.15,  hullDiamondVerts(0, 0.15, 0.13, 0.13)),  // middle diamond
+    hullAnchoredAt(0, -0.25, hullCircleVerts(0, -0.25, 0.09, 10)),    // bottom ball
+  ),
+);
 
 /**
  * Constrained by Draught — two full-length bars just outside the hull edges
@@ -819,7 +892,7 @@ export class AisHullDecorationLayer<DataT = number>
   }
 
   _getModel() {
-    const { positions, vertexCount } = this.props.decoration;
+    const { positions, offsets, vertexCount } = this.props.decoration;
     // eslint-disable-next-line @typescript-eslint/no-unsafe-argument -- deck.gl's getShaders() returns any
     return new Model(this.context.device, {
       ...this.getShaders(),
@@ -827,7 +900,10 @@ export class AisHullDecorationLayer<DataT = number>
       bufferLayout: this.getAttributeManager()!.getBufferLayouts(),
       geometry: new Geometry({
         topology: 'triangle-list',
-        attributes: { positions: { size: 3, value: positions } },
+        attributes: {
+          positions: { size: 3, value: positions },
+          aOffset:   { size: 3, value: offsets },
+        },
         vertexCount,
       }),
       isInstanced: true,
