@@ -418,6 +418,25 @@ export async function activateRoute(
   if (!res.ok) throw new Error(`Activate route failed: ${String(res.status)} ${res.statusText}`);
 }
 
+/**
+ * Set the active route's current destination to a specific point along it.
+ *
+ *   PUT /signalk/v2/api/vessels/self/navigation/course/activeRoute/pointIndex
+ *   { "value": <zero-based index> }
+ */
+export async function setActiveRoutePointIndex(
+  serverBase: string,
+  index: number,
+  authHeaders: Record<string, string>,
+): Promise<void> {
+  const res = await fetch(`${serverBase}/signalk/v2/api/vessels/self/navigation/course/activeRoute/pointIndex`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...authHeaders },
+    body: JSON.stringify({ value: index }),
+  });
+  if (!res.ok) throw new Error(`Set route point index failed: ${String(res.status)} ${res.statusText}`);
+}
+
 function buildRouteBody(name: string, waypoints: { lon: number; lat: number }[]) {
   let distanceM = 0;
   for (let i = 1; i < waypoints.length; i++) {

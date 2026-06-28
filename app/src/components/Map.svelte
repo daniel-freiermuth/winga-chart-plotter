@@ -26,7 +26,7 @@
   import { gcLine, gcBearingDeg, gcDistanceNm } from '../lib/geoMath';
   import { fetchAndResolveStyle } from '../lib/resolveStyle';
   import { auth } from '../stores/auth.svelte';
-  import { fetchAisVesselTrack, navigateToPoint, clearCourse, activateRoute, deleteRoute, saveWaypoint, updateWaypoint, deleteWaypoint } from '../lib/signalk-api';
+  import { fetchAisVesselTrack, navigateToPoint, clearCourse, activateRoute, setActiveRoutePointIndex, deleteRoute, saveWaypoint, updateWaypoint, deleteWaypoint } from '../lib/signalk-api';
   import { AisHullLayer, AisHullDecorationLayer, AisHullBorderLayer, HULL_ANCHOR_DOT, HULL_MOORING_BARS, HULL_AGROUND_RING, HULL_FISHING_GEAR, HULL_NUC, HULL_RESTRICTED, HULL_DRAUGHT } from '../layers/AisHullLayer';
   import { VesselIconLayer, ANCHOR_DOT_GEOMETRY, AGROUND_CIRCLE_GEOMETRY, MOORING_BARS_GEOMETRY, FISHING_GEAR_GEOMETRY, NUC_GEOMETRY, RESTRICTED_MANOEUVRING_GEOMETRY, DRAUGHT_GEOMETRY, MOB_GEOMETRY } from '../layers/VesselIconLayer';
   import { extrapolatePos } from '../lib/deadReckoning';
@@ -1186,7 +1186,7 @@
       // 6. Active route: deck.gl lines (full/leg/bearing) + MapLibre waypoint markers.
       const routeLinePick = overlay.pickObject({ x, y, radius: 6, layerIds: ['route-full', 'route-leg', 'route-bearing'] });
       const routeWptFeats = m.queryRenderedFeatures(e.point, { layers: ['route-waypoints'] });
-      if (routeLinePick?.object || routeWptFeats.length > 0) { showActiveRoutePopup(e.lngLat); return; }
+      if (routeLinePick?.object || routeWptFeats.length > 0) { showActiveRoutePopup(e.lngLat, routeWptFeats[0]); return; }
 
       // 7. All routes on map (MapLibre).
       const allRouteFeats = m.queryRenderedFeatures(e.point, { layers: ['all-routes-line'] });
@@ -1700,16 +1700,23 @@
     });
   }
 
-  function showActiveRoutePopup(lngLat: maplibregl.LngLat): void {
+  function showActiveRoutePopup(lngLat: maplibregl.LngLat, wptFeat?: maplibregl.MapGeoJSONFeature): void {
     if (!map) return;
     const name = route.routeName;
     const canStop = auth.isLoggedIn;
+    const idxRaw = wptFeat?.properties['idx'] as number | null | undefined;
+    const idx = typeof idxRaw === 'number' ? idxRaw : null;
+    const isCurrentNext = idx !== null && idx === route.pointIndex;
+    const canSetNext = idx !== null && !isCurrentNext && auth.isLoggedIn;
+    const pointLabel = idx !== null ? `Point ${String(idx + 1)}` : null;
     const popup = openPopup(new maplibregl.Popup({ closeButton: false, offset: 10, maxWidth: 'none' })
       .setLngLat(lngLat)
       .setHTML(`
         <div class="ais-popup">
-          ${name ? `<div class="ais-popup-title">${name}</div>` : ''}
+          ${name || pointLabel ? `<div class="ais-popup-title">${name ?? ''}${name && pointLabel ? ' — ' : ''}${pointLabel ?? ''}</div>` : ''}
           <div class="ais-links" style="margin-top:0">
+            ${idx !== null ? `<button class="popup-settings-btn set-next-wpt-btn" data-idx="${String(idx)}"
+              ${canSetNext ? '' : isCurrentNext ? 'disabled title="Already the next waypoint"' : 'disabled title="Login required"'}>Set as next waypoint</button>` : ''}
             <button class="popup-settings-btn stop-nav-btn"
               ${canStop ? '' : 'disabled title="Login required"'}>Stop navigation</button>
             <button class="popup-settings-btn" data-settings="routes">Route settings</button>
@@ -1720,6 +1727,13 @@
       const el = ev.target as HTMLElement;
       const settingsBtn = el.closest<HTMLElement>('[data-settings]');
       if (settingsBtn) { popup.remove(); openSettings((settingsBtn.dataset['settings'] ?? 'connection') as SettingsTab); return; }
+      const setNextBtn = el.closest<HTMLButtonElement>('.set-next-wpt-btn');
+      if (setNextBtn && !setNextBtn.disabled && setNextBtn.dataset['idx']) {
+        popup.remove();
+        setActiveRoutePointIndex(settings.signalkHttpUrl, Number(setNextBtn.dataset['idx']), auth.authHeaders)
+          .catch((err: unknown) => { console.error('[route] Failed to set next waypoint:', err); });
+        return;
+      }
       const stopBtn = el.closest<HTMLButtonElement>('.stop-nav-btn');
       if (stopBtn && !stopBtn.disabled) {
         popup.remove();
@@ -2998,7 +3012,6 @@
   $effect(() => {
     const nxtPt   = route.nextPoint;
     const prevPt  = route.previousPoint;
-    void route.geometry;
     void $vesselPosition;
     void settings.appearance.route;
     if (!map || !mapLoaded) return;
@@ -3010,7 +3023,19 @@
     flushLayers();
 
     const wptFeatures: GeoJSON.Feature[] = [];
-    if (nxtPt) wptFeatures.push({ type: 'Feature', geometry: { type: 'Point', coordinates: [nxtPt.longitude, nxtPt.latitude] }, properties: { wtype: 'next' } });
+    const geo = route.geometry;
+    if (geo && route.activeHref) {
+      const coords = geo.geometry.coordinates as [number, number][];
+      coords.forEach((c, i) => {
+        wptFeatures.push({
+          type: 'Feature',
+          geometry: { type: 'Point', coordinates: c },
+          properties: { wtype: i === route.pointIndex ? 'next' : 'point', idx: i },
+        });
+      });
+    } else if (nxtPt) {
+      wptFeatures.push({ type: 'Feature', geometry: { type: 'Point', coordinates: [nxtPt.longitude, nxtPt.latitude] }, properties: { wtype: 'next' } });
+    }
     if (prevPt) wptFeatures.push({ type: 'Feature', geometry: { type: 'Point', coordinates: [prevPt.longitude, prevPt.latitude] }, properties: { wtype: 'prev' } });
     wptSrc.setData({ type: 'FeatureCollection', features: wptFeatures });
   });
