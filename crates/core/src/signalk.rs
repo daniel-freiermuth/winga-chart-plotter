@@ -495,10 +495,44 @@ pub fn prune_stale_vessels(storage: &mut Storage, now_ms: f64, stale_ms: f64) {
     }
 }
 
+/// Workaround for a confirmed bug in the `signalk` crate (v0.7.0, see
+/// `Updatable::update`/`apply_update` in `vessel.rs`/`navigation.rs`): its delta dispatch
+/// matches a path by splitting on `.` and switching on each remaining first segment only,
+/// never checking that the segment is the *last* one. A `"<leaf>.accuracy"` sibling entry
+/// — a common (if non-canonical) GPS-accuracy convention real providers send, e.g.
+/// `signalk-nav-provider` — therefore dispatches to the exact same setter as `"<leaf>"`
+/// itself. Since the crate applies `values` in array order with no special-casing,
+/// whichever of the two entries comes *last* in the delta's `values` array silently
+/// overwrites the other inside `Storage`. Confirmed byte-for-byte by capturing the raw
+/// wire delta on a live boat: courseOverGroundTrue flickered between the real GPS course
+/// and a second value that, every single time, equaled the verbatim
+/// `courseOverGroundTrue.accuracy` sibling of the same delta. We never read accuracy
+/// data, so the only correct fix is to never let these entries reach `Storage::update()`
+/// in the first place.
+fn strip_accuracy_siblings(value: &mut serde_json::Value) {
+    let Some(updates) = value.get_mut("updates").and_then(|u| u.as_array_mut()) else {
+        return;
+    };
+    for update in updates {
+        let Some(values) = update.get_mut("values").and_then(|v| v.as_array_mut()) else {
+            continue;
+        };
+        values.retain(|entry| {
+            !entry
+                .get("path")
+                .and_then(|p| p.as_str())
+                .is_some_and(|p| p.ends_with(".accuracy"))
+        });
+    }
+}
+
 /// Returns an error string on JSON parse failure; unknown/bad messages are silently ignored.
 pub fn apply_message(storage: &mut Storage, json: &str) -> Result<(), String> {
-    let msg: SignalKStreamMessage =
+    let mut raw: serde_json::Value =
         serde_json::from_str(json).map_err(|e| format!("JSON parse error: {e}"))?;
+    strip_accuracy_siblings(&mut raw);
+    let msg: SignalKStreamMessage =
+        serde_json::from_value(raw).map_err(|e| format!("JSON parse error: {e}"))?;
     match msg {
         SignalKStreamMessage::Full(full) => *storage = Storage::new(full),
         SignalKStreamMessage::Delta(delta) => {
@@ -533,6 +567,31 @@ mod tests {
         let mut storage = Storage::new(V1FullFormat::default());
         apply_message(&mut storage, delta).unwrap();
         storage
+    }
+
+    #[test]
+    fn accuracy_sibling_does_not_clobber_course_over_ground_true() {
+        // Reproduces the real-world delta shape from `ws.Disen.signalk-nav-provider`: the
+        // accuracy entry comes *after* the value entry in the array, which is exactly the
+        // ordering that let the upstream `signalk` crate's path dispatch (matches only the
+        // first remaining segment, e.g. "courseOverGroundTrue" out of
+        // "courseOverGroundTrue.accuracy") silently overwrite the real value — see
+        // `strip_accuracy_siblings`.
+        let mut storage = Storage::new(V1FullFormat::default());
+        storage.set_self("vessels.urn:mrn:signalk:uuid:self");
+        apply_message(
+            &mut storage,
+            r#"{
+            "context": "vessels.urn:mrn:signalk:uuid:self",
+            "updates": [{"values": [
+                {"path": "navigation.courseOverGroundTrue", "value": 3.639211760122151},
+                {"path": "navigation.courseOverGroundTrue.accuracy", "value": 1.166534199117212}
+            ]}]
+        }"#,
+        )
+        .unwrap();
+        let state = extract_vessel_state(&storage);
+        assert_eq!(state.cog, Some(3.639211760122151));
     }
 
     #[test]
