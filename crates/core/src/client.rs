@@ -2,11 +2,11 @@
 //! Owns the connection lifecycle and vessel state accumulation.
 //! Calls back into JS when state or connection status changes.
 
-use crate::signalk::{
-    apply_message, extract_ais_binary, extract_vessel_state, prune_stale_vessels, VesselState,
+use crate::skdata::{
+    apply_message, extract_ais_binary, extract_vessel_state, prune_stale_vessels, Storage,
+    VesselState,
 };
 use js_sys::Function;
-use signalk::{Storage, V1FullFormat};
 use std::{cell::RefCell, rc::Rc};
 use wasm_bindgen::{prelude::*, JsCast};
 use web_sys::{CloseEvent, ErrorEvent, MessageEvent, WebSocket, WorkerGlobalScope};
@@ -22,7 +22,7 @@ pub enum ConnectionStatus {
 
 /// Signal K WebSocket client.
 ///
-/// Opens a WebSocket, parses incoming messages in Rust via the `signalk` crate,
+/// Opens a WebSocket, parses incoming messages in Rust via `skdata`,
 /// and calls `on_state_change` whenever navigation state changes, and
 /// `on_status_change` whenever the connection status changes.
 #[wasm_bindgen]
@@ -52,8 +52,7 @@ impl SignalKClient {
     ) -> Result<SignalKClient, JsValue> {
         let ws = WebSocket::new(url)?;
 
-        let storage: Rc<RefCell<Storage>> =
-            Rc::new(RefCell::new(Storage::new(V1FullFormat::default())));
+        let storage: Rc<RefCell<Storage>> = Rc::new(RefCell::new(Storage::default()));
 
         // onopen — subscribe to self navigation at 500ms and all vessels (AIS) at 1000ms
         let status_cb = on_status_change.clone();

@@ -209,10 +209,12 @@ impl Storage {
     }
 
     fn vessel_mut(&mut self, id: &str) -> &mut Vessel {
-        self.vessels.entry(id.to_string()).or_insert_with(|| Vessel {
-            mmsi: mmsi_from_id(id),
-            ..Default::default()
-        })
+        self.vessels
+            .entry(id.to_string())
+            .or_insert_with(|| Vessel {
+                mmsi: mmsi_from_id(id),
+                ..Default::default()
+            })
     }
 }
 
@@ -225,7 +227,12 @@ fn strip_vessels_prefix(context: &str) -> &str {
 /// segments, which are ignored).
 fn mmsi_from_id(id: &str) -> Option<String> {
     let parts: Vec<&str> = id.split(':').collect();
-    if parts.len() >= 5 && parts[0] == "urn" && parts[1] == "mrn" && parts[2] == "imo" && parts[3] == "mmsi" {
+    if parts.len() >= 5
+        && parts[0] == "urn"
+        && parts[1] == "mrn"
+        && parts[2] == "imo"
+        && parts[3] == "mmsi"
+    {
         Some(parts[4].to_string())
     } else {
         None
@@ -337,17 +344,29 @@ fn apply_leaf(vessel: &mut Vessel, path: &str, value: &Json, source: Option<&str
         }
         LeafKind::CourseNextPoint => {
             if let Some(point) = course_point_from_value(value) {
-                vessel.nav.course.get_or_insert_with(CourseState::default).next_point = Some(point);
+                vessel
+                    .nav
+                    .course
+                    .get_or_insert_with(CourseState::default)
+                    .next_point = Some(point);
             }
         }
         LeafKind::CoursePreviousPoint => {
             if let Some(point) = course_point_from_value(value) {
-                vessel.nav.course.get_or_insert_with(CourseState::default).previous_point = Some(point);
+                vessel
+                    .nav
+                    .course
+                    .get_or_insert_with(CourseState::default)
+                    .previous_point = Some(point);
             }
         }
         LeafKind::CourseActiveRoute => {
             if let Some(route) = active_route_from_value(value) {
-                vessel.nav.course.get_or_insert_with(CourseState::default).active_route = Some(route);
+                vessel
+                    .nav
+                    .course
+                    .get_or_insert_with(CourseState::default)
+                    .active_route = Some(route);
             }
         }
     }
@@ -366,7 +385,10 @@ fn active_route_from_value(value: &Json) -> Option<ActiveRoute> {
     let href = value.get("href").and_then(str_from_value)?;
     let name = value.get("name").and_then(str_from_value);
     let point_index = value.get("pointIndex").and_then(Json::as_i64).unwrap_or(0);
-    let reverse = value.get("reverse").and_then(Json::as_bool).unwrap_or(false);
+    let reverse = value
+        .get("reverse")
+        .and_then(Json::as_bool)
+        .unwrap_or(false);
     Some(ActiveRoute {
         href,
         name,
@@ -420,7 +442,8 @@ pub fn apply_message(storage: &mut Storage, json: &str) -> Result<(), String> {
                 continue;
             };
             for entry in values {
-                let (Some(path), Some(value)) = (entry.get("path").and_then(Json::as_str), entry.get("value"))
+                let (Some(path), Some(value)) =
+                    (entry.get("path").and_then(Json::as_str), entry.get("value"))
                 else {
                     continue;
                 };
@@ -530,7 +553,10 @@ pub fn extract_ais_targets(storage: &Storage, now_ms: f64, stale_ms: f64) -> Vec
                 .nav
                 .heading
                 .filter(|&h| (0.0..std::f64::consts::TAU).contains(&h));
-            let cog = vessel.nav.cog.filter(|&c| (0.0..std::f64::consts::TAU).contains(&c));
+            let cog = vessel
+                .nav
+                .cog
+                .filter(|&c| (0.0..std::f64::consts::TAU).contains(&c));
             Some(AisTarget {
                 id: id.clone(),
                 mmsi: vessel.mmsi.clone(),
@@ -609,10 +635,12 @@ pub fn extract_ais_binary(
 /// Vessels that lack a parseable datetime are left in place — they will never appear
 /// in AIS target snapshots but also don't consume significant memory.
 pub fn prune_stale_vessels(storage: &mut Storage, now_ms: f64, stale_ms: f64) {
-    storage.vessels.retain(|_id, vessel| match vessel.nav.datetime_ms {
-        Some(ms) => now_ms - ms <= stale_ms,
-        None => true, // no parseable datetime → keep
-    });
+    storage
+        .vessels
+        .retain(|_id, vessel| match vessel.nav.datetime_ms {
+            Some(ms) => now_ms - ms <= stale_ms,
+            None => true, // no parseable datetime → keep
+        });
 }
 
 #[cfg(test)]
@@ -853,7 +881,10 @@ mod tests {
         let next = course.next_point.as_ref().expect("nextPoint should be set");
         assert!((next.latitude - 59.92).abs() < 1e-9);
         assert!((next.longitude - 24.80).abs() < 1e-9);
-        let route = course.active_route.as_ref().expect("activeRoute should be set");
+        let route = course
+            .active_route
+            .as_ref()
+            .expect("activeRoute should be set");
         assert_eq!(route.href, "/resources/routes/abc");
         assert_eq!(route.name, Some("Test Route".to_string()));
         assert_eq!(route.point_index, 2);

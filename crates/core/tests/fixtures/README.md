@@ -1,9 +1,12 @@
 # Wire-delta fixtures
 
-Used for Phase 1 parity testing: the same fixture is fed through the old
-`signalk`-crate-based path (`crate::signalk`) and the new `skdata` path, and
-the two `VesselState`/`AisTarget`/`CourseState` outputs must be identical
-before the old crate dependency is removed.
+Originally captured to dual-run parity-test `skdata` against the
+`signalk`-crate-backed implementation it replaced (see `KNOWLEDGE_BASE.md`
+ADR-009). Now that the cutover is complete (the `signalk` crate dependency
+and `crates/core/src/signalk.rs` are gone), `crates/core/tests/fixtures_test.rs`
+uses these same fixtures as plain regression tests pinning `skdata`'s
+behaviour against real/spec-verified wire bytes rather than just hand-written
+literals.
 
 | File | Provenance |
 |---|---|
