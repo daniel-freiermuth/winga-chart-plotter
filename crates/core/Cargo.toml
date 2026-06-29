@@ -13,6 +13,7 @@ serde-wasm-bindgen = "0.6"
 serde_json = "1"
 signalk = "0.7"
 js-sys = "0.3"
+phf = { version = "0.11", features = ["macros"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 web-sys = { version = "0.3", features = [

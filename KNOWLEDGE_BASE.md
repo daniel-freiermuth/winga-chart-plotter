@@ -243,6 +243,26 @@ Policy is scattered across `App.svelte`. Adding a second source (NMEA USB dongle
 **Future direction:**  
 If sources multiply, extract a source-selector/merger layer that receives all source streams and publishes a single resolved state into the stores. Rules (which source wins per field) would be explicit and testable.
 
+
+### ADR-009: SignalK data-layer replacement — Phase 0 codegen spike results
+
+**Context:** The `signalk` crate (v0.7.0, github.com/balp/signalk) has a confirmed dispatch bug (recursive first-segment path matching lets a `.accuracy` sibling silently clobber its parent leaf, e.g. `navigation.courseOverGroundTrue.accuracy` overwriting `navigation.courseOverGroundTrue`) plus permanent gaps (discards `$source`/`timestamp`/`pgn`/`sentence` metadata, private types forcing JSON round-trips, single-maintainer/14-months-stale). Decision: replace it with a purpose-built `skdata` module. Separately, the app's v2 REST surface (`app/src/lib/signalk-api.ts`) and great-circle math (`app/src/lib/geoMath.ts`) are candidates to move into Rust/WASM. Before committing to hand-written vs. generated types, a feasibility spike tested whether `typify` (JSON Schema → Rust) and `progenitor` (OpenAPI → Rust client) could do this safely. Full spike evidence: `history://TypifySpike`, `history://ProgenitorSpike`.
+
+**Spike 0a — typify against SignalK's real `definitions.json`/`navigation.json`: NO-GO.**
+- Fails its own bar outright: generated `NumberValue`/`StringValue` fail `cargo clippy --all-targets --all-features -- -D warnings` with 5 unavoidable `clippy::derivable_impls` errors — no `TypeSpaceSettings` flag suppresses this; only a hand-edit or a blanket `#[allow]` does (even Oxide's own `cargo-typify` example output ships with blanket allows, confirming this is not avoidable by configuration).
+- Two more independent disqualifiers: the unmodified `definitions.json` doesn't generate at all (hard `Err` on an unrelated GeoJSON tuple-array construct — needed manual schema pruning just to get any output), and cross-file `$ref` (`navigation.json` → `../definitions.json`, the normal shape of SignalK's per-subsystem schema split) **panics** typify outright (`external references are not supported`) with no workaround in the builder API.
+- The premise that leaf values are `anyOf`-polymorphic (bare number OR object-with-metadata) doesn't hold for these two files — no such `anyOf` exists there. `allOf` merging does work cleanly (one struct per leaf), but duplicates the six common fields (`$source`/`timestamp`/`pgn`/`sentence`/`meta`/`_attr`) across every leaf struct instead of flattening — a known, documented typify limitation.
+
+**Spike 0b — progenitor against the v2 Resources/Course/Notifications/History OpenAPI specs: qualified GO, high real-world risk.**
+- All 4 specs eventually generate and pass `cargo build --target wasm32-unknown-unknown` cleanly (plain `async fn`s over reqwest's wasm `fetch()` backend — confirmed via `cargo tree`: no tokio/hyper/native-tls in the dependency graph).
+- But **zero of the 4 specs work unmodified.** Every one required spec-JSON preprocessing (never generated-code edits) to route around 3 distinct upstream progenitor/typify bugs hit on essentially every operation: a panic on the universal "200 success + differently-typed `default` error" OpenAPI idiom, a `todo!()` panic on JSON-Schema `type: "null"` (which TypeBox — signalk-server's schema-export tool — emits, but is invalid in a doc declared `openapi: 3.0.0`), and a `typify::InvalidValue` panic on `anyOf`-of-enum-literals with a `default`. Fixing the first two costs **typed error decoding on 47 of 60 total operations** (downgraded to `Error<()>`). One fix (Notifications) needed a non-obvious reserved-method-name collision workaround that fails silently — only surfaces via an actual `cargo build`, not "codegen succeeded."
+- **Bigger problem than the bugs:** none of the 4 v2 APIs ship a static, checked-in OpenAPI JSON file anymore (the brief's premise that Resources had one is stale — it's TS-sourced now too). The spec is reachable only via a live v2-enabled signalk-server's `/signalk/v2/api/openapi/:api` endpoint (demo.signalk.org doesn't expose v2 at all) or by shallow-cloning signalk-server and running an `npm install` + `tsc` build of a workspace package just to evaluate a TS module. **There is no stable, versioned artifact to pin a Rust build against** — every spec/dependency bump on signalk-server's side risks silently breaking or needing hand re-patching the extraction+preprocessing pipeline, with no compile-time signal until someone runs it again.
+
+**Decision: hand-rolled for both Phase 1 (v1 data layer) and Phase 2 (v2 REST), not codegen.**
+- Phase 1: typify is a clean, unconditional NO-GO — no alternative.
+- Phase 2: progenitor is technically GO, but the cost (a bespoke multi-step extraction pipeline with hardcoded workarounds for 3 upstream bugs, no pinned artifact, lost typed errors on most endpoints, re-validate-by-hand on every signalk-server version bump) is worse than the problem it solves. The v2 surface being ported is ~600 LOC of straightforward `fetch()` + hand-typed interfaces — hand-writing it once in Rust, the same way `skdata` is hand-written, is more boring, more maintainable, and removes a fragile non-reproducible build dependency. Use the official OpenAPI specs (re-extracted ad hoc, same method as the spike) as a **reference to write against**, not as a codegen input.
+- Fallback design from the original plan now applies to both phases unconditionally: hand-written `#[derive(Deserialize)]` types for exactly the leaves/endpoints consumed, dispatched via an exact full-leaf-path `phf::Map` (kills the accuracy-sibling bug class structurally — a `.accuracy` suffix is simply not in the map) instead of the crate's recursive segment-matching.
+
 ---
 
 ## Implemented Features (as of 2026-05)
@@ -369,4 +389,4 @@ Tauri is packaging, not a dependency.
 
 ---
 
-*Last updated: 2026-05-30 — added Implemented Features section, updated stack summary, ADR-008 (source selection)*
+*Last updated: 2026-06-28 — added ADR-009 (SignalK data-layer replacement Phase 0 spike: typify NO-GO, progenitor qualified-GO-but-not-worth-it; geoMath.ts migrated to Rust/WASM)*

@@ -1,0 +1,66 @@
+[
+  {
+    "context": "vessels.urn:mrn:signalk:uuid:168eec6c-6d2f-4ce4-b5fe-911711ebbcf0",
+    "updates": [
+      {
+        "$source": "signalk-server",
+        "timestamp": "2026-06-29T12:00:00.000Z",
+        "values": [
+          {
+            "path": "navigation.course.nextPoint",
+            "value": {
+              "position": {
+                "latitude": 59.92,
+                "longitude": 24.80,
+                "altitude": null
+              },
+              "type": "Location"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "context": "vessels.urn:mrn:signalk:uuid:168eec6c-6d2f-4ce4-b5fe-911711ebbcf0",
+    "updates": [
+      {
+        "$source": "signalk-server",
+        "timestamp": "2026-06-29T12:00:00.000Z",
+        "values": [
+          {
+            "path": "navigation.course.previousPoint",
+            "value": {
+              "position": {
+                "latitude": 59.7150513,
+                "longitude": 24.7307394,
+                "altitude": null
+              }
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "context": "vessels.urn:mrn:signalk:uuid:168eec6c-6d2f-4ce4-b5fe-911711ebbcf0",
+    "updates": [
+      {
+        "$source": "signalk-server",
+        "timestamp": "2026-06-30T08:00:00.000Z",
+        "values": [
+          {
+            "path": "navigation.course.activeRoute",
+            "value": {
+              "href": "/signalk/v1/api/resources/routes/3b1f1f0a-6e1e-4f0e-9b7a-1f1c8e9a2b3c",
+              "name": "Helsinki to Tallinn",
+              "pointIndex": 2,
+              "pointTotal": 6,
+              "reverse": false
+            }
+          }
+        ]
+      }
+    ]
+  }
+]

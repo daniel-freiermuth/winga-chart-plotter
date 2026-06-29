@@ -1,0 +1,11 @@
+{
+  "name": "signalk-server",
+  "version": "2.28.0",
+  "self": "vessels.urn:mrn:signalk:uuid:168eec6c-6d2f-4ce4-b5fe-911711ebbcf0",
+  "roles": [
+    "master",
+    "main"
+  ],
+  "timestamp": "2026-06-29T18:54:23.218Z",
+  "serverStartId": "4fae307a-21ba-435b-a90e-a3bbe9e67748"
+}

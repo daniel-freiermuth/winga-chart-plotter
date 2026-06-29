@@ -1,0 +1,58 @@
+{
+  "context": "vessels.urn:mrn:imo:mmsi:248071000",
+  "updates": [
+    {
+      "source": {
+        "label": "n2k-sample-data",
+        "type": "NMEA2000",
+        "pgn": 129038,
+        "src": "43"
+      },
+      "$source": "n2k-sample-data.43",
+      "timestamp": "2014-08-15T19:05:37.063Z",
+      "values": [
+        {
+          "path": "navigation.speedOverGround",
+          "value": 7.2
+        },
+        {
+          "path": "navigation.courseOverGroundTrue",
+          "value": 4.4541
+        },
+        {
+          "path": "navigation.position",
+          "value": {
+            "longitude": 24.8868133,
+            "latitude": 59.8311633
+          }
+        },
+        {
+          "path": "navigation.rateOfTurn",
+          "value": 0
+        },
+        {
+          "path": "navigation.headingTrue",
+          "value": 4.4854
+        },
+        {
+          "path": "navigation.state",
+          "value": "motoring"
+        },
+        {
+          "path": "navigation.specialManeuver",
+          "value": "not available"
+        },
+        {
+          "path": "",
+          "value": {
+            "mmsi": "248071000"
+          }
+        },
+        {
+          "path": "sensors.ais.class",
+          "value": "A"
+        }
+      ]
+    }
+  ]
+}

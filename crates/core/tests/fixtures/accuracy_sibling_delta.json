@@ -1,0 +1,17 @@
+{
+  "context": "vessels.urn:mrn:signalk:uuid:self",
+  "updates": [
+    {
+      "values": [
+        {
+          "path": "navigation.courseOverGroundTrue",
+          "value": 3.639211760122151
+        },
+        {
+          "path": "navigation.courseOverGroundTrue.accuracy",
+          "value": 1.166534199117212
+        }
+      ]
+    }
+  ]
+}
