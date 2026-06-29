@@ -1,4 +1,4 @@
-import { gcDistanceNm } from '../lib/geoMath';
+import { gcDistanceNm } from '../lib/wasmGeo';
 
 export interface PlannerWaypoint {
   lon: number;

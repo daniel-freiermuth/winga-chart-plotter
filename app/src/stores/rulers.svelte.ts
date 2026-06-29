@@ -1,4 +1,4 @@
-import { gcBearingDeg, gcDistanceNm } from '../lib/geoMath';
+import { gcBearingDeg, gcDistanceNm } from '../lib/wasmGeo';
 
 export interface RulerEndpoint {
   lon: number;

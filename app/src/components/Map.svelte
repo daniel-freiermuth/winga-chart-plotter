@@ -23,7 +23,7 @@
   import { routes } from '../stores/routes.svelte';
   import { waypoints } from '../stores/waypoints.svelte';
   import { track } from '../stores/track.svelte';
-  import { gcLine, gcBearingDeg, gcDistanceNm } from '../lib/geoMath';
+  import { gcLine, gcBearingDeg, gcDistanceNm } from '../lib/wasmGeo';
   import { fetchAndResolveStyle } from '../lib/resolveStyle';
   import { auth } from '../stores/auth.svelte';
   import { fetchAisVesselTrack, navigateToPoint, clearCourse, activateRoute, setActiveRoutePointIndex, deleteRoute, saveWaypoint, updateWaypoint, deleteWaypoint } from '../lib/signalk-api';

@@ -1,3 +1,4 @@
+pub mod geo;
 pub mod projection;
 pub mod signalk;
 
