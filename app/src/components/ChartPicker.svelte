@@ -162,6 +162,7 @@
     min-width: 280px;
     max-width: 360px;
     max-height: calc(100vh - 54px);
+    max-height: calc(100dvh - 54px);
     display: flex;
     flex-direction: column;
     box-shadow: 0 8px 32px rgba(0,0,0,0.5);
@@ -209,6 +210,7 @@
     margin: 0;
     padding: 0;
     overflow-y: auto;
+    min-height: 0;
   }
 
   .chart-row {
