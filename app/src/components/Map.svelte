@@ -874,7 +874,7 @@
               snapPts.push({ id: ids[i]!, position: { longitude: lon, latitude: lat } });
               const cog = hd[i * S + AIS_F_COG]!;
               const sog = hd[i * S + AIS_F_SOG]!;
-              if (!isNaN(cog) && !isNaN(sog) && sog > 0.1) {
+              if (!isNaN(cog) && !isNaN(sog)) {
                 const rot = hd[i * S + AIS_F_ROT]!;
                 const lastPosMs = aisUploadTimestamp - hd[i * S + AIS_F_AGE]! * 1000;
                 const [gLon, gLat] = extrapolatePos(lon, lat, cog, sog, isNaN(rot) ? 0 : rot, lastPosMs, nowForSnap);
@@ -2129,7 +2129,7 @@
     //   Hull gate    (heading+dims): hullIndices — gates the morph layers' getLength so
     //                                vessels without a real hull stay icon-only forever.
     const visIndices:            number[] = []; // all vessels → arrow (SART excluded)
-    const ghostIndices:          number[] = []; // SOG > 0.1 m/s → ghost DR arrow + COG
+    const ghostIndices:          number[] = []; // valid SOG/COG → ghost DR arrow + COG
     const cogIndices:            number[] = [];
     const hullIndices:           number[] = [];
     const anchoredIndices:       number[] = []; // nav state "anchored" → anchor-ball mark
@@ -2140,6 +2140,19 @@
     const restrictedIndices:     number[] = []; // nav state 3 "restrictedManoeuvrability" → ball-diamond-ball
     const draughtIndices:        number[] = []; // nav state 4 "constrainedByDraught" → side-bars mark
     const sarIndices:            number[] = []; // nav state 14 SART/MOB → special red icon, no arrow
+    // Ghost-decoration subsets — a state mark's GHOST (dead-reckoned) copy must only exist
+    // for vessels actually qualifying for dead-reckoning (same gate as ghostIndices above:
+    // valid SOG/COG telemetry to extrapolate from at all). Without this, a state mark's
+    // ghost copy could exist with no corresponding main ghost arrow, or vice versa. Note a
+    // vessel reporting SOG ≈ 0 still gets a ghost — it just dead-reckons to its own
+    // last-known position, so the ghost and confirmed marks simply coincide (no drift).
+    const anchoredGhostIndices:    number[] = [];
+    const agroundGhostIndices:     number[] = [];
+    const mooredGhostIndices:      number[] = [];
+    const fishingGhostIndices:     number[] = [];
+    const nucGhostIndices:         number[] = [];
+    const restrictedGhostIndices:  number[] = [];
+    const draughtGhostIndices:     number[] = [];
 
     for (let i = 0; i < n; i++) {
       // Nav state lookup first — SART vessels are routed entirely to their own layer.
@@ -2157,7 +2170,8 @@
       // Motion — SOG only, nav state irrelevant
       const isog = hotData[i * S + AIS_F_SOG]!;
       const icog = hotData[i * S + AIS_F_COG]!;
-      if (!isNaN(icog) && !isNaN(isog) && isog > 0.1) {
+      const isGhost = !isNaN(icog) && !isNaN(isog);
+      if (isGhost) {
         ghostIndices.push(i);
         cogIndices.push(i);
       }
@@ -2172,23 +2186,32 @@
 
       // State annotations — nav state only, SOG and ship type irrelevant. One morph layer
       // per state handles both the icon-zoom mark and the hull-zoom mark (and everything
-      // between); no separate hull-having subset needed.
+      // between); no separate hull-having subset needed. The Ghost-subset push mirrors
+      // ghostIndices's own gate so a state mark's ghost copy never exists without a
+      // genuine dead-reckoning prediction also being shown for that vessel.
       if (ns.includes('aground')) {
         agroundIndices.push(i);
+        if (isGhost) agroundGhostIndices.push(i);
       } else if (ns.includes('anchor')) {
         anchoredIndices.push(i);
+        if (isGhost) anchoredGhostIndices.push(i);
       } else if (ns.includes('moor')) {
         mooredIndices.push(i);
+        if (isGhost) mooredGhostIndices.push(i);
       } else if (ns.includes('fishing')) {
         fishingIndices.push(i);
+        if (isGhost) fishingGhostIndices.push(i);
       } else if (ns.includes('command')) {
         // "notUnderCommand" — only nav state containing "command"
         nucIndices.push(i);
+        if (isGhost) nucGhostIndices.push(i);
       } else if (ns.includes('restrict')) {
         restrictedIndices.push(i);
+        if (isGhost) restrictedGhostIndices.push(i);
       } else if (ns.includes('draught')) {
         // "constrainedByHerDraught" / "constrainedByDraught"
         draughtIndices.push(i);
+        if (isGhost) draughtGhostIndices.push(i);
       }
     }
 
@@ -2250,22 +2273,22 @@
           })
         : null;
 
-    const confirmedMainLayer   = makeMorphLayer('ais-confirmed-main',   visIndices,        MORPH_ARROW,        false, true);
-    const ghostMainLayer       = makeMorphLayer('ais-ghost-main',       ghostIndices,      MORPH_ARROW,        true,  true);
-    const anchoredLayer        = makeMorphLayer('ais-anchored',         anchoredIndices,   MORPH_ANCHOR_DOT,   false, false);
-    const anchoredGhostLayer   = makeMorphLayer('ais-anchored-ghost',   anchoredIndices,   MORPH_ANCHOR_DOT,   true,  false);
-    const mooredLayer          = makeMorphLayer('ais-moored',           mooredIndices,     MORPH_MOORING_BARS, false, false);
-    const mooredGhostLayer     = makeMorphLayer('ais-moored-ghost',     mooredIndices,     MORPH_MOORING_BARS, true,  false);
-    const agroundLayer         = makeMorphLayer('ais-aground',          agroundIndices,    MORPH_AGROUND_RING, false, false);
-    const agroundGhostLayer    = makeMorphLayer('ais-aground-ghost',    agroundIndices,    MORPH_AGROUND_RING, true,  false);
-    const fishingLayer         = makeMorphLayer('ais-fishing',          fishingIndices,    MORPH_FISHING_GEAR, false, false);
-    const fishingGhostLayer    = makeMorphLayer('ais-fishing-ghost',    fishingIndices,    MORPH_FISHING_GEAR, true,  false);
-    const nucLayer             = makeMorphLayer('ais-nuc',              nucIndices,        MORPH_NUC,          false, false);
-    const nucGhostLayer        = makeMorphLayer('ais-nuc-ghost',        nucIndices,        MORPH_NUC,          true,  false);
-    const restrictedLayer      = makeMorphLayer('ais-restricted',       restrictedIndices, MORPH_RESTRICTED,   false, false);
-    const restrictedGhostLayer = makeMorphLayer('ais-restricted-ghost', restrictedIndices, MORPH_RESTRICTED,   true,  false);
-    const draughtLayer         = makeMorphLayer('ais-draught',          draughtIndices,    MORPH_DRAUGHT,      false, false);
-    const draughtGhostLayer    = makeMorphLayer('ais-draught-ghost',    draughtIndices,    MORPH_DRAUGHT,      true,  false);
+    const confirmedMainLayer   = makeMorphLayer('ais-confirmed-main',   visIndices,             MORPH_ARROW,        false, true);
+    const ghostMainLayer       = makeMorphLayer('ais-ghost-main',       ghostIndices,           MORPH_ARROW,        true,  true);
+    const anchoredLayer        = makeMorphLayer('ais-anchored',         anchoredIndices,        MORPH_ANCHOR_DOT,   false, false);
+    const anchoredGhostLayer   = makeMorphLayer('ais-anchored-ghost',   anchoredGhostIndices,   MORPH_ANCHOR_DOT,   true,  false);
+    const mooredLayer          = makeMorphLayer('ais-moored',           mooredIndices,          MORPH_MOORING_BARS, false, false);
+    const mooredGhostLayer     = makeMorphLayer('ais-moored-ghost',     mooredGhostIndices,     MORPH_MOORING_BARS, true,  false);
+    const agroundLayer         = makeMorphLayer('ais-aground',          agroundIndices,         MORPH_AGROUND_RING, false, false);
+    const agroundGhostLayer    = makeMorphLayer('ais-aground-ghost',    agroundGhostIndices,    MORPH_AGROUND_RING, true,  false);
+    const fishingLayer         = makeMorphLayer('ais-fishing',          fishingIndices,         MORPH_FISHING_GEAR, false, false);
+    const fishingGhostLayer    = makeMorphLayer('ais-fishing-ghost',    fishingGhostIndices,    MORPH_FISHING_GEAR, true,  false);
+    const nucLayer             = makeMorphLayer('ais-nuc',              nucIndices,             MORPH_NUC,          false, false);
+    const nucGhostLayer        = makeMorphLayer('ais-nuc-ghost',        nucGhostIndices,        MORPH_NUC,          true,  false);
+    const restrictedLayer      = makeMorphLayer('ais-restricted',       restrictedIndices,      MORPH_RESTRICTED,   false, false);
+    const restrictedGhostLayer = makeMorphLayer('ais-restricted-ghost', restrictedGhostIndices, MORPH_RESTRICTED,   true,  false);
+    const draughtLayer         = makeMorphLayer('ais-draught',          draughtIndices,         MORPH_DRAUGHT,      false, false);
+    const draughtGhostLayer    = makeMorphLayer('ais-draught-ghost',    draughtGhostIndices,    MORPH_DRAUGHT,      true,  false);
 
     // MOB / AIS-SART — nav state 14. Replaces the arrow with a red swimmer icon. No hull
     // counterpart exists (a person overboard / SART beacon has no AIS length/beam) — it
