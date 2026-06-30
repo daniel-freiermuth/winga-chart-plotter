@@ -1,0 +1,313 @@
+# Changelog
+
+All notable changes to this project are documented in this file.
+
+## [0.16.0] - 2026-06-30
+
+### Added
+- Activate specific waypoints of a route directly, instead of only the next one.
+- Morph AIS vessels seamlessly between icon and rendered shape.
+
+### Changed
+- Move geo-math computations into Rust/WASM.
+- Replace the third-party `signalk` crate with a purpose-built parser — fixes a dispatch bug where `.accuracy` sibling paths would silently overwrite `courseOverGroundTrue`.
+- Move Signal K API v2 handling into Rust/WASM.
+
+### Fixed
+- Persist follow-vessel lock, map rotation mode and projection choice across page reloads.
+- Don't draw double lines for vessel states on icons.
+- Don't elongate day symbols on vessel shapes.
+- Show even very slow vessels in dead-reckoning.
+- Adapt the settings panel to the available screen size.
+
+## [0.15.0] - 2026-06-25
+
+### Added
+- Start the map at the last viewed position, falling back to the vessel's position.
+
+### Fixed
+- Don't subscribe to every vessel and path over the Signal K WebSocket — only what's displayed.
+- Draw the active route, bearing line and own-vessel markers on top of AIS vessels.
+- Make widgets usable when served over plain HTTP (non-secure context).
+
+## [0.14.1] - 2026-06-15
+
+### Changed
+- Join chart offset and pinned-position state into a single type for type safety.
+
+### Fixed
+- Guard `onZoomEnd` against infinite loops.
+- Avoid a MapLibre bug that triggered infinite recursion on zoom.
+- Stop globe mode, pinned position and wheel-scroll from jarring the vessel's on-screen location.
+- Load newly added chart layers in the currently active projection.
+
+## [0.14.0] - 2026-06-14
+
+### Added
+- Support for plotter-extensions.
+
+## [0.13.0] - 2026-06-14
+
+### Changed
+- Move the projection toggle button into the charts pane.
+
+### Fixed
+- Drop an accidentally committed zoom-debug layer.
+- Don't unlock the chart after a ruler interaction.
+
+## [0.12.1] - 2026-06-14
+
+### Added
+- Restored browser-location support (reverts the removal shipped in 0.12.0 — it broke more setups than it fixed).
+
+### Fixed
+- Pitch and zoom around the vessel correctly when position is locked, on touch screens.
+- No sticky `:hover` state left behind on touch devices.
+- Tweak line annotation rendering.
+
+## [0.12.0] - 2026-06-13
+
+### Added
+- Honor `signalk-chart`'s tile URL for vector charts.
+- Lock follow-vessel position until explicitly unlocked.
+- Lock chart rotation until explicitly unlocked.
+- Indicator for when the charts pane is open.
+- Layer visibility control.
+
+### Changed
+- Disable double-click-to-zoom (conflicted with chart interaction).
+- Show available charts immediately, without waiting on a round trip.
+- Style locked chart rotation consistently with locked vessel position.
+- Drop the redundant own-track display toggle.
+- Optimize the settings commit flow.
+- Reduce data uploaded to the GPU when a layer isn't needed.
+
+### Removed
+- **Breaking:** dropped support for browser-supplied geolocation (reverted in 0.12.1).
+
+### Fixed
+- Stop flickering on data reload.
+- Draw dead-reckoning lines for exactly as long as the predictor horizon.
+- Catch transient chart-loading errors instead of failing hard.
+- Honor the fixed vessel position when rotating or pitching the map manually.
+- Show at most one popup at a time.
+- Fix own-track API requests.
+
+## [0.11.4] - 2026-06-03
+
+### Changed
+- Nicer default colors.
+
+### Fixed
+- Incorrect license metadata published to npm.
+- Render at full frame rate while actively interacting with the map.
+
+## [0.11.3] - 2026-06-03
+
+### Added
+- Show Signal K connection status in the settings cogwheel.
+
+### Changed
+- Guard ruler snap-point calculation behind a cheaper pre-check.
+
+### Fixed
+- Force Firefox to keep delivering high-precision location updates continuously.
+
+## [0.11.2] - 2026-06-02
+
+### Fixed
+- Don't change camera perspective when entering or leaving tracking view.
+- Fix route segment text color.
+- Hide the built-in MapLibre button.
+- Show the route-editing HUD immediately instead of after a delay.
+
+## [0.11.1] - 2026-06-02
+
+### Fixed
+- Correct Signal K auth scheme handling.
+
+## [0.11.0] - 2026-06-01
+
+### Added
+- Show all routes on the chart, not just the active one.
+- Login flow.
+- "Navigate Here" button.
+- Route stop action from the route popup.
+- Button to activate a route.
+- Route planner, including editing existing routes and route deletion.
+- Waypoints support.
+- Man Overboard (MOB) button with a custom swimmer icon and confirmation flow.
+- "Follow Vessel" mode that locks the vessel into place.
+
+### Changed
+- Use `easeTo` instead of `jumpTo` for heading-based chart rotation, and smooth deceleration once compass heading stabilizes.
+- Only show populated fields in the AIS popup.
+- Consolidate the map toolbar into a single flex column; reorder buttons.
+- Clean up click-handling logic.
+
+### Fixed
+- Really limit AIS animation to the configured frame rate.
+- Draw the own vessel on top of AIS targets.
+- Stabilize and center the rotation-mode button.
+- MOB notifications: use the v1 REST API (v2 has no notifications endpoint), correct request body shape, and don't cancel on a second press.
+- Remove an invalid `uniform` keyword inside the `layerUniforms` UBO that broke some GPUs.
+- Redraw on COG (course-over-ground) change.
+- Fix the vessel track API integration.
+
+## [0.10.0] - 2026-05-31
+
+### Added
+- Own-vessel track recording and display.
+- AIS target track fetching.
+- BRG (bearing-up) chart rotation mode.
+- "Keep screen on" option.
+- Request a higher-quality GPS fix from the browser.
+
+### Changed
+- Ignore the active route's course when using the browser's own GPS.
+
+### Fixed
+- Draw routes crossing the antimeridian correctly, using great-circle segments.
+- Improve browser-GPS performance by avoiding unnecessary updates; use `jumpTo` instead of `easeTo` for compass updates.
+
+## [0.9.0] - 2026-05-30
+
+### Added
+- More advanced color picker.
+- Borders for vessel polygons.
+- Deep links into specific settings panels.
+
+### Fixed
+- Performance of browser-GPS-driven updates.
+
+## [0.8.0] - 2026-05-29
+
+### Changed
+- Coalesce browser position updates for better performance.
+
+## [0.7.0] - 2026-05-29
+
+### Added
+- Show the vessel's current route on the chart.
+- Use compass heading from the browser as a fallback source.
+- "About" section.
+
+### Changed
+- Delete a ruler via its popup instead of a small X control.
+- Reorganize the settings panel.
+
+## [0.6.0] - 2026-05-29
+
+### Added
+- Browser GPS toggle in settings.
+- Show map scale in nautical miles.
+
+### Fixed
+- AIS icon no longer cross-fades when no hull polygon is drawn.
+- MVT/S57 chart loading no longer fails permanently when the first style fetch fails.
+
+## [0.5.0] - 2026-05-29
+
+### Added
+- North indicator compass shown whenever the map isn't North-up.
+
+### Changed
+- Narrow the AIS arrow icon; cap the dead-reckoning predictor to one full circle.
+
+### Fixed
+- Guard `style.load` handlers and set an explicit text font for AIS labels.
+- Remap unsupported glyph fonts; force a service-worker update on deploy.
+- Move the north indicator below the zoom controls.
+- Disable MapLibre's `bearingSnap` (set to 0) so small heading changes aren't suppressed.
+
+## [0.4.0] - 2026-05-28
+
+### Added
+- Auto-reconnect the Signal K WebSocket on disconnect or when the app returns from background.
+- Support for S57/MVT vector charts.
+
+### Changed
+- Raise `maxPitch` to 85° for a flatter 3D view.
+
+### Fixed
+- Apply the vessel name from the REST API into the AIS "cold" map.
+- Handle `{-y}` (TMS) tile URL schemes.
+- Set the browser tab title to "Winga Chart Plotter".
+- Make PWA manifest paths relative for subpath deployments.
+
+## [0.3.0] - 2026-05-28
+
+### Added
+- Callsign, port, flag and air-height fields in vessel info.
+- HF callsign and skipper name in vessel info.
+- Navigational status in the AIS vessel-info popup.
+- Live-updating age counter in the AIS popup.
+- FPS configuration option.
+- AIS decorations.
+- Disambiguation popup when clicking overlapping AIS targets.
+- Adaptive AIS icon border color.
+
+### Fixed
+- Apply the vessel name from the REST API into the AIS cold map.
+- Reverted the signalk-aisstream ROT-plugin compensation workaround — it caused more problems than it solved.
+
+## [0.2.1] - 2026-05-28
+
+### Fixed
+- Don't call `easeTo` during user interactions.
+- Remove the built-in MapLibre compass button (superseded by the custom rotation-mode control).
+
+## [0.2.0] - 2026-05-27
+
+### Added
+- Map rotation modes: North-up, COG, heading, bearing and manual, with a toggle button.
+
+## [0.1.7] - 2026-05-27
+
+### Changed
+- Add `repository` field to `package.json` (npm packaging metadata).
+
+## [0.1.6] - 2026-05-27
+
+### Changed
+- Isolate `maplibre-gl` into its own build chunk for better caching and load performance.
+
+## [0.1.5] - 2026-05-27
+
+### Changed
+- Use `logo_with_border.png` for all app icons.
+
+### Fixed
+- Use a relative base path for Signal K webapp subpath mounting, restricted to production builds.
+- Don't pass a `[1,0]` line-dasharray for solid lines.
+- Add a character set to ruler `TextLayer`s so °, · and ✕ render correctly.
+
+## [0.1.0] - 2026-05-26
+
+Initial public groundwork: the first end-to-end pipeline from Signal K through the Rust/WASM core to a MapLibre-rendered chart with AIS overlays.
+
+### Added
+- First full data pipeline: Signal K connection and state handling moved into Rust/WASM.
+- Configurable Signal K server connection, with error display.
+- Heading, rhumb-line and great-circle line rendering.
+- Switchable map projections.
+- Support for the Signal K charts API, plus WMS/WMTS chart sources.
+- AIS target rendering, including real-world vessel size, popups with extra vessel info, and timestamps.
+- AIS cross-fade-free dead-reckoning animation.
+- Links to external vessel-tracking platforms from the AIS popup.
+- Adjustable AIS COG line length.
+- "Fly to vessel" button; sticky follow-vessel mode; remembered chart layer selection.
+- Fullscreen support and installable PWA (incl. offline app-shell service worker).
+- Rulers for on-chart distance/bearing measurement.
+- WebGL context-recovery handling.
+- Signal K webapp packaging with automatic server URL detection.
+- Zero-copy typed-array AIS data pipeline; AIS icons moved to the GPU.
+
+### Changed
+- AIS targets and overlays now render correctly in globe mode, including when zoomed out, rotated or tilted.
+- Self-animating AIS layers, eliminating per-frame `setProps()` calls.
+- Read zoom from the viewport during `draw()` instead of rebuilding layers on zoom change.
+- Switched the deck.gl overlay to non-interleaved rendering mode for better performance; coalesced self-vessel position updates; throttled AIS label updates to 1Hz.
+
+### Fixed
+- Numerous early-stage fixes: vessel rendering across world copies, rhumb-line behavior near the poles, type-checking errors, premature `setProjection` calls, missing speed/heading updates, mobile map freezing, duplicate AIS popups, missing/incomplete AIS target data, ghost rendering for hull-less vessels, line-style handling, and Mercator-correct GPU point scaling.
