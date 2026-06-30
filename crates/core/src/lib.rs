@@ -1,6 +1,7 @@
 pub mod geo;
 pub mod projection;
 pub mod skdata;
+pub mod skrest;
 
 #[cfg(target_arch = "wasm32")]
 pub mod client;

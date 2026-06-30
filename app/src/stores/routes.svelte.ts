@@ -1,5 +1,5 @@
 import type { Feature, LineString } from 'geojson';
-import { fetchAllRoutes } from '../lib/signalk-api';
+import { fetchAllRoutes } from '../lib/wasmRest';
 
 export interface ServerRoute {
   uuid: string;

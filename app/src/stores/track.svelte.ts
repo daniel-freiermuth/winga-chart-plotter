@@ -1,5 +1,5 @@
 import { vesselState } from './vessel';
-import { fetchTrack } from '../lib/signalk-api';
+import { fetchTrack } from '../lib/wasmRest';
 
 // ~5 metres in degrees² — fast planar approximation, good enough for this threshold
 const MIN_DIST_SQ_DEG = (5 / 111_320) ** 2;

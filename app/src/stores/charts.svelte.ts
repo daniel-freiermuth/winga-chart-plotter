@@ -1,5 +1,5 @@
 import { SvelteSet, SvelteMap } from 'svelte/reactivity';
-import { fetchCharts, buildTileUrl, type Chart, type ChartRecord } from '../lib/signalk-api';
+import { fetchCharts, buildTileUrl, type Chart, type ChartRecord } from '../lib/wasmRest';
 import { resolveWmtsTileUrl, resolveWmtsLayer, type WmtsLayerInfo } from '../lib/wmts';
 
 export type { Chart };

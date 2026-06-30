@@ -8,7 +8,7 @@
   } from '@fortawesome/free-solid-svg-icons';
   import { routePlanner } from './stores/routePlanner.svelte';
   import { waypoints } from './stores/waypoints.svelte';
-  import { saveRoute, updateRoute, raiseMob } from './lib/signalk-api';
+  import { saveRoute, updateRoute, raiseMob } from './lib/wasmRest';
 
   let plannerSaving = $state(false);
   let plannerDiscardConfirm = $state(false);
@@ -53,7 +53,7 @@
   import { mapView } from './stores/mapView.svelte';
   import { charts } from './stores/charts.svelte';
   import { ais } from './stores/ais.svelte';
-  import { fetchVesselInfo } from './lib/signalk-api';
+  import { fetchVesselInfo } from './lib/wasmRest';
   import { acquireWakeLock, releaseWakeLock } from './lib/wakeLock';
   import { route } from './stores/route.svelte';
   import { track } from './stores/track.svelte';
@@ -382,7 +382,9 @@
     void plotterExtensions.load(httpUrl);
 
     if (vesselInfoTimer !== null) clearInterval(vesselInfoTimer);
-    const refresh = () => void fetchVesselInfo(httpUrl).then(info => { ais.setInfoCache(info); });
+    const refresh = () => void fetchVesselInfo(httpUrl)
+      .then(info => { ais.setInfoCache(info); })
+      .catch((e: unknown) => { console.warn('[vesselInfo] fetch error:', e); });
     refresh();
     vesselInfoTimer = setInterval(refresh, VESSEL_INFO_INTERVAL_MS);
     return () => { if (vesselInfoTimer !== null) clearInterval(vesselInfoTimer); };

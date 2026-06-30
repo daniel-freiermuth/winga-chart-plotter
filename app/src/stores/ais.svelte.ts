@@ -1,4 +1,4 @@
-import type { VesselInfo } from '../lib/signalk-api';
+import type { VesselInfo } from '../lib/wasmRest';
 import { SvelteMap } from 'svelte/reactivity';
 
 // ---------------------------------------------------------------------------

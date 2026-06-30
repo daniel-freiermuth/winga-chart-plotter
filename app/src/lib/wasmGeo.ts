@@ -11,19 +11,20 @@
  * by the time a user interacts with rulers/routes, it is essentially
  * always ready).
  */
-import __wbg_init, {
+import {
   gcBearingDeg as wasmGcBearingDeg,
   gcDistanceNm as wasmGcDistanceNm,
   gcLine as wasmGcLine,
 } from '../wasm/signalk_chart_core.js';
+import { ready as wasmReady } from './wasmInit';
 
 let ready = false;
-void __wbg_init()
+void wasmReady
   .then(() => {
     ready = true;
   })
-  .catch((err: unknown) => {
-    console.error('Failed to initialize WASM geo module:', err);
+  .catch(() => {
+    // Already logged by wasmInit.ts.
   });
 
 /** Great-circle bearing from A to B, in degrees [0, 360). */

@@ -1,4 +1,4 @@
-import { fetchAllWaypoints } from '../lib/signalk-api';
+import { fetchAllWaypoints } from '../lib/wasmRest';
 
 export interface ServerWaypoint {
   uuid: string;
