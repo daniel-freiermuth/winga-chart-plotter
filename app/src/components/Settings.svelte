@@ -634,14 +634,16 @@
   .modal {
     position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%);
     z-index: 21; background: #1e1e2e; color: white; border-radius: 10px;
-    padding: 24px; min-width: 440px; box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+    padding: 24px; min-width: min(440px, calc(100vw - 32px)); max-width: calc(100vw - 32px);
+    box-shadow: 0 8px 32px rgba(0,0,0,0.5);
     font-family: system-ui, sans-serif; max-height: 90vh; overflow-y: auto;
   }
   h2 { margin: 0 0 16px; font-size: 16px; font-weight: 600; }
-  .tabs { display: flex; border-bottom: 1px solid #333355; margin-bottom: 20px; }
+  .tabs { display: flex; overflow-x: auto; -webkit-overflow-scrolling: touch; border-bottom: 1px solid #333355; margin-bottom: 20px; }
   .tab {
     background: none; border: none; color: #a0a0c0; padding: 8px 18px;
     cursor: pointer; font-size: 13px; border-bottom: 2px solid transparent; margin-bottom: -1px;
+    flex-shrink: 0; white-space: nowrap;
   }
   .tab.active { color: white; border-bottom-color: #4a6cf7; }
   .section-title {
