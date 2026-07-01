@@ -43,12 +43,17 @@ impl SignalKClient {
     ///   navigation data updates.
     /// - `on_status_change`: called with a `ConnectionStatus` enum value when
     ///   the connection status changes.
+    /// - `on_ais_update`: called with packed AIS vessel data.
+    /// - `on_delta`: called with the raw WebSocket text of every successfully
+    ///   parsed SK delta, so callers can fan-out individual path/value/timestamp
+    ///   data without opening a second connection.
     #[wasm_bindgen(constructor)]
     pub fn new(
         url: &str,
         on_state_change: Function,
         on_status_change: Function,
         on_ais_update: Function,
+        on_delta: Function,
     ) -> Result<SignalKClient, JsValue> {
         let ws = WebSocket::new(url)?;
 
@@ -144,6 +149,9 @@ impl SignalKClient {
             if apply_message(&mut storage_clone.borrow_mut(), &text).is_err() {
                 return;
             }
+            // Forward the raw delta text — consumers (e.g. extension relay) can
+            // parse path/value/timestamp tuples from it without a second WebSocket.
+            let _ = on_delta.call1(&JsValue::NULL, &JsValue::from_str(&text));
 
             // Always forward own-vessel state immediately — it's a single cheap struct.
             let state = extract_vessel_state(&storage_clone.borrow());
@@ -226,5 +234,10 @@ impl SignalKClient {
     /// Close the underlying WebSocket connection.
     pub fn close(&self) {
         let _ = self.ws.close();
+    }
+
+    /// Send a raw text message over the WebSocket (e.g. SK subscribe/unsubscribe).
+    pub fn send(&self, msg: &str) -> Result<(), JsValue> {
+        self.ws.send_with_str(msg)
     }
 }

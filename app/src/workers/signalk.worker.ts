@@ -13,7 +13,8 @@ import __wbg_init, { SignalKClient } from '../wasm/signalk_chart_core.js';
 
 type InMessage =
   | { type: 'connect'; url: string }
-  | { type: 'disconnect' };
+  | { type: 'disconnect' }
+  | { type: 'send'; msg: string };
 
 // AIS payload from WASM — hot data as ArrayBuffer + parallel metadata arrays.
 interface AisWasmPayload {
@@ -49,10 +50,13 @@ self.onmessage = async (e: MessageEvent<InMessage>): Promise<void> => {
             [payload.hot],
           );
         },
+        (text: string) => { self.postMessage({ type: 'raw', text }); },
       );
     } catch (err) {
       self.postMessage({ type: 'error', message: String(err) });
     }
+  } else if (msg.type === 'send') {
+    client?.send(msg.msg);
   } else {
     client?.close();
     client = null;

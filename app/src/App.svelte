@@ -75,6 +75,7 @@
     | { type: 'state';  state: WsState }
     | { type: 'status'; status: number }
     | { type: 'ais';    hot: ArrayBuffer; ids: string[]; cold: AisColdData[] }
+    | { type: 'raw';    text: string }
     | { type: 'error';  message: string };
 
   // Explicit interface matching Map.svelte's exported functions, so TypeScript
@@ -100,7 +101,7 @@
   let reconnectDelay = 2000; // ms, doubles on each failure up to 30s
 
   // Plotter-extensions relay and control objects
-  const relay = createSkRelay();
+  const relay = createSkRelay((msg) => worker?.postMessage({ type: 'send', msg }));
 
   const mapControl: MapControl = {
     getView:   ()        => mapComp!.getView(),
@@ -325,6 +326,8 @@
         if (msg.status === 2) connection.setError(null);
       } else if (msg.type === 'ais') {
         ais.updateBinary(msg.hot, msg.ids, msg.cold);
+      } else if (msg.type === 'raw') {
+        relay.feed(msg.text);
       } else {
         connection.setError(`Signal K client failed: ${msg.message}`);
         console.error('[signalk] worker error', msg.message);
@@ -419,7 +422,6 @@
     reconnectDelay = 2000;
     if (reconnectTimer !== null) { clearTimeout(reconnectTimer); reconnectTimer = null; }
     worker?.postMessage({ type: 'connect', url });
-    relay.connect(url);
   });
 
   function handleOpenSettings(tab: SettingsTab): void {
