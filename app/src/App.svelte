@@ -335,12 +335,19 @@
       }
     };
 
-    // Reconnect immediately when the user returns to the page after backgrounding.
+    // Pause the worker when the tab goes to background so intermediate state
+    // updates don't pile up in the main thread's message queue.  On return,
+    // resume (which flushes the latest snapshot) then fast-reconnect if needed.
     const onVisible = () => {
-      if (document.visibilityState === 'visible' && !connection.connected) {
-        if (reconnectTimer !== null) { clearTimeout(reconnectTimer); reconnectTimer = null; }
-        const url = settings.signalkUrl;
-        if (url) worker?.postMessage({ type: 'connect', url });
+      if (document.visibilityState === 'visible') {
+        worker?.postMessage({ type: 'resume' });
+        if (!connection.connected) {
+          if (reconnectTimer !== null) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+          const url = settings.signalkUrl;
+          if (url) worker?.postMessage({ type: 'connect', url });
+        }
+      } else {
+        worker?.postMessage({ type: 'pause' });
       }
     };
     document.addEventListener('visibilitychange', onVisible);
