@@ -2185,10 +2185,12 @@
         cogIndices.push(i);
       }
 
-      // Hull gate — heading + dimensions known. Vessels failing this stay icon-only
-      // forever (VesselMorphLayer forces t=0 when getLength returns 0 for them).
+      // Hull gate — orientation (heading or COG) + dimensions known. Vessels failing this
+      // stay icon-only forever (VesselMorphLayer forces t=0 when getLength returns 0).
+      // getHdg already falls back to COG when heading is NaN; the gate mirrors that so a
+      // vessel with dimensions but only COG orientation still morphs into a hull shape.
       const ihdg = hotData[i * S + AIS_F_HDG]!;
-      const hasHull = !isNaN(ihdg) && (cold?.lengthM ?? 0) > 0 && (cold?.beamM ?? 0) > 0;
+      const hasHull = (!isNaN(ihdg) || !isNaN(icog)) && (cold?.lengthM ?? 0) > 0 && (cold?.beamM ?? 0) > 0;
       if (hasHull) {
         hullIndices.push(i);
       }
@@ -2242,8 +2244,8 @@
     const getLen  = (i: number, fallback: number) => coldMap.get(ids[i]!)?.lengthM ?? fallback;
     const getBeam = (i: number, fallback: number) => coldMap.get(ids[i]!)?.beamM ?? fallback;
     // The morph only fires when a hull polygon can actually be drawn for this vessel.
-    // A vessel with length but no heading has no hull → VesselMorphLayer forces t=0 and
-    // it stays icon-only forever (see hasHull in the bucketing loop above).
+    // Vessels with no orientation at all (both heading and COG unknown) have no hull →
+    // VesselMorphLayer forces t=0 and stays icon-only forever (see hasHull above).
     const hullSet = new Set(hullIndices);
     const getLengthForMorph = (i: number) => hullSet.has(i) ? getLen(i, 50) : 0;
 
