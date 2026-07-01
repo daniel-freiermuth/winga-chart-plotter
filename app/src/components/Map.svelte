@@ -1099,7 +1099,16 @@
     mapContainer.addEventListener('pointerup',   handleRulerPointerUp,   { capture: true });
     mapContainer.addEventListener('pointercancel', handleRulerPointerUp, { capture: true });
 
-    onFsChange = () => { mapView.isFullscreen = !!document.fullscreenElement; };
+    onFsChange = () => {
+      mapView.isFullscreen = !!document.fullscreenElement;
+      if (!document.fullscreenElement) {
+        // When the browser exits fullscreen and re-shows its chrome, the <html>
+        // element's scrollTop is left non-zero — the page shifts up by the height
+        // of the re-appeared address bar, leaving a white gap at the bottom.
+        // Reset it immediately; MapLibre's ResizeObserver handles canvas resize.
+        window.scrollTo(0, 0);
+      }
+    };
     document.addEventListener('fullscreenchange', onFsChange);
 
     map.on('zoom',   () => { mapZoom    = map?.getZoom()    ?? mapZoom; });
