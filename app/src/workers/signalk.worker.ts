@@ -37,21 +37,26 @@ self.onmessage = async (e: MessageEvent<InMessage>): Promise<void> => {
   const msg = e.data;
   if (msg.type === 'connect') {
     await ensureWasm();
-    client?.close();
     try {
-      client = new SignalKClient(
-        msg.url,
-        (state: unknown) => { self.postMessage({ type: 'state', state }); },
-        (status: number) => { self.postMessage({ type: 'status', status }); },
-        (payload: AisWasmPayload) => {
-          // Transfer the hot ArrayBuffer — zero-copy handoff to main thread.
-          self.postMessage(
-            { type: 'ais', hot: payload.hot, ids: payload.ids, cold: payload.cold },
-            [payload.hot],
-          );
-        },
-        (text: string) => { self.postMessage({ type: 'raw', text }); },
-      );
+      if (client) {
+        // Reuse the existing client — reconnect replaces only the WebSocket while
+        // keeping the accumulated Storage intact, so vessel data survives the drop.
+        client.reconnect(msg.url);
+      } else {
+        client = new SignalKClient(
+          msg.url,
+          (state: unknown) => { self.postMessage({ type: 'state', state }); },
+          (status: number) => { self.postMessage({ type: 'status', status }); },
+          (payload: AisWasmPayload) => {
+            // Transfer the hot ArrayBuffer — zero-copy handoff to main thread.
+            self.postMessage(
+              { type: 'ais', hot: payload.hot, ids: payload.ids, cold: payload.cold },
+              [payload.hot],
+            );
+          },
+          (text: string) => { self.postMessage({ type: 'raw', text }); },
+        );
+      }
     } catch (err) {
       self.postMessage({ type: 'error', message: String(err) });
     }

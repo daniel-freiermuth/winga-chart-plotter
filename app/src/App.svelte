@@ -311,8 +311,7 @@
       } else if (msg.type === 'status') {
         connection.setConnected(msg.status === 1);
         if (msg.status === 1) {
-          // Successfully connected — reset backoff and re-announce any relay
-          // subscriptions that extension widgets registered before this reconnect.
+          // Successfully connected — reset backoff and re-announce relay subscriptions.
           reconnectDelay = 2000;
           relay.resubscribe();
           // Retry chart list if it failed to load initially (server may not have been

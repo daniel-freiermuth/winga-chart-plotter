@@ -231,6 +231,21 @@ impl SignalKClient {
         })
     }
 
+    /// Close the current WebSocket and open a new one to `url`, reusing all
+    /// existing callbacks and the accumulated vessel Storage.
+    ///
+    /// Calling `close()` on an already-closed socket is a no-op per the spec,
+    /// so this is safe to call even when the previous connection has already dropped.
+    pub fn reconnect(&mut self, url: &str) -> Result<(), JsValue> {
+        let _ = self.ws.close();
+        self.ws = WebSocket::new(url)?;
+        self.ws.set_onopen(Some(self._on_open.as_ref().unchecked_ref()));
+        self.ws.set_onmessage(Some(self._on_message.as_ref().unchecked_ref()));
+        self.ws.set_onerror(Some(self._on_error.as_ref().unchecked_ref()));
+        self.ws.set_onclose(Some(self._on_close.as_ref().unchecked_ref()));
+        Ok(())
+    }
+
     /// Close the underlying WebSocket connection.
     pub fn close(&self) {
         let _ = self.ws.close();
