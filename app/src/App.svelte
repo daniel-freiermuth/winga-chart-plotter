@@ -311,8 +311,10 @@
       } else if (msg.type === 'status') {
         connection.setConnected(msg.status === 1);
         if (msg.status === 1) {
-          // Successfully connected — reset backoff.
+          // Successfully connected — reset backoff and re-announce any relay
+          // subscriptions that extension widgets registered before this reconnect.
           reconnectDelay = 2000;
+          relay.resubscribe();
           // Retry chart list if it failed to load initially (server may not have been
           // ready when we first tried, but the WS connection succeeding means it's up now).
           if (charts.error || Object.keys(charts.available).length === 0) {

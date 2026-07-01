@@ -11,6 +11,12 @@ export interface SkRelay {
   /** Returns a subscriptionId. */
   subscribe(path: string, cb: SkValueCallback): string;
   unsubscribe(subscriptionId: string): void;
+  /**
+   * Re-send upstream subscribe messages for every path that currently has at
+   * least one subscriber.  Call this after a WebSocket reconnect so the new
+   * server connection learns about all active subscriptions.
+   */
+  resubscribe(): void;
 }
 
 // ── SK delta shape (minimal) ──────────────────────────────────────────────────
@@ -106,5 +112,11 @@ export function createSkRelay(sendUpstream: (msg: string) => void): SkRelay {
     }
   }
 
-  return { feed, subscribe, unsubscribe };
+  function resubscribe(): void {
+    for (const path of pathSubs.keys()) {
+      subscribePathUpstream(path);
+    }
+  }
+
+  return { feed, subscribe, unsubscribe, resubscribe };
 }
