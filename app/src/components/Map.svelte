@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy, untrack } from 'svelte';
   import maplibregl from 'maplibre-gl';
+  import type { HitTarget, Gesture, DragTarget } from '$lib/gesture.ts';
   import 'maplibre-gl/dist/maplibre-gl.css';
   import type * as GeoJSON from 'geojson';
   import { get } from 'svelte/store';
@@ -558,22 +559,24 @@
     rulers.add(a.lng, a.lat, b.lng, b.lat);
   }
 
-  // Ruler drag state: which (rulerId, endpoint) is currently being dragged.
-  type DragState = { rulerId: string; endpoint: 'a' | 'b' } | null;
-  let rulerDrag: DragState = null;
   // True while the cursor is over a ruler handle — dragPan disabled proactively on hover.
   let isHoveringHandle = false;
   // Ruler label popup: shown when user clicks a label; holds screen position and ruler id.
   let rulerPopup = $state<{ rulerId: string; x: number; y: number } | null>(null);
-  // Long-press state — owned entirely by the three pointer handlers below.
-  // The timer is only started when no drag target is found, so drag and long-press
-  // are mutually exclusive code paths with nothing to cancel between them.
-  let longPressTimer:      ReturnType<typeof setTimeout> | null = null;
-  let longPressLngLat:     maplibregl.LngLat | null = null;
-  let longPressStartX      = 0;
-  let longPressStartY      = 0;
-  // Set by the timer, cleared in pointerup — used to suppress the browser's follow-up click.
-  let longPressHandled     = false;
+  // Gesture recognizer FSM — replaces separate rulerDrag, plannerDrag and long-press
+  // variables. All raw pointer events flow through the FSM; the phase determines
+  // which handlers are active and what constitutes a valid gesture.
+  type GesturePhase =
+    | { phase: 'idle' }
+    | { phase: 'down';
+        target: HitTarget; x: number; y: number;
+        clientX: number; clientY: number;
+        lngLat: maplibregl.LngLat; pointerId: number;
+        timer: ReturnType<typeof setTimeout> | null }
+    | { phase: 'panning' }
+    | { phase: 'dragging'; target: DragTarget; pointerId: number }
+    | { phase: 'post-long-press'; pointerId: number }
+  let gesturePhase: GesturePhase = { phase: 'idle' };
   const LONG_PRESS_MS      = 500;
   const LONG_PRESS_MOVE_PX = 10;
 
@@ -596,8 +599,6 @@
     return p;
   }
 
-  // Route planner drag state.
-  let plannerDrag: { idx: number } | null = null;
   // Waypoint index targeted by a right-click (set in pointerdown, consumed in contextmenu).
   let plannerRightClickIdx: number | null = null;
   // Waypoint being relocated: next map click sets its new position.
@@ -609,180 +610,305 @@
     mapContainer.style.cursor = hovering ? 'grab' : '';
     if (hovering) {
       map?.dragPan.disable();
-    } else if (!rulerDrag && !followMode.following) {
+    } else if (gesturePhase.phase !== 'dragging' && !followMode.following) {
       map?.dragPan.enable();
     }
   }
 
-  // Native pointer-event drag + long-press handlers.
-  // Drag and long-press are mutually exclusive branches inside handleRulerPointerDown:
-  // the timer is only started when no drag target is found, so when a drag begins there
-  // is nothing to cancel. All click actions live in the unified map.on('click') dispatcher.
-  function handleRulerPointerDown(e: PointerEvent) {
+  // ─── Gesture Recognizer ────────────────────────────────────────────────────
+  //
+  // hit()         — single priority-ordered pick; returns one HitTarget.
+  // handleGesture — exhaustive Gesture switch; the only place actions live.
+  // dispatchTap   — exhaustive HitTarget switch for tap actions.
+  // onPointer*    — own all raw events and drive the FSM.
+
+  /** Priority-ordered hit test. Returns the highest-priority interactive element
+   *  at canvas position (x, y), or { kind: 'empty' } for bare map. */
+  function hit(x: number, y: number): HitTarget {
+    const m = map;
+    if (!overlay || !m) return { kind: 'empty' };
+    try {
+      if (routePlanner.active) {
+        const ph = overlay.pickObject({ x, y, radius: 12, layerIds: ['planner-handles'] });
+        if (ph?.object !== null && ph?.object !== undefined)
+          return { kind: 'planner-handle', idx: (ph.object as { idx: number }).idx };
+        const ps = overlay.pickObject({ x, y, radius: 8, layerIds: ['planner-line'] });
+        if (ps?.object !== null && ps?.object !== undefined)
+          return { kind: 'planner-segment', segIdx: (ps.object as { segIdx: number }).segIdx };
+      }
+      const rl = overlay.pickObject({ x, y, radius: 14, layerIds: ['ruler-labels'] });
+      if (rl?.object) return { kind: 'ruler-label', rulerId: (rl.object as { ruler: { id: string } }).ruler.id };
+      const rh = overlay.pickObject({ x, y, radius: 10, layerIds: ['ruler-handles'] });
+      if (rh?.object) {
+        const d = rh.object as { rulerId: string; endpoint: 'a' | 'b' };
+        return { kind: 'ruler-handle', rulerId: d.rulerId, endpoint: d.endpoint };
+      }
+      if (overlay.pickMultipleObjects({ x, y, radius: 5, layerIds: ['own-vessel-icon'] }).length > 0)
+        return { kind: 'own-vessel' };
+      const aisHits = overlay.pickMultipleObjects({ x, y, radius: 5, layerIds: ['ais-confirmed-main', 'ais-ghost-main', 'ais-mob-icon'] });
+      const aisSeen = new SvelteSet<number>();
+      const aisUniq: { idx: number; coord: [number, number] }[] = [];
+      for (const p of aisHits) {
+        const idx = p.object as number | null | undefined;
+        if (idx == null || aisSeen.has(idx)) continue;
+        aisSeen.add(idx);
+        if (p.coordinate) aisUniq.push({ idx, coord: p.coordinate as [number, number] });
+      }
+      if (aisUniq.length === 1) return { kind: 'ais-vessel',       vesselIdx: aisUniq[0]!.idx, coordinate: aisUniq[0]!.coord };
+      if (aisUniq.length > 1)  return { kind: 'ais-vessels-ambig', indices:   aisUniq.map(h => h.idx), coordinate: aisUniq[0]!.coord };
+      const wptFeats = m.queryRenderedFeatures([x, y], { layers: ['all-waypoints-circle'] });
+      if (wptFeats.length > 0) return { kind: 'waypoint', feature: wptFeats[0]! };
+      const routeLine = overlay.pickObject({ x, y, radius: 6, layerIds: ['route-full', 'route-leg', 'route-bearing'] });
+      const routeWpts = m.queryRenderedFeatures([x, y], { layers: ['route-waypoints'] });
+      if (routeLine?.object || routeWpts.length > 0) {
+        const wptFeat = routeWpts[0];
+        return wptFeat ? { kind: 'active-route', wptFeature: wptFeat } : { kind: 'active-route' };
+      }
+      const allRoutes = m.queryRenderedFeatures([x, y], { layers: ['all-routes-line'] });
+      if (allRoutes.length > 0) return { kind: 'route', feature: allRoutes[0]! };
+    } catch { /* overlay may be in a transient invalid state during style reload */ }
+    return { kind: 'empty' };
+  }
+
+  /** Exhaustive gesture dispatch — the only place application actions are triggered. */
+  function handleGesture(g: Gesture): void {
+    switch (g.type) {
+      case 'tap':
+        rulerPopup = null;
+        dispatchTap(g.target, g.lngLat, g.clientX, g.clientY);
+        return;
+      case 'long-press':
+        rulerPopup = null;
+        if (g.target.kind === 'planner-handle' && routePlanner.active) {
+          routePlanner.removeWaypoint(g.target.idx);
+        } else if (g.target.kind === 'empty' && !routePlanner.active) {
+          showNavigatePopup(g.lngLat);
+        }
+        // Any other long-press target (e.g. ruler label, vessel) → no action.
+        return;
+      case 'drag-start':
+        rulerPopup = null;
+        return;
+      case 'drag-move':
+        if (g.target.kind === 'ruler-handle')
+          rulers.moveEndpoint(g.target.rulerId, g.target.endpoint, g.lngLat.lng, g.lngLat.lat);
+        else
+          routePlanner.moveWaypoint(g.target.idx, g.lngLat.lng, g.lngLat.lat);
+        return;
+      case 'drag-end':
+        if (g.target.kind === 'ruler-handle')
+          rulers.snapEndpoint(g.target.rulerId, g.target.endpoint, g.snapId, g.lngLat.lng, g.lngLat.lat);
+        // planner-handle drag-end: position already committed in drag-move events.
+        return;
+      case 'drag-cancel':
+        return;
+      case 'context-menu':
+        if (routePlanner.active) {
+          if (g.plannerHandleIdx !== undefined) routePlanner.removeWaypoint(g.plannerHandleIdx);
+          return;
+        }
+        showNavigatePopup(g.lngLat);
+        return;
+      default:
+        g satisfies never;
+    }
+  }
+
+  /** Exhaustive tap dispatch — called by handleGesture only.
+   *  TypeScript enforces that every HitTarget kind is handled. */
+  function dispatchTap(target: HitTarget, lngLat: maplibregl.LngLat, clientX: number, clientY: number): void {
+    // Moving-waypoint mode: the next tap anywhere places the waypoint.
+    if (movingWaypoint) {
+      const { uuid, name } = movingWaypoint;
+      movingWaypoint = null;
+      mapContainer.style.cursor = '';
+      updateWaypoint(settings.signalkHttpUrl, uuid, name, lngLat.lat, lngLat.lng, auth.authHeaders)
+        .then(() => waypoints.load(settings.signalkHttpUrl))
+        .catch((err: unknown) => { console.error('[waypoint] Failed to move:', err); });
+      return;
+    }
+    switch (target.kind) {
+      case 'ruler-label':
+        rulerPopup = { rulerId: target.rulerId, x: clientX, y: clientY };
+        return;
+      case 'ruler-handle':
+        return; // drag-only; tap has no action
+      case 'planner-handle':
+        return; // drag-only; tap has no action
+      case 'planner-segment':
+        routePlanner.insertWaypoint(target.segIdx + 1, lngLat.lng, lngLat.lat);
+        return;
+      case 'own-vessel':
+        showOwnVesselPopup(lngLat);
+        return;
+      case 'ais-vessel': {
+        const t = ais.getTarget(target.vesselIdx);
+        if (t?.position) handleAisClick(target.coordinate, t);
+        return;
+      }
+      case 'ais-vessels-ambig':
+        openDisambigPopup(target.coordinate, target.indices);
+        return;
+      case 'waypoint':
+        showWaypointPopup(lngLat, target.feature);
+        return;
+      case 'active-route':
+        showActiveRoutePopup(lngLat, target.wptFeature);
+        return;
+      case 'route':
+        showAllRoutesPopup(lngLat, target.feature);
+        return;
+      case 'empty':
+        if (routePlanner.active) routePlanner.addWaypoint(lngLat.lng, lngLat.lat);
+        return;
+      default:
+        target satisfies never;
+    }
+  }
+
+  function onPointerDown(e: PointerEvent): void {
     if (!overlay || !map) return;
 
-    // Multi-touch: cancel any pending long-press (user is pinching).
+    // Multi-touch: cancel any pending interaction; let MapLibre handle pinch-zoom.
     if (!e.isPrimary) {
-      if (longPressTimer !== null) { clearTimeout(longPressTimer); longPressTimer = null; longPressLngLat = null; }
+      if (gesturePhase.phase === 'down' && gesturePhase.timer) clearTimeout(gesturePhase.timer);
+      if (gesturePhase.phase === 'dragging') {
+        mapContainer.releasePointerCapture(gesturePhase.pointerId);
+        mapContainer.style.cursor = '';
+        if (!followMode.following) map.dragPan.enable();
+        handleGesture({ type: 'drag-cancel', target: gesturePhase.target });
+      }
+      gesturePhase = { phase: 'idle' };
       return;
     }
 
     const rect = mapContainer.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
+    const lngLat = map.unproject([x, y]);
+    const target = hit(x, y);
 
-    // Planner handles take priority when planner is active.
-    if (routePlanner.active) {
-      const plannerPick = overlay.pickObject({ x, y, radius: 12, layerIds: ['planner-handles'] });
-      if (plannerPick?.object !== null && plannerPick?.object !== undefined) {
-        interface PlannerHandle { idx: number }
-        const d = plannerPick.object as PlannerHandle;
-        if (e.button === 2) {
-          // Right-click on a handle → store for deletion in the contextmenu handler.
-          plannerRightClickIdx = d.idx;
-          e.preventDefault();
-          e.stopPropagation();
-          return;
-        }
-        rulerPopup = null;
-        plannerDrag = { idx: d.idx };
-        map.dragPan.disable();
-        mapContainer.style.cursor = 'grabbing';
-        mapContainer.setPointerCapture(e.pointerId);
-        e.preventDefault();   // suppresses touchstart/mousedown → no long-press timer, no MapLibre click
-        e.stopPropagation();
-        return; // timer never started — nothing to cancel
-      }
+    // Right-click on planner handle: store for the contextmenu handler.
+    if (e.button === 2 && target.kind === 'planner-handle') {
+      plannerRightClickIdx = target.idx;
+      e.preventDefault(); e.stopPropagation();
+      return;
     }
 
-    // Ruler handles.
-    const picked = overlay.pickObject({ x, y, radius: 10, layerIds: ['ruler-handles'] });
-    if (picked?.object) {
-      interface HandleDatum { rulerId: string; endpoint: 'a' | 'b' }
-      const d = picked.object as HandleDatum;
-      rulerPopup = null;
-      rulerDrag = { rulerId: d.rulerId, endpoint: d.endpoint };
+    // Draggable targets: transition directly to dragging.
+    if (target.kind === 'ruler-handle' || target.kind === 'planner-handle') {
       map.dragPan.disable();
       mapContainer.style.cursor = 'grabbing';
       mapContainer.setPointerCapture(e.pointerId);
-      e.preventDefault();   // suppresses touchstart/mousedown → no long-press timer, no MapLibre click
-      e.stopPropagation();
-      return; // timer never started — nothing to cancel
+      e.preventDefault(); e.stopPropagation();
+      gesturePhase = { phase: 'dragging', target, pointerId: e.pointerId };
+      handleGesture({ type: 'drag-start', target });
+      return;
     }
 
-    // Not a touch: mouse long-press is handled by the contextmenu event, nothing to do here.
-    if (e.pointerType !== 'touch') return;
+    // Non-empty: we own this interaction — prevent MapLibre's pan/click synthesis.
+    if (target.kind !== 'empty') {
+      e.preventDefault(); e.stopPropagation();
+    }
 
-    // Ruler label: has a tap action in map.on('click'). No long-press behaviour.
-    if (overlay.pickObject({ x, y, radius: 14, layerIds: ['ruler-labels'] })?.object) return;
+    // Touch: start long-press timer. Fires for all target kinds:
+    //   empty           → navigate popup (when not in planner mode)
+    //   planner-handle  → remove waypoint (handled in handleGesture long-press case)
+    //   everything else → no long-press action
+    const timer: ReturnType<typeof setTimeout> | null = e.pointerType === 'touch'
+      ? setTimeout(() => {
+          gesturePhase = { phase: 'post-long-press', pointerId: e.pointerId };
+          handleGesture({ type: 'long-press', target, lngLat });
+        }, LONG_PRESS_MS)
+      : null;
 
-    // Empty map space on touch: start long-press timer for the navigate popup.
-    longPressStartX = e.clientX;
-    longPressStartY = e.clientY;
-    longPressLngLat = map.unproject([x, y]);
-    longPressTimer = setTimeout(() => {
-      longPressTimer = null;
-      const lp = longPressLngLat;
-      if (!lp) return;
-      rulerPopup = null;
-      longPressHandled = true;
-      if (overlay && routePlanner.active) {
-        const pick = overlay.pickObject({ x, y, radius: 20, layerIds: ['planner-handles'] });
-        if (pick?.object !== null && pick?.object !== undefined) {
-          interface PlannerHandle { idx: number }
-          routePlanner.removeWaypoint((pick.object as PlannerHandle).idx);
-        }
-        // Long-press on empty space while drawing → do nothing (no undo).
-        return;
-      }
-      showNavigatePopup(lp);
-    }, LONG_PRESS_MS);
+    gesturePhase = { phase: 'down', target, x, y, clientX: e.clientX, clientY: e.clientY, lngLat, pointerId: e.pointerId, timer };
   }
 
-  function handleRulerPointerMove(e: PointerEvent) {
+  function onPointerMove(e: PointerEvent): void {
     if (!map) return;
     const rect = mapContainer.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
 
-    if (plannerDrag) {
-      const coord = map.unproject([x, y]);
-      routePlanner.moveWaypoint(plannerDrag.idx, coord.lng, coord.lat);
-      e.preventDefault();
-      e.stopPropagation();
+    if (gesturePhase.phase === 'dragging') {
+      handleGesture({ type: 'drag-move', target: gesturePhase.target, lngLat: map.unproject([x, y]) });
+      e.preventDefault(); e.stopPropagation();
       return;
     }
 
-    if (rulerDrag) {
-      const coord = map.unproject([x, y]);
-      rulers.moveEndpoint(rulerDrag.rulerId, rulerDrag.endpoint, coord.lng, coord.lat);
-      e.preventDefault();
-      e.stopPropagation();
-      return;
-    }
-
-    // Cancel long-press if the finger has moved beyond the stillness threshold.
-    if (longPressTimer !== null) {
-      const dx = e.clientX - longPressStartX;
-      const dy = e.clientY - longPressStartY;
+    if (gesturePhase.phase === 'down') {
+      const dx = e.clientX - gesturePhase.clientX;
+      const dy = e.clientY - gesturePhase.clientY;
       if (Math.hypot(dx, dy) > LONG_PRESS_MOVE_PX) {
-        clearTimeout(longPressTimer);
-        longPressTimer = null;
-        longPressLngLat = null;
+        if (gesturePhase.timer) clearTimeout(gesturePhase.timer);
+        rulerPopup = null;
+        gesturePhase = { phase: 'panning' };
       }
+      // Fall through to hover detection even while 'down' — same as previous behaviour.
     }
 
-    // Hover detection via pickObject (avoids deck.gl layer recreation race on drag).
+    // Hover detection for all non-dragging states (updates cursor / disables dragPan).
     if (overlay) {
       try {
-        const handleLayers = ['ruler-handles', ...(routePlanner.active ? ['planner-handles'] : [])];
-        const hoverPick = overlay.pickObject({ x, y, radius: 10, layerIds: handleLayers });
-        setHandleHover(!!hoverPick?.object);
-      } catch {
-        // deck.gl overlay may be in a transient invalid state during map style reload
-      }
+        const layers = ['ruler-handles', ...(routePlanner.active ? ['planner-handles'] : [])];
+        setHandleHover(!!overlay.pickObject({ x, y, radius: 10, layerIds: layers })?.object);
+      } catch { /* transient overlay state during style reload */ }
     }
   }
 
-  function handleRulerPointerUp(e: PointerEvent) {
-    // Cancel any pending long-press. If it already fired, suppress the follow-up browser click.
-    if (longPressTimer !== null) { clearTimeout(longPressTimer); longPressTimer = null; longPressLngLat = null; }
-    if (longPressHandled) {
-      longPressHandled = false;
-      e.preventDefault(); // prevents the browser from synthesising a click after the long-press action
-    }
-
-    if (plannerDrag) {
-      plannerDrag = null;
-      mapContainer.style.cursor = isHoveringHandle ? 'grab' : '';
-      if (!isHoveringHandle && !followMode.following) map?.dragPan.enable();
-      mapContainer.releasePointerCapture(e.pointerId);
+  function onPointerUp(e: PointerEvent): void {
+    if (gesturePhase.phase === 'post-long-press') {
+      e.preventDefault(); // suppress browser's post-long-press synthesised click
+      gesturePhase = { phase: 'idle' };
       return;
     }
 
-    if (!rulerDrag || !map) return;
-    const rect = mapContainer.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    const coord = map.unproject([x, y]);
-    // Snap check: find nearest target (AIS ghost or own vessel) within threshold
-    let snapId: string | undefined;
-    let snapLon = coord.lng;
-    let snapLat = coord.lat;
-    for (const t of liveSnapTargets) {
-      const pt = map.project([t.position.longitude, t.position.latitude]);
-      if (Math.hypot(pt.x - x, pt.y - y) < RULER_SNAP_PX) {
-        snapId  = t.id;
-        snapLon = t.position.longitude;
-        snapLat = t.position.latitude;
-        break;
+    if (gesturePhase.phase === 'dragging') {
+      const { target, pointerId } = gesturePhase;
+      const rect = mapContainer.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      let snapId: string | undefined;
+      let lng = map!.unproject([x, y]).lng;
+      let lat = map!.unproject([x, y]).lat;
+      if (target.kind === 'ruler-handle') {
+        for (const t of liveSnapTargets) {
+          const pt = map!.project([t.position.longitude, t.position.latitude]);
+          if (Math.hypot(pt.x - x, pt.y - y) < RULER_SNAP_PX) {
+            snapId = t.id; lng = t.position.longitude; lat = t.position.latitude;
+            break;
+          }
+        }
       }
+      mapContainer.releasePointerCapture(pointerId);
+      mapContainer.style.cursor = isHoveringHandle ? 'grab' : '';
+      if (!isHoveringHandle && !followMode.following) map?.dragPan.enable();
+      gesturePhase = { phase: 'idle' };
+      handleGesture({ type: 'drag-end', target, lngLat: new maplibregl.LngLat(lng, lat), snapId });
+      return;
     }
-    rulers.snapEndpoint(rulerDrag.rulerId, rulerDrag.endpoint, snapId, snapLon, snapLat);
-    rulerDrag = null;
-    mapContainer.style.cursor = isHoveringHandle ? 'grab' : '';
-    if (!isHoveringHandle && !followMode.following) map.dragPan.enable();
-    mapContainer.releasePointerCapture(e.pointerId);
+
+    if (gesturePhase.phase === 'down') {
+      const { timer, target, lngLat, clientX, clientY } = gesturePhase;
+      if (timer) clearTimeout(timer);
+      gesturePhase = { phase: 'idle' };
+      handleGesture({ type: 'tap', target, lngLat, clientX, clientY });
+      return;
+    }
+
+    gesturePhase = { phase: 'idle' };
+  }
+
+  function onPointerCancel(e: PointerEvent): void {
+    if (gesturePhase.phase === 'down' && gesturePhase.timer) clearTimeout(gesturePhase.timer);
+    if (gesturePhase.phase === 'dragging') {
+      mapContainer.releasePointerCapture(e.pointerId);
+      mapContainer.style.cursor = '';
+      if (!followMode.following) map?.dragPan.enable();
+      handleGesture({ type: 'drag-cancel', target: gesturePhase.target });
+    }
+    gesturePhase = { phase: 'idle' };
   }
 
   // Snap threshold in pixels.
@@ -1169,11 +1295,11 @@
     _scheduleRafTick = scheduleRafTick;
     scheduleRafTick();
 
-    // Native ruler drag — must be capture phase so we intercept before MapLibre.
-    mapContainer.addEventListener('pointerdown', handleRulerPointerDown, { capture: true });
-    mapContainer.addEventListener('pointermove', handleRulerPointerMove, { capture: true });
-    mapContainer.addEventListener('pointerup',   handleRulerPointerUp,   { capture: true });
-    mapContainer.addEventListener('pointercancel', handleRulerPointerUp, { capture: true });
+    // All pointer events flow through the gesture recognizer (capture phase).
+    mapContainer.addEventListener('pointerdown',   onPointerDown,   { capture: true });
+    mapContainer.addEventListener('pointermove',   onPointerMove,   { capture: true });
+    mapContainer.addEventListener('pointerup',     onPointerUp,     { capture: true });
+    mapContainer.addEventListener('pointercancel', onPointerCancel, { capture: true });
 
     onFsChange = () => {
       mapView.isFullscreen = !!document.fullscreenElement;
@@ -1208,102 +1334,12 @@
     map.on('mouseenter', 'all-waypoints-circle', () => { if (map) map.getCanvas().style.cursor = 'pointer'; });
     map.on('mouseleave', 'all-waypoints-circle', () => { if (map) map.getCanvas().style.cursor = ''; });
 
-    // Single unified click handler — hits processed in explicit priority order so
-    // exactly one action fires per click regardless of layer overlap.
-    map.on('click', (e) => {
-      if (!overlay) return;
-      const m = map;
-      if (!m) return;
-      const { x, y } = e.point;
-
-      // 0. Ruler elements — first in the priority dispatch because they overlay everything.
-      //    Labels are tap targets (open the remove popup). Handles are drag-only, but a
-      //    bare tap on a handle must not bleed through to vessel / waypoint picking.
-      const rulerLabelPick = overlay.pickObject({ x, y, radius: 14, layerIds: ['ruler-labels'] });
-      if (rulerLabelPick?.object) {
-        interface LabelDatum { ruler: { id: string } }
-        const d = rulerLabelPick.object as LabelDatum;
-        const rect = mapContainer.getBoundingClientRect();
-        rulerPopup = { rulerId: d.ruler.id, x: rect.left + x, y: rect.top + y };
-        return;
-      }
-      // Ruler handles are drag targets only; no click action.
-      if (overlay.pickObject({ x, y, radius: 10, layerIds: ['ruler-handles'] })?.object) return;
-
-      // 1. Moving-waypoint mode: the next click places the waypoint.
-      if (movingWaypoint) {
-        const { uuid, name } = movingWaypoint;
-        movingWaypoint = null;
-        mapContainer.style.cursor = '';
-        updateWaypoint(settings.signalkHttpUrl, uuid, name, e.lngLat.lat, e.lngLat.lng, auth.authHeaders)
-          .then(() => waypoints.load(settings.signalkHttpUrl))
-          .catch((err: unknown) => { console.error('[waypoint] Failed to move:', err); });
-        return;
-      }
-
-      // 2. Route planner mode: click adds or inserts a waypoint.
-      if (routePlanner.active) {
-        const handlePick = overlay.pickObject({ x, y, radius: 12, layerIds: ['planner-handles'] });
-        if (handlePick?.object) return; // clicked an existing handle — drag handles it
-        const segPick = overlay.pickObject({ x, y, radius: 8, layerIds: ['planner-line'] });
-        if (segPick?.object) {
-          interface PlannerSeg { segIdx: number }
-          const { segIdx } = segPick.object as PlannerSeg;
-          routePlanner.insertWaypoint(segIdx + 1, e.lngLat.lng, e.lngLat.lat);
-        } else {
-          routePlanner.addWaypoint(e.lngLat.lng, e.lngLat.lat);
-        }
-        return;
-      }
-
-      // 3. Own vessel (deck.gl — topmost layer).
-      const ownPicked = overlay.pickMultipleObjects({ x, y, radius: 5, layerIds: ['own-vessel-icon'] });
-      if (ownPicked.length > 0) { showOwnVesselPopup(e.lngLat); return; }
-
-      // 4. AIS vessels (deck.gl). Deduplicate by vessel index — multiple layers can match.
-      const aisLayerIds = ['ais-confirmed-main', 'ais-ghost-main', 'ais-mob-icon'];
-      const allPicked = overlay.pickMultipleObjects({ x, y, radius: 5, layerIds: aisLayerIds });
-      const seen = new SvelteSet<number>();
-      const uniqueHits: { idx: number; coordinate: number[] }[] = [];
-      for (const p of allPicked) {
-        const idx = p.object as number | undefined | null;
-        if (idx === undefined || idx === null) continue;
-        if (seen.has(idx)) continue;
-        seen.add(idx);
-        if (p.coordinate) uniqueHits.push({ idx, coordinate: p.coordinate });
-      }
-      if (uniqueHits.length === 1) {
-        const target = ais.getTarget(uniqueHits[0]!.idx);
-        if (target?.position) { handleAisClick(uniqueHits[0]!.coordinate as [number, number], target); return; }
-      }
-      if (uniqueHits.length > 1) { openDisambigPopup(uniqueHits[0]!.coordinate as [number, number], uniqueHits.map(h => h.idx)); return; }
-
-      // 5. Waypoints (MapLibre layer).
-      const waypointFeats = m.queryRenderedFeatures(e.point, { layers: ['all-waypoints-circle'] });
-      if (waypointFeats.length > 0) { showWaypointPopup(e.lngLat, waypointFeats[0]!); return; }
-
-      // 6. Active route: deck.gl lines (full/leg/bearing) + MapLibre waypoint markers.
-      const routeLinePick = overlay.pickObject({ x, y, radius: 6, layerIds: ['route-full', 'route-leg', 'route-bearing'] });
-      const routeWptFeats = m.queryRenderedFeatures(e.point, { layers: ['route-waypoints'] });
-      if (routeLinePick?.object || routeWptFeats.length > 0) { showActiveRoutePopup(e.lngLat, routeWptFeats[0]); return; }
-
-      // 7. All routes on map (MapLibre).
-      const allRouteFeats = m.queryRenderedFeatures(e.point, { layers: ['all-routes-line'] });
-      if (allRouteFeats.length > 0) { showAllRoutesPopup(e.lngLat, allRouteFeats[0]!); return; }
-    });
-
-    // Right-click (desktop) → remove planner waypoint, or show navigate popup.
+    // Taps are handled by the gesture recognizer (dispatchTap).
+    // Contextmenu routes through handleGesture for the same exhaustive dispatch.
     map.on('contextmenu', (e) => {
-      if (overlay && routePlanner.active) {
-        if (plannerRightClickIdx !== null) {
-          routePlanner.removeWaypoint(plannerRightClickIdx);
-          plannerRightClickIdx = null;
-        }
-        // Always suppress navigate popup while planner is active.
-        return;
-      }
+      const idx = plannerRightClickIdx;
       plannerRightClickIdx = null;
-      showNavigatePopup(e.lngLat);
+      handleGesture({ type: 'context-menu', lngLat: e.lngLat, plannerHandleIdx: idx ?? undefined });
     });
 
 
@@ -1485,10 +1521,10 @@
     clearTimeout(rafId);
     overlay?.finalize();
     document.removeEventListener('fullscreenchange', onFsChange);
-    mapContainer.removeEventListener('pointerdown',   handleRulerPointerDown, { capture: true });
-    mapContainer.removeEventListener('pointermove',   handleRulerPointerMove, { capture: true });
-    mapContainer.removeEventListener('pointerup',     handleRulerPointerUp,   { capture: true });
-    mapContainer.removeEventListener('pointercancel', handleRulerPointerUp,   { capture: true });
+    mapContainer.removeEventListener('pointerdown',   onPointerDown,   { capture: true });
+    mapContainer.removeEventListener('pointermove',   onPointerMove,   { capture: true });
+    mapContainer.removeEventListener('pointerup',     onPointerUp,     { capture: true });
+    mapContainer.removeEventListener('pointercancel', onPointerCancel, { capture: true });
     map?.remove();
   });
 
