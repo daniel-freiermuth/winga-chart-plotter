@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy, untrack } from 'svelte';
   import maplibregl from 'maplibre-gl';
-  import type { HitTarget, Gesture, DragTarget } from '$lib/gesture.ts';
+  import type { HitTarget, Gesture, DragTarget, Interactable } from '$lib/gesture.ts';
   import 'maplibre-gl/dist/maplibre-gl.css';
   import type * as GeoJSON from 'geojson';
   import { get } from 'svelte/store';
@@ -31,7 +31,7 @@
   import { VesselMorphLayer, MORPH_ARROW, MORPH_ANCHOR_DOT, MORPH_AGROUND_RING, MORPH_MOORING_BARS, MORPH_FISHING_GEAR, MORPH_NUC, MORPH_RESTRICTED, MORPH_DRAUGHT, type MorphGeometry } from '../layers/VesselMorphLayer';
   import { VesselIconLayer, MOB_GEOMETRY } from '../layers/VesselIconLayer';
   import { extrapolatePos } from '../lib/deadReckoning';
-  import { SvelteMap, SvelteSet } from 'svelte/reactivity';
+  import { SvelteMap } from 'svelte/reactivity';
   import { mapView, loadSavedView, saveView } from '../stores/mapView.svelte';
   import { visibility } from '../stores/visibility.svelte';
 
@@ -599,8 +599,6 @@
     return p;
   }
 
-  // Waypoint index targeted by a right-click (set in pointerdown, consumed in contextmenu).
-  let plannerRightClickIdx: number | null = null;
   // Waypoint being relocated: next map click sets its new position.
   let movingWaypoint: { uuid: string; name: string } | null = $state(null);
 
@@ -617,136 +615,225 @@
 
   // ─── Gesture Recognizer ────────────────────────────────────────────────────
   //
-  // hit()         — single priority-ordered pick; returns one HitTarget.
-  // handleGesture — exhaustive Gesture switch; the only place actions live.
-  // dispatchTap   — exhaustive HitTarget switch for tap actions.
-  // onPointer*    — own all raw events and drive the FSM.
+  // Each Interactable owns its pick logic and its HitTarget behavior.
+  // INTERACTIONS defines priority order — first match wins.
+  // hit() iterates them; handleGesture() dispatches to the matched target.
 
-  /** Priority-ordered hit test. Returns the highest-priority interactive element
-   *  at canvas position (x, y). Returns null for bare map. */
-  function hit(x: number, y: number): HitTarget | null {
-    const m = map;
-    if (!overlay || !m) return null;
-    try {
-      if (routePlanner.active) {
-        const ph = overlay.pickObject({ x, y, radius: 12, layerIds: ['planner-handles'] });
-        if (ph?.object !== null && ph?.object !== undefined)
-          return { kind: 'planner-handle', idx: (ph.object as { idx: number }).idx };
-        const ps = overlay.pickObject({ x, y, radius: 8, layerIds: ['planner-line'] });
-        if (ps?.object !== null && ps?.object !== undefined)
-          return { kind: 'planner-segment', segIdx: (ps.object as { segIdx: number }).segIdx };
-      }
-      const rl = overlay.pickObject({ x, y, radius: 14, layerIds: ['ruler-labels'] });
-      if (rl?.object) return { kind: 'ruler-label', rulerId: (rl.object as { ruler: { id: string } }).ruler.id };
-      const rh = overlay.pickObject({ x, y, radius: 10, layerIds: ['ruler-handles'] });
-      if (rh?.object) {
-        const d = rh.object as { rulerId: string; endpoint: 'a' | 'b' };
-        return { kind: 'ruler-handle', rulerId: d.rulerId, endpoint: d.endpoint };
-      }
-      if (overlay.pickMultipleObjects({ x, y, radius: 5, layerIds: ['own-vessel-icon'] }).length > 0)
-        return { kind: 'own-vessel' };
-      const aisHits = overlay.pickMultipleObjects({ x, y, radius: 5, layerIds: ['ais-confirmed-main', 'ais-ghost-main', 'ais-mob-icon'] });
-      const aisSeen = new SvelteSet<number>();
-      const aisUniq: { idx: number; coord: [number, number] }[] = [];
-      for (const p of aisHits) {
+  const plannerHandleInteractable: Interactable = {
+    pick(x, y) {
+      if (!overlay || !routePlanner.active) return null;
+      const p = overlay.pickObject({ x, y, radius: 12, layerIds: ['planner-handles'] });
+      if (p?.object == null) return null;
+      const { idx } = p.object as { idx: number };
+      return {
+        kind: 'planner-handle',
+        drag: {
+          snapsToTargets: false,
+          onMove:    (lngLat) => { routePlanner.moveWaypoint(idx, lngLat.lng, lngLat.lat); },
+          onEnd:     () => { /* position committed during onMove */ },
+          onCancel:  () => { /* noop */ },
+        },
+        onTap:         () => { /* noop */ },
+        onContextMenu: () => { routePlanner.removeWaypoint(idx); },
+      };
+    },
+  };
+
+  const plannerSegmentInteractable: Interactable = {
+    pick(x, y) {
+      if (!overlay || !routePlanner.active) return null;
+      const p = overlay.pickObject({ x, y, radius: 8, layerIds: ['planner-line'] });
+      if (p?.object == null) return null;
+      const { segIdx } = p.object as { segIdx: number };
+      return {
+        kind: 'planner-segment',
+        onTap:         (lngLat) => { routePlanner.insertWaypoint(segIdx + 1, lngLat.lng, lngLat.lat); },
+        onContextMenu: () => { /* noop */ },
+      };
+    },
+  };
+
+  const rulerLabelInteractable: Interactable = {
+    pick(x, y) {
+      if (!overlay) return null;
+      const p = overlay.pickObject({ x, y, radius: 14, layerIds: ['ruler-labels'] });
+      if (!p?.object) return null;
+      const rulerId = (p.object as { ruler: { id: string } }).ruler.id;
+      return {
+        kind: 'ruler-label',
+        onTap:         (_, clientX, clientY) => { rulerPopup = { rulerId, x: clientX, y: clientY }; },
+        onContextMenu: () => { /* noop */ },
+      };
+    },
+  };
+
+  const rulerHandleInteractable: Interactable = {
+    pick(x, y) {
+      if (!overlay) return null;
+      const p = overlay.pickObject({ x, y, radius: 10, layerIds: ['ruler-handles'] });
+      if (!p?.object) return null;
+      const { rulerId, endpoint } = p.object as { rulerId: string; endpoint: 'a' | 'b' };
+      return {
+        kind: 'ruler-handle',
+        drag: {
+          snapsToTargets: true,
+          onMove:    (lngLat) => { rulers.moveEndpoint(rulerId, endpoint, lngLat.lng, lngLat.lat); },
+          onEnd:     (lngLat, snapId) => { rulers.snapEndpoint(rulerId, endpoint, snapId, lngLat.lng, lngLat.lat); },
+          onCancel:  () => { /* noop */ },
+        },
+        onTap:         () => { /* noop */ },
+        onContextMenu: () => { /* noop */ },
+      };
+    },
+  };
+
+  const ownVesselInteractable: Interactable = {
+    pick(x, y) {
+      if (!overlay) return null;
+      if (overlay.pickMultipleObjects({ x, y, radius: 5, layerIds: ['own-vessel-icon'] }).length === 0) return null;
+      return {
+        kind: 'own-vessel',
+        onTap:         (lngLat) => { showOwnVesselPopup(lngLat); },
+        onContextMenu: () => { /* noop */ },
+      };
+    },
+  };
+
+  const aisVesselInteractable: Interactable = {
+    pick(x, y) {
+      if (!overlay) return null;
+      const hits = overlay.pickMultipleObjects({ x, y, radius: 5, layerIds: ['ais-confirmed-main', 'ais-ghost-main', 'ais-mob-icon'] });
+      // eslint-disable-next-line svelte/prefer-svelte-reactivity
+      const seen = new Set<number>();
+      const uniq: { idx: number; coord: [number, number] }[] = [];
+      for (const p of hits) {
         const idx = p.object as number | null | undefined;
-        if (idx == null || aisSeen.has(idx)) continue;
-        aisSeen.add(idx);
-        if (p.coordinate) aisUniq.push({ idx, coord: p.coordinate as [number, number] });
+        if (idx == null || seen.has(idx)) continue;
+        seen.add(idx);
+        if (p.coordinate) uniq.push({ idx, coord: p.coordinate as [number, number] });
       }
-      if (aisUniq.length === 1) return { kind: 'ais-vessel',       vesselIdx: aisUniq[0]!.idx, coordinate: aisUniq[0]!.coord };
-      if (aisUniq.length > 1)  return { kind: 'ais-vessels-ambig', indices:   aisUniq.map(h => h.idx), coordinate: aisUniq[0]!.coord };
-      const wptFeats = m.queryRenderedFeatures([x, y], { layers: ['all-waypoints-circle'] });
-      if (wptFeats.length > 0) return { kind: 'waypoint', feature: wptFeats[0]! };
+      if (uniq.length === 1) {
+        const { idx, coord } = uniq[0]!;
+        return {
+          kind: 'ais-vessel',
+          onTap:         () => { const t = ais.getTarget(idx); if (t?.position) handleAisClick(coord, t); },
+          onContextMenu: () => { /* noop */ },
+        };
+      }
+      if (uniq.length > 1) {
+        const coord = uniq[0]!.coord;
+        const indices = uniq.map(h => h.idx);
+        return {
+          kind: 'ais-vessels-ambig',
+          onTap:         () => { openDisambigPopup(coord, indices); },
+          onContextMenu: () => { /* noop */ },
+        };
+      }
+      return null;
+    },
+  };
+
+  const waypointInteractable: Interactable = {
+    pick(x, y) {
+      if (!map) return null;
+      const feats = map.queryRenderedFeatures([x, y], { layers: ['all-waypoints-circle'] });
+      if (feats.length === 0) return null;
+      const feature = feats[0]!;
+      return {
+        kind: 'waypoint',
+        onTap:         (lngLat) => { showWaypointPopup(lngLat, feature); },
+        onContextMenu: () => { /* noop */ },
+      };
+    },
+  };
+
+  const activeRouteInteractable: Interactable = {
+    pick(x, y) {
+      if (!overlay || !map) return null;
       const routeLine = overlay.pickObject({ x, y, radius: 6, layerIds: ['route-full', 'route-leg', 'route-bearing'] });
-      const routeWpts = m.queryRenderedFeatures([x, y], { layers: ['route-waypoints'] });
-      if (routeLine?.object || routeWpts.length > 0) {
-        const wptFeat = routeWpts[0];
-        return wptFeat ? { kind: 'active-route', wptFeature: wptFeat } : { kind: 'active-route' };
+      const routeWpts = map.queryRenderedFeatures([x, y], { layers: ['route-waypoints'] });
+      if (!routeLine?.object && routeWpts.length === 0) return null;
+      const wptFeat = routeWpts[0];
+      return {
+        kind: 'active-route',
+        onTap:         (lngLat) => { showActiveRoutePopup(lngLat, wptFeat); },
+        onContextMenu: () => { /* noop */ },
+      };
+    },
+  };
+
+  const routeInteractable: Interactable = {
+    pick(x, y) {
+      if (!map) return null;
+      const feats = map.queryRenderedFeatures([x, y], { layers: ['all-routes-line'] });
+      if (feats.length === 0) return null;
+      const feature = feats[0]!;
+      return {
+        kind: 'route',
+        onTap:         (lngLat) => { showAllRoutesPopup(lngLat, feature); },
+        onContextMenu: () => { /* noop */ },
+      };
+    },
+  };
+
+  /** Priority-ordered registry of all interactive elements on the map canvas.
+   *  To add a new element: write one Interactable and insert it at the right position. */
+  const INTERACTIONS: Interactable[] = [
+    plannerHandleInteractable,
+    plannerSegmentInteractable,
+    rulerLabelInteractable,
+    rulerHandleInteractable,
+    ownVesselInteractable,
+    aisVesselInteractable,
+    waypointInteractable,
+    activeRouteInteractable,
+    routeInteractable,
+  ];
+
+  /** Iterates INTERACTIONS in priority order; returns the first match or null. */
+  function hit(x: number, y: number): HitTarget | null {
+    if (!overlay || !map) return null;
+    try {
+      for (const i of INTERACTIONS) {
+        const t = i.pick(x, y);
+        if (t) return t;
       }
-      const allRoutes = m.queryRenderedFeatures([x, y], { layers: ['all-routes-line'] });
-      if (allRoutes.length > 0) return { kind: 'route', feature: allRoutes[0]! };
-    } catch { /* overlay may be in a transient invalid state during style reload */ }
+    } catch { /* transient overlay state during style reload */ }
     return null;
   }
 
-  /** Exhaustive gesture dispatch — the only place application actions are triggered. */
+  /** Single dispatcher — the only place application actions are triggered.
+   *  For concrete targets, routes to the target's own behavior methods.
+   *  Exhaustive on Gesture; the satisfies-never default enforces coverage. */
   function handleGesture(g: Gesture): void {
     switch (g.type) {
       case 'tap':
         rulerPopup = null;
-        dispatchTap(g.target, g.lngLat, g.clientX, g.clientY);
+        g.target.onTap(g.lngLat, g.clientX, g.clientY);
         return;
       case 'long-press':
         rulerPopup = null;
         if (!routePlanner.active) showNavigatePopup(g.lngLat);
-        // long-press in planner mode on empty space → do nothing (no undo).
         return;
       case 'drag-start':
         rulerPopup = null;
         return;
       case 'drag-move':
-        if (g.target.kind === 'ruler-handle')
-          rulers.moveEndpoint(g.target.rulerId, g.target.endpoint, g.lngLat.lng, g.lngLat.lat);
-        else
-          routePlanner.moveWaypoint(g.target.idx, g.lngLat.lng, g.lngLat.lat);
+        g.target.drag.onMove(g.lngLat);
         return;
       case 'drag-end':
-        if (g.target.kind === 'ruler-handle')
-          rulers.snapEndpoint(g.target.rulerId, g.target.endpoint, g.snapId, g.lngLat.lng, g.lngLat.lat);
-        // planner-handle drag-end: position already committed in drag-move events.
+        g.target.drag.onEnd(g.lngLat, g.snapId);
         return;
       case 'drag-cancel':
+        g.target.drag.onCancel();
         return;
       case 'context-menu':
-        if (routePlanner.active) {
-          if (g.plannerHandleIdx !== undefined) routePlanner.removeWaypoint(g.plannerHandleIdx);
-          return;
-        }
-        showNavigatePopup(g.lngLat);
+        rulerPopup = null;
+        if (g.target) g.target.onContextMenu(g.lngLat);
+        else if (!routePlanner.active) showNavigatePopup(g.lngLat);
         return;
       default:
         g satisfies never;
-    }
-  }
-
-  /** Exhaustive tap dispatch — called by handleGesture only.
-   *  TypeScript enforces that every HitTarget kind is handled. */
-  function dispatchTap(target: HitTarget, lngLat: maplibregl.LngLat, clientX: number, clientY: number): void {
-    switch (target.kind) {
-      case 'ruler-label':
-        rulerPopup = { rulerId: target.rulerId, x: clientX, y: clientY };
-        return;
-      case 'ruler-handle':
-        return; // drag-only; tap has no action
-      case 'planner-handle':
-        return; // drag-only; tap has no action
-      case 'planner-segment':
-        routePlanner.insertWaypoint(target.segIdx + 1, lngLat.lng, lngLat.lat);
-        return;
-      case 'own-vessel':
-        showOwnVesselPopup(lngLat);
-        return;
-      case 'ais-vessel': {
-        const t = ais.getTarget(target.vesselIdx);
-        if (t?.position) handleAisClick(target.coordinate, t);
-        return;
-      }
-      case 'ais-vessels-ambig':
-        openDisambigPopup(target.coordinate, target.indices);
-        return;
-      case 'waypoint':
-        showWaypointPopup(lngLat, target.feature);
-        return;
-      case 'active-route':
-        showActiveRoutePopup(lngLat, target.wptFeature);
-        return;
-      case 'route':
-        showAllRoutesPopup(lngLat, target.feature);
-        return;
-      // 'empty' is gone from HitTarget — bare-map taps are handled in onPointerUp directly.
-      default:
-        target satisfies never;
     }
   }
 
@@ -765,6 +852,8 @@
       gesturePhase = { phase: 'idle' };
       return;
     }
+    // Non-primary buttons (right-click etc.) are handled by the contextmenu event.
+    if (e.button !== 0) return;
 
     const rect = mapContainer.getBoundingClientRect();
     const x = e.clientX - rect.left;
@@ -785,21 +874,15 @@
       return;
     }
 
-    // Right-click on planner handle: store for the contextmenu handler.
-    if (e.button === 2 && target.kind === 'planner-handle') {
-      plannerRightClickIdx = target.idx;
-      e.preventDefault(); e.stopPropagation();
-      return;
-    }
-
     // Draggable targets: transition directly to dragging.
-    if (target.kind === 'ruler-handle' || target.kind === 'planner-handle') {
+    if (target.drag) {
+      const dragTarget = target as DragTarget;
       map.dragPan.disable();
       mapContainer.style.cursor = 'grabbing';
       mapContainer.setPointerCapture(e.pointerId);
       e.preventDefault(); e.stopPropagation();
-      gesturePhase = { phase: 'dragging', target, pointerId: e.pointerId };
-      handleGesture({ type: 'drag-start', target });
+      gesturePhase = { phase: 'dragging', target: dragTarget, pointerId: e.pointerId };
+      handleGesture({ type: 'drag-start', target: dragTarget });
       return;
     }
 
@@ -855,7 +938,7 @@
       let snapId: string | undefined;
       let lng = map!.unproject([x, y]).lng;
       let lat = map!.unproject([x, y]).lat;
-      if (target.kind === 'ruler-handle') {
+      if (target.drag.snapsToTargets) {
         for (const t of liveSnapTargets) {
           const pt = map!.project([t.position.longitude, t.position.latitude]);
           if (Math.hypot(pt.x - x, pt.y - y) < RULER_SNAP_PX) {
@@ -1332,12 +1415,11 @@
     map.on('mouseenter', 'all-waypoints-circle', () => { if (map) map.getCanvas().style.cursor = 'pointer'; });
     map.on('mouseleave', 'all-waypoints-circle', () => { if (map) map.getCanvas().style.cursor = ''; });
 
-    // Taps are handled by the gesture recognizer (dispatchTap).
-    // Contextmenu routes through handleGesture for the same exhaustive dispatch.
+    // Context-menu re-hit-tests at the event position; each target's onContextMenu handles its own action.
     map.on('contextmenu', (e) => {
-      const idx = plannerRightClickIdx;
-      plannerRightClickIdx = null;
-      handleGesture({ type: 'context-menu', lngLat: e.lngLat, plannerHandleIdx: idx ?? undefined });
+      const { x, y } = e.point;
+      const target = hit(x, y);
+      handleGesture({ type: 'context-menu', target, lngLat: e.lngLat });
     });
 
 

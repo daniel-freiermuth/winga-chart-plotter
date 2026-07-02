@@ -1,50 +1,73 @@
 /**
  * Gesture recognizer contract for the map canvas.
  *
- * HitTarget  — exhaustive taxonomy of everything tappable/draggable on the map.
- *              Adding a new interactive element means adding a variant here; the
- *              compiler then points to every unhandled site in dispatchTap.
- *              hit() returns null for bare map (no target) — the FSM handles that directly.
+ * HitTarget    — self-describing interface; each interactive element carries its own
+ *               behavior. No central dispatch switch — the FSM calls target methods directly.
  *
- * Gesture    — exhaustive set of recognized user intentions.
- *              Adding a new gesture (e.g. double-tap) means adding a variant here;
- *              the compiler then rejects the handleGesture switch until it is handled.
+ * Interactable — one interactive layer; owns its pick logic and returns the HitTarget
+ *               (with behavior) or null. Add one entry to INTERACTIONS per new element.
  *
- * DragTarget — subset of HitTarget that can be dragged (ruler/planner handles).
- *              Used to type the 'dragging' FSM phase so drag-move/end always know
- *              the concrete drag subject without an extra runtime null-check.
+ * DragTarget   — HitTarget guaranteed to support dragging (drag property is required).
+ *
+ * Gesture      — recognized user intentions emitted by the FSM to handleGesture.
+ *               Adding a new gesture type requires one more case in handleGesture.
+ *
+ * DragTarget — HitTarget guaranteed to support dragging (drag property is required).
+ *
+ * Gesture    — recognized user intentions emitted by the FSM to handleGesture.
+ *              Adding a new gesture type requires one more case in handleGesture.
  */
 
 import type maplibregl from 'maplibre-gl';
 
-// ── Hit taxonomy ─────────────────────────────────────────────────────────────
+// -- Drag behavior ----------------------------------------------------------------
 
-export type HitTarget =
-  | { kind: 'ruler-handle';        rulerId: string; endpoint: 'a' | 'b' }
-  | { kind: 'planner-handle';      idx: number }
-  | { kind: 'planner-segment';     segIdx: number }
-  | { kind: 'ruler-label';         rulerId: string }
-  | { kind: 'own-vessel' }
-  | { kind: 'ais-vessel';          vesselIdx: number; coordinate: [number, number] }
-  | { kind: 'ais-vessels-ambig';   indices: number[];  coordinate: [number, number] }
-  | { kind: 'waypoint';            feature: maplibregl.MapGeoJSONFeature }
-  | { kind: 'active-route';        wptFeature?: maplibregl.MapGeoJSONFeature }
-  | { kind: 'route';               feature: maplibregl.MapGeoJSONFeature }
+export interface DragBehavior {
+  /** Snap the released endpoint to a nearby AIS/vessel target at drag-end. */
+  readonly snapsToTargets: boolean;
+  onMove(lngLat: maplibregl.LngLat): void;
+  onEnd(lngLat: maplibregl.LngLat, snapId: string | undefined): void;
+  onCancel(): void;
+}
 
-/** Targets that support drag interaction. */
-export type DragTarget = Extract<HitTarget, { kind: 'ruler-handle' | 'planner-handle' }>
+// -- Hit target -------------------------------------------------------------------
 
-// ── Gesture vocabulary ────────────────────────────────────────────────────────
+/** An interactive element on the map canvas. Carries its own response to each gesture.
+ *  The FSM calls methods directly — no central switch, no kind-based dispatch. */
+export interface HitTarget {
+  /** Discriminant kept for debugging / logging only. Never used for dispatch. */
+  readonly kind: string;
+  /** If present, pointer-down immediately initiates a drag operation. */
+  readonly drag?: DragBehavior;
+  /** Short tap: press + release without significant movement. */
+  onTap(lngLat: maplibregl.LngLat, clientX: number, clientY: number): void;
+  /** Right-click or OS context-menu event. */
+  onContextMenu(lngLat: maplibregl.LngLat): void;
+}
+
+/** HitTarget that is guaranteed to be draggable. */
+export type DragTarget = HitTarget & { drag: DragBehavior };
+
+// -- Interactable (registry entry) ------------------------------------------------
+
+/** An interactive layer that knows how to hit-test itself and produce a HitTarget.
+ *  One instance per interactive element; added to INTERACTIONS in priority order. */
+export interface Interactable {
+  /** Returns the HitTarget at canvas position (x, y), or null if nothing is hit. */
+  pick(x: number, y: number): HitTarget | null;
+}
+
+// -- Gesture types ----------------------------------------------------------------
 
 export type Gesture =
-  // A short press-and-release on any target.
-  | { type: 'tap';          target: HitTarget;  lngLat: maplibregl.LngLat; clientX: number; clientY: number }
-  // A touch held past the long-press threshold on empty map space.
+  /** Short tap on a concrete interactive element. */
+  | { type: 'tap';          target: HitTarget; lngLat: maplibregl.LngLat; clientX: number; clientY: number }
+  /** Touch held past the long-press threshold on empty map space. */
   | { type: 'long-press';   lngLat: maplibregl.LngLat }
-  // Drag lifecycle: start → one or more moves → end or cancel.
+  /** Drag lifecycle — target is always a DragTarget. */
   | { type: 'drag-start';   target: DragTarget }
   | { type: 'drag-move';    target: DragTarget; lngLat: maplibregl.LngLat }
   | { type: 'drag-end';     target: DragTarget; lngLat: maplibregl.LngLat; snapId: string | undefined }
   | { type: 'drag-cancel';  target: DragTarget }
-  // Right-click / system context menu.
-  | { type: 'context-menu'; lngLat: maplibregl.LngLat; plannerHandleIdx: number | undefined }
+  /** Right-click / context-menu. target is null for bare map. */
+  | { type: 'context-menu'; target: HitTarget | null; lngLat: maplibregl.LngLat };
