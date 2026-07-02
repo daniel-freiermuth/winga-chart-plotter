@@ -569,7 +569,7 @@
   type GesturePhase =
     | { phase: 'idle' }
     | { phase: 'down';
-        target: HitTarget; x: number; y: number;
+        target: HitTarget | null;
         clientX: number; clientY: number;
         lngLat: maplibregl.LngLat; pointerId: number;
         timer: ReturnType<typeof setTimeout> | null }
@@ -623,10 +623,10 @@
   // onPointer*    — own all raw events and drive the FSM.
 
   /** Priority-ordered hit test. Returns the highest-priority interactive element
-   *  at canvas position (x, y), or { kind: 'empty' } for bare map. */
-  function hit(x: number, y: number): HitTarget {
+   *  at canvas position (x, y). Returns null for bare map. */
+  function hit(x: number, y: number): HitTarget | null {
     const m = map;
-    if (!overlay || !m) return { kind: 'empty' };
+    if (!overlay || !m) return null;
     try {
       if (routePlanner.active) {
         const ph = overlay.pickObject({ x, y, radius: 12, layerIds: ['planner-handles'] });
@@ -667,7 +667,7 @@
       const allRoutes = m.queryRenderedFeatures([x, y], { layers: ['all-routes-line'] });
       if (allRoutes.length > 0) return { kind: 'route', feature: allRoutes[0]! };
     } catch { /* overlay may be in a transient invalid state during style reload */ }
-    return { kind: 'empty' };
+    return null;
   }
 
   /** Exhaustive gesture dispatch — the only place application actions are triggered. */
@@ -679,12 +679,8 @@
         return;
       case 'long-press':
         rulerPopup = null;
-        if (g.target.kind === 'planner-handle' && routePlanner.active) {
-          routePlanner.removeWaypoint(g.target.idx);
-        } else if (g.target.kind === 'empty' && !routePlanner.active) {
-          showNavigatePopup(g.lngLat);
-        }
-        // Any other long-press target (e.g. ruler label, vessel) → no action.
+        if (!routePlanner.active) showNavigatePopup(g.lngLat);
+        // long-press in planner mode on empty space → do nothing (no undo).
         return;
       case 'drag-start':
         rulerPopup = null;
@@ -717,16 +713,6 @@
   /** Exhaustive tap dispatch — called by handleGesture only.
    *  TypeScript enforces that every HitTarget kind is handled. */
   function dispatchTap(target: HitTarget, lngLat: maplibregl.LngLat, clientX: number, clientY: number): void {
-    // Moving-waypoint mode: the next tap anywhere places the waypoint.
-    if (movingWaypoint) {
-      const { uuid, name } = movingWaypoint;
-      movingWaypoint = null;
-      mapContainer.style.cursor = '';
-      updateWaypoint(settings.signalkHttpUrl, uuid, name, lngLat.lat, lngLat.lng, auth.authHeaders)
-        .then(() => waypoints.load(settings.signalkHttpUrl))
-        .catch((err: unknown) => { console.error('[waypoint] Failed to move:', err); });
-      return;
-    }
     switch (target.kind) {
       case 'ruler-label':
         rulerPopup = { rulerId: target.rulerId, x: clientX, y: clientY };
@@ -758,9 +744,7 @@
       case 'route':
         showAllRoutesPopup(lngLat, target.feature);
         return;
-      case 'empty':
-        if (routePlanner.active) routePlanner.addWaypoint(lngLat.lng, lngLat.lat);
-        return;
+      // 'empty' is gone from HitTarget — bare-map taps are handled in onPointerUp directly.
       default:
         target satisfies never;
     }
@@ -788,6 +772,19 @@
     const lngLat = map.unproject([x, y]);
     const target = hit(x, y);
 
+    // null = empty map: let MapLibre handle pan/zoom.
+    // Touch gets a long-press timer; mouse empty-space taps are caught in onPointerUp.
+    if (!target) {
+      const timer: ReturnType<typeof setTimeout> | null = e.pointerType === 'touch'
+        ? setTimeout(() => {
+            gesturePhase = { phase: 'post-long-press', pointerId: e.pointerId };
+            handleGesture({ type: 'long-press', lngLat });
+          }, LONG_PRESS_MS)
+        : null;
+      gesturePhase = { phase: 'down', target: null, clientX: e.clientX, clientY: e.clientY, lngLat, pointerId: e.pointerId, timer };
+      return;
+    }
+
     // Right-click on planner handle: store for the contextmenu handler.
     if (e.button === 2 && target.kind === 'planner-handle') {
       plannerRightClickIdx = target.idx;
@@ -806,23 +803,9 @@
       return;
     }
 
-    // Non-empty: we own this interaction — prevent MapLibre's pan/click synthesis.
-    if (target.kind !== 'empty') {
-      e.preventDefault(); e.stopPropagation();
-    }
-
-    // Touch: start long-press timer. Fires for all target kinds:
-    //   empty           → navigate popup (when not in planner mode)
-    //   planner-handle  → remove waypoint (handled in handleGesture long-press case)
-    //   everything else → no long-press action
-    const timer: ReturnType<typeof setTimeout> | null = e.pointerType === 'touch'
-      ? setTimeout(() => {
-          gesturePhase = { phase: 'post-long-press', pointerId: e.pointerId };
-          handleGesture({ type: 'long-press', target, lngLat });
-        }, LONG_PRESS_MS)
-      : null;
-
-    gesturePhase = { phase: 'down', target, x, y, clientX: e.clientX, clientY: e.clientY, lngLat, pointerId: e.pointerId, timer };
+    // Concrete non-draggable target: prevent MapLibre from treating this as a pan/click.
+    e.preventDefault(); e.stopPropagation();
+    gesturePhase = { phase: 'down', target, clientX: e.clientX, clientY: e.clientY, lngLat, pointerId: e.pointerId, timer: null };
   }
 
   function onPointerMove(e: PointerEvent): void {
@@ -893,7 +876,22 @@
       const { timer, target, lngLat, clientX, clientY } = gesturePhase;
       if (timer) clearTimeout(timer);
       gesturePhase = { phase: 'idle' };
-      handleGesture({ type: 'tap', target, lngLat, clientX, clientY });
+      // Moving-waypoint mode intercepts all taps, including empty-space ones.
+      if (movingWaypoint) {
+        const { uuid, name } = movingWaypoint;
+        movingWaypoint = null;
+        mapContainer.style.cursor = '';
+        updateWaypoint(settings.signalkHttpUrl, uuid, name, lngLat.lat, lngLat.lng, auth.authHeaders)
+          .then(() => waypoints.load(settings.signalkHttpUrl))
+          .catch((err: unknown) => { console.error('[waypoint] Failed to move:', err); });
+        return;
+      }
+      if (target) {
+        handleGesture({ type: 'tap', target, lngLat, clientX, clientY });
+      } else if (routePlanner.active) {
+        // Bare-map tap while planner active → add waypoint.
+        routePlanner.addWaypoint(lngLat.lng, lngLat.lat);
+      }
       return;
     }
 

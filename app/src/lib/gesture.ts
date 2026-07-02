@@ -4,6 +4,7 @@
  * HitTarget  — exhaustive taxonomy of everything tappable/draggable on the map.
  *              Adding a new interactive element means adding a variant here; the
  *              compiler then points to every unhandled site in dispatchTap.
+ *              hit() returns null for bare map (no target) — the FSM handles that directly.
  *
  * Gesture    — exhaustive set of recognized user intentions.
  *              Adding a new gesture (e.g. double-tap) means adding a variant here;
@@ -29,7 +30,6 @@ export type HitTarget =
   | { kind: 'waypoint';            feature: maplibregl.MapGeoJSONFeature }
   | { kind: 'active-route';        wptFeature?: maplibregl.MapGeoJSONFeature }
   | { kind: 'route';               feature: maplibregl.MapGeoJSONFeature }
-  | { kind: 'empty' }
 
 /** Targets that support drag interaction. */
 export type DragTarget = Extract<HitTarget, { kind: 'ruler-handle' | 'planner-handle' }>
@@ -39,8 +39,8 @@ export type DragTarget = Extract<HitTarget, { kind: 'ruler-handle' | 'planner-ha
 export type Gesture =
   // A short press-and-release on any target.
   | { type: 'tap';          target: HitTarget;  lngLat: maplibregl.LngLat; clientX: number; clientY: number }
-  // A press held past the long-press threshold on touch. Target is what was under the finger.
-  | { type: 'long-press';   target: HitTarget;  lngLat: maplibregl.LngLat }
+  // A touch held past the long-press threshold on empty map space.
+  | { type: 'long-press';   lngLat: maplibregl.LngLat }
   // Drag lifecycle: start → one or more moves → end or cancel.
   | { type: 'drag-start';   target: DragTarget }
   | { type: 'drag-move';    target: DragTarget; lngLat: maplibregl.LngLat }
