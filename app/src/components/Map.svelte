@@ -565,11 +565,27 @@
   let isHoveringHandle = false;
   // Ruler label popup: shown when user clicks a label; holds screen position and ruler id.
   let rulerPopup = $state<{ rulerId: string; x: number; y: number } | null>(null);
-  // Shared long-press canceller — assigned by the touchstart IIFE in onMount so that
-  // handleRulerPointerDown can cancel any pending timer the moment a handle is hit.
-  // Default is a no-op until the IIFE runs.
-  // eslint-disable-next-line @typescript-eslint/no-empty-function
-  let cancelLongPress: () => void = () => {};
+  // Long-press state — owned entirely by the three pointer handlers below.
+  // The timer is only started when no drag target is found, so drag and long-press
+  // are mutually exclusive code paths with nothing to cancel between them.
+  let longPressTimer:      ReturnType<typeof setTimeout> | null = null;
+  let longPressLngLat:     maplibregl.LngLat | null = null;
+  let longPressStartX      = 0;
+  let longPressStartY      = 0;
+  // Set by the timer, cleared in pointerup — used to suppress the browser's follow-up click.
+  let longPressHandled     = false;
+  const LONG_PRESS_MS      = 500;
+  const LONG_PRESS_MOVE_PX = 10;
+
+  // Close the ruler popup on any pointer interaction outside it.
+  // The popup div calls e.stopPropagation() on its own pointerdown, so this bubble-phase
+  // listener only fires for events that originate outside the popup element.
+  $effect(() => {
+    if (!rulerPopup) return;
+    const dismiss = () => { rulerPopup = null; };
+    document.addEventListener('pointerdown', dismiss);
+    return () => { document.removeEventListener('pointerdown', dismiss); };
+  });
 
   // At most one MapLibre popup open at a time — each new popup closes the previous one.
   let activePopup: maplibregl.Popup | null = null;
@@ -598,11 +614,19 @@
     }
   }
 
-  // Native pointer-event drag handlers — deck.gl drag callbacks break when the layer
-  // is recreated mid-drag (which happens every rAF because the data changes).
-  // Hover/click are handled here via overlay.pickObject().
+  // Native pointer-event drag + long-press handlers.
+  // Drag and long-press are mutually exclusive branches inside handleRulerPointerDown:
+  // the timer is only started when no drag target is found, so when a drag begins there
+  // is nothing to cancel. All click actions live in the unified map.on('click') dispatcher.
   function handleRulerPointerDown(e: PointerEvent) {
     if (!overlay || !map) return;
+
+    // Multi-touch: cancel any pending long-press (user is pinching).
+    if (!e.isPrimary) {
+      if (longPressTimer !== null) { clearTimeout(longPressTimer); longPressTimer = null; longPressLngLat = null; }
+      return;
+    }
+
     const rect = mapContainer.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
@@ -620,41 +644,59 @@
           e.stopPropagation();
           return;
         }
+        rulerPopup = null;
         plannerDrag = { idx: d.idx };
         map.dragPan.disable();
         mapContainer.style.cursor = 'grabbing';
         mapContainer.setPointerCapture(e.pointerId);
-        cancelLongPress();
-        e.preventDefault();
+        e.preventDefault();   // suppresses touchstart/mousedown → no long-press timer, no MapLibre click
         e.stopPropagation();
-        return;
+        return; // timer never started — nothing to cancel
       }
     }
 
-    // Check label click — opens the remove popup.
-    const labelPick = overlay.pickObject({ x, y, radius: 14, layerIds: ['ruler-labels'] });
-    if (labelPick?.object) {
-      interface LabelDatum { ruler: { id: string } }
-      const d = labelPick.object as LabelDatum;
-      rulerPopup = { rulerId: d.ruler.id, x: e.clientX, y: e.clientY };
-      cancelLongPress();
-      e.preventDefault();
-      e.stopPropagation();
-      return;
-    }
-    // Dismiss popup on any other tap on the map.
-    if (rulerPopup) { rulerPopup = null; return; }
+    // Ruler handles.
     const picked = overlay.pickObject({ x, y, radius: 10, layerIds: ['ruler-handles'] });
-    if (!picked?.object) return;
-    interface HandleDatum { rulerId: string; endpoint: 'a' | 'b' }
-    const d = picked.object as HandleDatum;
-    rulerDrag = { rulerId: d.rulerId, endpoint: d.endpoint };
-    map.dragPan.disable();
-    mapContainer.style.cursor = 'grabbing';
-    mapContainer.setPointerCapture(e.pointerId);
-    cancelLongPress();
-    e.preventDefault();
-    e.stopPropagation();
+    if (picked?.object) {
+      interface HandleDatum { rulerId: string; endpoint: 'a' | 'b' }
+      const d = picked.object as HandleDatum;
+      rulerPopup = null;
+      rulerDrag = { rulerId: d.rulerId, endpoint: d.endpoint };
+      map.dragPan.disable();
+      mapContainer.style.cursor = 'grabbing';
+      mapContainer.setPointerCapture(e.pointerId);
+      e.preventDefault();   // suppresses touchstart/mousedown → no long-press timer, no MapLibre click
+      e.stopPropagation();
+      return; // timer never started — nothing to cancel
+    }
+
+    // Not a touch: mouse long-press is handled by the contextmenu event, nothing to do here.
+    if (e.pointerType !== 'touch') return;
+
+    // Ruler label: has a tap action in map.on('click'). No long-press behaviour.
+    if (overlay.pickObject({ x, y, radius: 14, layerIds: ['ruler-labels'] })?.object) return;
+
+    // Empty map space on touch: start long-press timer for the navigate popup.
+    longPressStartX = e.clientX;
+    longPressStartY = e.clientY;
+    longPressLngLat = map.unproject([x, y]);
+    longPressTimer = setTimeout(() => {
+      longPressTimer = null;
+      const lp = longPressLngLat;
+      if (!lp) return;
+      rulerPopup = null;
+      longPressHandled = true;
+      if (overlay && routePlanner.active) {
+        const pick = overlay.pickObject({ x, y, radius: 20, layerIds: ['planner-handles'] });
+        if (pick?.object !== null && pick?.object !== undefined) {
+          interface PlannerHandle { idx: number }
+          routePlanner.removeWaypoint((pick.object as PlannerHandle).idx);
+        }
+        // Long-press on empty space while drawing → do nothing (no undo).
+        return;
+      }
+      showNavigatePopup(lp);
+    }, LONG_PRESS_MS);
   }
 
   function handleRulerPointerMove(e: PointerEvent) {
@@ -671,26 +713,45 @@
       return;
     }
 
-    if (!rulerDrag) {
-      // Hover detection via pickObject (avoids deck.gl layer recreation race on drag).
-      if (overlay) {
-        try {
-          const handleLayers = ['ruler-handles', ...(routePlanner.active ? ['planner-handles'] : [])];
-          const hoverPick = overlay.pickObject({ x, y, radius: 10, layerIds: handleLayers });
-          setHandleHover(!!hoverPick?.object);
-        } catch {
-          // deck.gl overlay may be in a transient invalid state during map style reload
-        }
-      }
+    if (rulerDrag) {
+      const coord = map.unproject([x, y]);
+      rulers.moveEndpoint(rulerDrag.rulerId, rulerDrag.endpoint, coord.lng, coord.lat);
+      e.preventDefault();
+      e.stopPropagation();
       return;
     }
-    const coord = map.unproject([x, y]);
-    rulers.moveEndpoint(rulerDrag.rulerId, rulerDrag.endpoint, coord.lng, coord.lat);
-    e.preventDefault();
-    e.stopPropagation();
+
+    // Cancel long-press if the finger has moved beyond the stillness threshold.
+    if (longPressTimer !== null) {
+      const dx = e.clientX - longPressStartX;
+      const dy = e.clientY - longPressStartY;
+      if (Math.hypot(dx, dy) > LONG_PRESS_MOVE_PX) {
+        clearTimeout(longPressTimer);
+        longPressTimer = null;
+        longPressLngLat = null;
+      }
+    }
+
+    // Hover detection via pickObject (avoids deck.gl layer recreation race on drag).
+    if (overlay) {
+      try {
+        const handleLayers = ['ruler-handles', ...(routePlanner.active ? ['planner-handles'] : [])];
+        const hoverPick = overlay.pickObject({ x, y, radius: 10, layerIds: handleLayers });
+        setHandleHover(!!hoverPick?.object);
+      } catch {
+        // deck.gl overlay may be in a transient invalid state during map style reload
+      }
+    }
   }
 
   function handleRulerPointerUp(e: PointerEvent) {
+    // Cancel any pending long-press. If it already fired, suppress the follow-up browser click.
+    if (longPressTimer !== null) { clearTimeout(longPressTimer); longPressTimer = null; longPressLngLat = null; }
+    if (longPressHandled) {
+      longPressHandled = false;
+      e.preventDefault(); // prevents the browser from synthesising a click after the long-press action
+    }
+
     if (plannerDrag) {
       plannerDrag = null;
       mapContainer.style.cursor = isHoveringHandle ? 'grab' : '';
@@ -1130,7 +1191,7 @@
     map.on('rotate', () => { mapBearing = map?.getBearing() ?? mapBearing; });
     // Track user interactions so programmatic easeTo calls don't interrupt gestures.
     map.on('movestart', (e: { originalEvent?: unknown }) => {
-      if (e.originalEvent) { _isInteracting = true; _userHasInteracted = true; }
+      if (e.originalEvent) { _isInteracting = true; _userHasInteracted = true; rulerPopup = null; }
     });
     map.on('moveend',   () => {
       _isInteracting = false;
@@ -1155,10 +1216,18 @@
       if (!m) return;
       const { x, y } = e.point;
 
-      // 0. Ruler elements — consumed by pointerdown/capture; this guard is the last line of
-      //    defence for touch (touchstart can still reach MapLibre before preventDefault on
-      //    pointerdown has a chance to suppress it).
-      if (overlay.pickObject({ x, y, radius: 14, layerIds: ['ruler-labels'] })?.object) return;
+      // 0. Ruler elements — first in the priority dispatch because they overlay everything.
+      //    Labels are tap targets (open the remove popup). Handles are drag-only, but a
+      //    bare tap on a handle must not bleed through to vessel / waypoint picking.
+      const rulerLabelPick = overlay.pickObject({ x, y, radius: 14, layerIds: ['ruler-labels'] });
+      if (rulerLabelPick?.object) {
+        interface LabelDatum { ruler: { id: string } }
+        const d = rulerLabelPick.object as LabelDatum;
+        const rect = mapContainer.getBoundingClientRect();
+        rulerPopup = { rulerId: d.ruler.id, x: rect.left + x, y: rect.top + y };
+        return;
+      }
+      // Ruler handles are drag targets only; no click action.
       if (overlay.pickObject({ x, y, radius: 10, layerIds: ['ruler-handles'] })?.object) return;
 
       // 1. Moving-waypoint mode: the next click places the waypoint.
@@ -1237,60 +1306,6 @@
       showNavigatePopup(e.lngLat);
     });
 
-    // Long-press (touch) → remove planner waypoint, or show navigate popup.
-    // MapLibre does not synthesise contextmenu on long-press reliably, so handle it manually.
-    {
-      let longPressTimer: ReturnType<typeof setTimeout> | null = null;
-      let longPressEvent: { lngLat: maplibregl.LngLat; x: number; y: number } | null = null;
-      const LONG_PRESS_MS = 500;
-      const MOVE_THRESHOLD_PX = 10;
-      let startX = 0;
-      let startY = 0;
-
-      cancelLongPress = () => {
-        if (longPressTimer !== null) { clearTimeout(longPressTimer); longPressTimer = null; }
-        longPressEvent = null;
-      };
-
-      map.on('touchstart', (e) => {
-        if (e.originalEvent.touches.length !== 1) { cancelLongPress(); return; }
-        const touch = e.originalEvent.touches[0]!;
-        startX = touch.clientX;
-        startY = touch.clientY;
-        const rect = mapContainer.getBoundingClientRect();
-        longPressEvent = { lngLat: e.lngLat, x: touch.clientX - rect.left, y: touch.clientY - rect.top };
-        longPressTimer = setTimeout(() => {
-          if (!longPressEvent) return;
-          // Belt-and-suspenders: if a ruler/planner drag was started (pointerdown captured the
-          // hit and set the drag state) don't fire the long-press action.
-          if (rulerDrag || plannerDrag) { longPressTimer = null; return; }
-          const { lngLat, x, y } = longPressEvent;
-          if (overlay && routePlanner.active) {
-            const pick = overlay.pickObject({ x, y, radius: 20, layerIds: ['planner-handles'] });
-            if (pick?.object !== null && pick?.object !== undefined) {
-              interface PlannerHandle { idx: number }
-              routePlanner.removeWaypoint((pick.object as PlannerHandle).idx);
-            }
-            // Long-press on empty space while drawing → do nothing (no undo).
-            longPressTimer = null;
-            return;
-          }
-          showNavigatePopup(lngLat);
-          longPressTimer = null;
-        }, LONG_PRESS_MS);
-      });
-
-      map.on('touchmove', (e) => {
-        if (!longPressTimer) return;
-        const touch = e.originalEvent.touches[0]!;
-        const dx = touch.clientX - startX;
-        const dy = touch.clientY - startY;
-        if (Math.sqrt(dx * dx + dy * dy) > MOVE_THRESHOLD_PX) cancelLongPress();
-      });
-
-      map.on('touchend', cancelLongPress);
-      map.on('touchcancel', cancelLongPress);
-    }
 
     // style.load fires on initial style ready AND after MapLibre's internal setStyle
     // (which it calls automatically on WebGL context restore), so this covers both cases.
