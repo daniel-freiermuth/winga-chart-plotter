@@ -111,6 +111,11 @@ function createRoute() {
         _routeName  = ar.name    ?? null;
         _pointIndex = ar.pointIndex;
         _reverse    = ar.reverse;
+      } else if (course !== undefined) {
+        // We received an explicit course update with no active route — clear stale metadata.
+        _routeName  = null;
+        _pointIndex = 0;
+        _reverse    = false;
       }
 
       if (newHref !== _activeHref) {

@@ -254,6 +254,8 @@ enum LeafKind {
     RateOfTurn,
     SpeedThroughWater,
     Datetime,
+    /// Parent path — SK may send the whole `navigation.course` object at once.
+    Course,
     CourseNextPoint,
     CoursePreviousPoint,
     CourseActiveRoute,
@@ -269,9 +271,12 @@ static LEAF_DISPATCH: phf::Map<&'static str, LeafKind> = phf::phf_map! {
     "navigation.rateOfTurn" => LeafKind::RateOfTurn,
     "navigation.speedThroughWater" => LeafKind::SpeedThroughWater,
     "navigation.datetime" => LeafKind::Datetime,
-    "navigation.course.nextPoint" => LeafKind::CourseNextPoint,
+    "navigation.course.nextPoint"    => LeafKind::CourseNextPoint,
     "navigation.course.previousPoint" => LeafKind::CoursePreviousPoint,
-    "navigation.course.activeRoute" => LeafKind::CourseActiveRoute,
+    "navigation.course.activeRoute"  => LeafKind::CourseActiveRoute,
+    // Whole-object delivery — SK sends this when subscribed to the parent
+    // `navigation.course` and any sub-field changes.
+    "navigation.course"              => LeafKind::Course,
 };
 
 /// Extracts a string from a Signal K string-leaf value, which may arrive as
@@ -342,8 +347,50 @@ fn apply_leaf(vessel: &mut Vessel, path: &str, value: &Json, source: Option<&str
                 }
             }
         }
+        LeafKind::Course => {
+            // SK may deliver the whole course object (or null) at once.
+            if value.is_null() {
+                // Server cleared the entire course.
+                vessel.nav.course = None;
+            } else if value.is_object() {
+                // Merge each sub-field present in the object.
+                let course = vessel.nav.course.get_or_insert_with(CourseState::default);
+                if let Some(np) = value.get("nextPoint") {
+                    course.next_point = if np.is_null() {
+                        None
+                    } else {
+                        course_point_from_value(np)
+                    };
+                }
+                if let Some(pp) = value.get("previousPoint") {
+                    course.previous_point = if pp.is_null() {
+                        None
+                    } else {
+                        course_point_from_value(pp)
+                    };
+                }
+                if let Some(ar) = value.get("activeRoute") {
+                    course.active_route = if ar.is_null() {
+                        None
+                    } else {
+                        active_route_from_value(ar)
+                    };
+                }
+                // If every sub-field is now None the course is effectively cleared.
+                if course.next_point.is_none()
+                    && course.previous_point.is_none()
+                    && course.active_route.is_none()
+                {
+                    vessel.nav.course = None;
+                }
+            }
+        }
         LeafKind::CourseNextPoint => {
-            if let Some(point) = course_point_from_value(value) {
+            if value.is_null() {
+                if let Some(course) = vessel.nav.course.as_mut() {
+                    course.next_point = None;
+                }
+            } else if let Some(point) = course_point_from_value(value) {
                 vessel
                     .nav
                     .course
@@ -352,7 +399,11 @@ fn apply_leaf(vessel: &mut Vessel, path: &str, value: &Json, source: Option<&str
             }
         }
         LeafKind::CoursePreviousPoint => {
-            if let Some(point) = course_point_from_value(value) {
+            if value.is_null() {
+                if let Some(course) = vessel.nav.course.as_mut() {
+                    course.previous_point = None;
+                }
+            } else if let Some(point) = course_point_from_value(value) {
                 vessel
                     .nav
                     .course
@@ -361,7 +412,11 @@ fn apply_leaf(vessel: &mut Vessel, path: &str, value: &Json, source: Option<&str
             }
         }
         LeafKind::CourseActiveRoute => {
-            if let Some(route) = active_route_from_value(value) {
+            if value.is_null() {
+                if let Some(course) = vessel.nav.course.as_mut() {
+                    course.active_route = None;
+                }
+            } else if let Some(route) = active_route_from_value(value) {
                 vessel
                     .nav
                     .course
@@ -970,5 +1025,127 @@ mod tests {
         assert!(parse_iso8601_utc_ms("").is_none());
         // non-UTC (no Z suffix) rejected
         assert!(parse_iso8601_utc_ms("2023-11-14T22:13:20+00:00").is_none());
+    }
+
+    #[test]
+    fn course_null_clears_active_route_and_next_point() {
+        let mut storage = Storage::default();
+        storage.set_self("vessels.urn:mrn:signalk:uuid:self");
+        // First, activate a route.
+        apply_message(
+            &mut storage,
+            r#"{
+            "context": "vessels.urn:mrn:signalk:uuid:self",
+            "updates": [{"values": [
+                {"path": "navigation.course.nextPoint",    "value": {"position": {"latitude": 59.9, "longitude": 24.8}}},
+                {"path": "navigation.course.activeRoute",  "value": {"href": "/resources/routes/abc", "name": "R", "pointIndex": 0, "reverse": false}}
+            ]}]
+        }"#,
+        )
+        .unwrap();
+        {
+            let state = extract_vessel_state(&storage);
+            assert!(
+                state
+                    .course
+                    .as_ref()
+                    .and_then(|c| c.active_route.as_ref())
+                    .is_some(),
+                "route should be set"
+            );
+        }
+        // Now clear via sub-path nulls (what SK v2 course API sends).
+        apply_message(
+            &mut storage,
+            r#"{
+            "context": "vessels.urn:mrn:signalk:uuid:self",
+            "updates": [{"values": [
+                {"path": "navigation.course.nextPoint",    "value": null},
+                {"path": "navigation.course.activeRoute",  "value": null}
+            ]}]
+        }"#,
+        )
+        .unwrap();
+        let state = extract_vessel_state(&storage);
+        let course = state.course.as_ref();
+        assert!(
+            course.and_then(|c| c.active_route.as_ref()).is_none(),
+            "active_route should be cleared by null delta"
+        );
+        assert!(
+            course.and_then(|c| c.next_point.as_ref()).is_none(),
+            "next_point should be cleared by null delta"
+        );
+    }
+
+    #[test]
+    fn course_parent_null_clears_entire_course() {
+        let mut storage = Storage::default();
+        storage.set_self("vessels.urn:mrn:signalk:uuid:self");
+        apply_message(
+            &mut storage,
+            r#"{
+            "context": "vessels.urn:mrn:signalk:uuid:self",
+            "updates": [{"values": [
+                {"path": "navigation.course", "value": {"activeRoute": {"href": "/resources/routes/x", "pointIndex": 0, "reverse": false}}}
+            ]}]
+        }"#,
+        )
+        .unwrap();
+        {
+            let state = extract_vessel_state(&storage);
+            assert!(state
+                .course
+                .as_ref()
+                .and_then(|c| c.active_route.as_ref())
+                .is_some());
+        }
+        // Null at the parent path clears everything.
+        apply_message(
+            &mut storage,
+            r#"{
+            "context": "vessels.urn:mrn:signalk:uuid:self",
+            "updates": [{"values": [
+                {"path": "navigation.course", "value": null}
+            ]}]
+        }"#,
+        )
+        .unwrap();
+        let state = extract_vessel_state(&storage);
+        assert!(
+            state.course.is_none(),
+            "course should be None after parent-path null"
+        );
+    }
+
+    #[test]
+    fn course_parent_object_delivery() {
+        // SK delivers `navigation.course` as a single object value (not sub-paths).
+        let mut storage = Storage::default();
+        storage.set_self("vessels.urn:mrn:signalk:uuid:self");
+        apply_message(
+            &mut storage,
+            r#"{
+            "context": "vessels.urn:mrn:signalk:uuid:self",
+            "updates": [{"values": [
+                {"path": "navigation.course", "value": {
+                    "nextPoint":    {"position": {"latitude": 60.1, "longitude": 25.0}},
+                    "activeRoute":  {"href": "/resources/routes/y", "name": "R2", "pointIndex": 1, "reverse": true}
+                }}
+            ]}]
+        }"#,
+        )
+        .unwrap();
+        let state = extract_vessel_state(&storage);
+        let course = state.course.as_ref().expect("course should be set");
+        let next = course.next_point.as_ref().expect("nextPoint should be set");
+        assert!((next.latitude - 60.1).abs() < 1e-9);
+        let route = course
+            .active_route
+            .as_ref()
+            .expect("activeRoute should be set");
+        assert_eq!(route.href, "/resources/routes/y");
+        assert_eq!(route.point_index, 1);
+        assert!(route.reverse);
     }
 }

@@ -239,10 +239,14 @@ impl SignalKClient {
     pub fn reconnect(&mut self, url: &str) -> Result<(), JsValue> {
         let _ = self.ws.close();
         self.ws = WebSocket::new(url)?;
-        self.ws.set_onopen(Some(self._on_open.as_ref().unchecked_ref()));
-        self.ws.set_onmessage(Some(self._on_message.as_ref().unchecked_ref()));
-        self.ws.set_onerror(Some(self._on_error.as_ref().unchecked_ref()));
-        self.ws.set_onclose(Some(self._on_close.as_ref().unchecked_ref()));
+        self.ws
+            .set_onopen(Some(self._on_open.as_ref().unchecked_ref()));
+        self.ws
+            .set_onmessage(Some(self._on_message.as_ref().unchecked_ref()));
+        self.ws
+            .set_onerror(Some(self._on_error.as_ref().unchecked_ref()));
+        self.ws
+            .set_onclose(Some(self._on_close.as_ref().unchecked_ref()));
         Ok(())
     }
 
