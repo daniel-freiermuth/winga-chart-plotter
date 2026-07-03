@@ -88,6 +88,7 @@
     addRuler(): void;
     setProjection(proj: string): void;
     toggleFullscreen(): void;
+    closePopup(): void;
   }
 
   let mapComp             = $state<MapInstance | null>(null);
@@ -436,12 +437,15 @@
     settingsComp?.openTo(tab);
   }
   function handleOpenSettingsModal(): void {
+    mapComp?.closePopup();
     settingsComp?.open();
   }
   function handleOpenChartPicker(): void {
+    mapComp?.closePopup();
     chartPickerComp?.open();
   }
   function handleOpenLayerVisibility(): void {
+    mapComp?.closePopup();
     layerVisibilityComp?.open();
   }
   function handleFlyToVessel(): void {

@@ -540,6 +540,10 @@
     map?.flyTo({ center: position, ...(zoom !== undefined ? { zoom } : {}) });
   }
 
+  /** Close any open MapLibre popup (e.g. before opening a settings panel). */
+  export function closePopup(): void { activePopup?.remove(); }
+
+
   /** Fit the map to a bounding box [west, south, east, north]. Used by extension map.fitBounds. */
   export function fitBounds(bounds: [number, number, number, number]): void {
     map?.fitBounds([[bounds[0], bounds[1]], [bounds[2], bounds[3]]], { padding: 20 });
@@ -548,6 +552,7 @@
   /** Add a new ruler in the lower third of the screen, endpoints ¼ screen-width apart. */
   export function addRuler() {
     if (!map) return;
+    activePopup?.remove();
     const w = mapContainer.clientWidth;
     const h = mapContainer.clientHeight;
     // Centre X, lower-third Y
@@ -581,6 +586,9 @@
     document.addEventListener('pointerdown', dismiss);
     return () => { document.removeEventListener('pointerdown', dismiss); };
   });
+  // Close any open MapLibre popup when the route planner activates.
+  $effect(() => { if (routePlanner.active) activePopup?.remove(); });
+
 
   // At most one MapLibre popup open at a time — each new popup closes the previous one.
   let activePopup: maplibregl.Popup | null = null;
@@ -804,6 +812,7 @@
     switch (g.type) {
       case 'tap':
         rulerPopup = null;
+        activePopup?.remove();
         g.target.onTap(g.lngLat, g.clientX, g.clientY);
         return;
       case 'long-press':
@@ -1391,8 +1400,8 @@
       }
       const target = hit(x, y);
       if (!target) {
+        activePopup?.remove();
         if (routePlanner.active) routePlanner.addWaypoint(e.lngLat.lng, e.lngLat.lat);
-        else activePopup?.remove();
         return;
       }
       handleGesture({ type: 'tap', target, lngLat: e.lngLat, clientX: rect.left + x, clientY: rect.top + y });
