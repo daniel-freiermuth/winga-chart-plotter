@@ -155,6 +155,10 @@
   // movestart fires for both user gestures and programmatic easeTo/flyTo; originalEvent is only
   // present for gestures. moveend always fires, resetting the flag.
   let _isInteracting = false;
+  // True when the preceding camera move was started by a user gesture (set in movestart,
+  // consumed and cleared in moveend). Distinct from _isInteracting so moveend can still
+  // read it after _isInteracting has been cleared.
+  let _wasUserPan = false;
   // True once the user has panned/zoomed/rotated the map by hand (gesture, not programmatic
   // easeTo/flyTo) — for the lifetime of this page load, never reset. Gates the one-shot
   // auto-fly-to-vessel below: once the user has shown intent to look elsewhere, never yank
@@ -341,7 +345,7 @@
     mapContainer.style.cursor = hovering ? 'grab' : '';
     if (hovering) {
       map?.dragPan.disable();
-    } else if (gesturePhase.phase !== 'dragging' && !followMode.following) {
+    } else if (gesturePhase.phase !== 'dragging') {
       map?.dragPan.enable();
     }
   }
@@ -583,7 +587,7 @@
       if (gesturePhase.phase === 'dragging') {
         mapContainer.releasePointerCapture(gesturePhase.pointerId);
         mapContainer.style.cursor = '';
-        if (!followMode.following) map.dragPan.enable();
+        map.dragPan.enable();
         handleGesture({ type: 'drag-cancel', target: gesturePhase.target });
         gesturePhase = { phase: 'idle' };
       }
@@ -644,7 +648,7 @@
     }
     mapContainer.releasePointerCapture(pointerId);
     mapContainer.style.cursor = isHoveringHandle ? 'grab' : '';
-    if (!isHoveringHandle && !followMode.following) map?.dragPan.enable();
+    if (!isHoveringHandle) map?.dragPan.enable();
     gesturePhase = { phase: 'idle' };
     handleGesture({ type: 'drag-end', target, lngLat: new maplibregl.LngLat(lng, lat), snapId });
   }
@@ -653,7 +657,7 @@
     if (gesturePhase.phase !== 'dragging') return;
     mapContainer.releasePointerCapture(e.pointerId);
     mapContainer.style.cursor = '';
-    if (!followMode.following) map?.dragPan.enable();
+    map?.dragPan.enable();
     handleGesture({ type: 'drag-cancel', target: gesturePhase.target });
     gesturePhase = { phase: 'idle' };
   }
@@ -1065,10 +1069,26 @@
     map.on('rotate', () => { mapBearing = map?.getBearing() ?? mapBearing; });
     // Track user interactions so programmatic easeTo calls don't interrupt gestures.
     map.on('movestart', (e: { originalEvent?: unknown }) => {
-      if (e.originalEvent) { _isInteracting = true; _userHasInteracted = true; rulerPopup = null; }
+      if (e.originalEvent) { _isInteracting = true; _wasUserPan = true; _userHasInteracted = true; rulerPopup = null; }
     });
     map.on('moveend',   () => {
+      const wasPan = _wasUserPan;
       _isInteracting = false;
+      _wasUserPan = false;
+      // When the user panned (not a programmatic easeTo/flyTo), slide the follow offset to
+      // the vessel's new screen position, or drop follow entirely if the vessel left the
+      // viewport (the deliberate "pan vessel off screen = unpin" exit gesture).
+      if (wasPan && followMode.following) {
+        const pos = get(vesselState).position;
+        if (pos) {
+          const { left, top } = calcVesselOffset(pos);
+          if (Math.abs(left) < 0.9 && Math.abs(top) < 0.9) {
+            followMode.offset = { left, top };
+          } else {
+            followMode.offset = null;
+          }
+        }
+      }
       if (map) { const c = map.getCenter(); saveView([c.lng, c.lat], map.getZoom(), map.getBearing()); }
     });
 
@@ -2623,7 +2643,7 @@
         followMode.offset!.left * W/2,
         followMode.offset!.top * H/2,
       ];
-      if (posChanged || rmChanged || rm === 'heading' || rm === 'cog') {
+      if (!_isInteracting && (posChanged || rmChanged || rm === 'heading' || rm === 'cog')) {
         const center = map.getCenter();
         const dist = Math.hypot(center.lng - pos.longitude, center.lat - pos.latitude);
         const bOpts = bearing !== undefined ? { bearing } : {};
@@ -2642,15 +2662,16 @@
     }
   });
 
-  // Lock interaction in follow mode:
-  //   - Pan drag disabled.
-  //   - Custom wheel handler zooms around the vessel, not the cursor. Uses rAF
-  //     accumulation so rapid scroll events batch into a single easeTo per frame,
-  //     matching MapLibre's native speed and feel. Two-finger trackpad scroll
-  //     generates wheel events too, so this path covers it automatically.
-  //   - Custom zoom buttons call zoomIn/Out({ around: vessel }) directly so no
-  //     correction is needed. Touch pinch and keyboard zoom are handled by a
-  //     `zoomend` listener that re-anchors the vessel to its pinned screen pixel.
+  // Interaction constraints in follow mode:
+  //   - Pan drag remains enabled; panning slides the follow offset (vessel's pinned screen
+  //     position). Panning the vessel off the edge of the viewport drops the pin entirely.
+  //   - ScrollZoom disabled; custom wheel handler zooms around the vessel, not the cursor.
+  //     Uses rAF accumulation so rapid scroll events batch into a single easeTo per frame,
+  //     matching MapLibre's native speed and feel. Two-finger trackpad scroll generates
+  //     wheel events too, so this path covers it automatically.
+  //   - Custom zoom buttons call zoomIn/Out({ around: vessel }) directly; no correction needed.
+  //     Touch pinch and keyboard zoom are handled by a `zoomend` listener that re-anchors
+  //     the vessel to its pinned screen pixel (guarded: no re-anchor during active gestures).
   //   - Rotation (right-click drag, two-finger rotate) remains active throughout.
   $effect(() => {
     if (!map) return;
@@ -2661,7 +2682,6 @@
       return;
     }
 
-    map.dragPan.disable();
     map.scrollZoom.disable();
 
     // Wheel accumulation state — local to this effect run.
@@ -2719,6 +2739,7 @@
     function onZoomEnd(): void {
       if (scrollTimer !== null) return; // our own scroll animation is still active
       if (reanchoring) return;
+      if (_isInteracting) return;       // user is mid-gesture (pinch-zoom); don't fight it
       const pos = get(vesselState).position;
       if (!pos || !map) return;
       const W = mapContainer.clientWidth;
