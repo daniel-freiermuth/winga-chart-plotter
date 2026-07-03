@@ -67,6 +67,11 @@ export function createSkRelay(sendUpstream: (msg: string) => void): SkRelay {
     try { delta = JSON.parse(text) as SkDelta; }
     catch { return; }
 
+    // Only fan-out own-vessel deltas. AIS deltas arrive with a context like
+    // "vessels.urn:mrn:imo:mmsi:123456789" and must not bleed into widget
+    // subscriptions that expect self data.
+    if (delta.context !== undefined && delta.context !== 'vessels.self') return;
+
     if (!delta.updates) return;
 
     for (const update of delta.updates) {
