@@ -738,7 +738,47 @@
     // MapLibre prepends into bottom-* containers (insertBefore firstChild), so the
     // LAST control added ends up FIRST in the DOM → leftmost in our flex-row override.
     // Add scale first so zoom buttons end up left of the scale.
-    map.addControl(new maplibregl.ScaleControl({ unit: 'nautical' }), 'bottom-left');
+    // Dynamic scale bar: nautical miles ≥ 0.5 nm, metres below.
+    // Reuses MapLibre's `.maplibregl-ctrl-scale` class so all built-in styling applies.
+    map.addControl((() => {
+      const NM = 1852;           // metres per nautical mile
+      const THRESH = 0.5 * NM;  // 926 m — switch to metres below this
+      const MAX_PX = 100;        // maximum bar width in pixels (matches MapLibre default)
+      const NM_STEPS = [0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000];
+      const M_STEPS  = [1, 2, 5, 10, 20, 50, 100, 200, 500];
+      let el!: HTMLElement;
+      let m!: maplibregl.Map;
+
+      function tick() {
+        const h = m.getCanvas().clientHeight / 2;
+        const maxM = m.unproject([0, h]).distanceTo(m.unproject([MAX_PX, h]));
+        let px: number; let label: string;
+        if (maxM >= THRESH) {
+          const maxNm = maxM / NM;
+          const step = NM_STEPS.filter(s => s <= maxNm).at(-1) ?? 0.05;
+          px = Math.round(step * NM / maxM * MAX_PX);
+          label = `${String(step)} nm`;
+        } else {
+          const step = M_STEPS.filter(s => s <= maxM).at(-1) ?? 1;
+          px = Math.round(step / maxM * MAX_PX);
+          label = `${String(step)} m`;
+        }
+        el.style.width = `${String(px)}px`;
+        el.textContent = label;
+      }
+
+      return {
+        onAdd(map: maplibregl.Map): HTMLElement {
+          m = map;
+          el = document.createElement('div');
+          el.className = 'maplibregl-ctrl maplibregl-ctrl-scale';
+          m.on('move', tick);
+          tick();
+          return el;
+        },
+        onRemove(): void { m.off('move', tick); },
+      };
+    })(), 'bottom-left');
     map.addControl({
       onAdd(_: maplibregl.Map): HTMLElement {
         const el = document.createElement('div');
