@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.16.1] - 2026-07-03
+
+### Fixed
+- Routing mode now turns off properly when navigation stops.
+- Draw the hull shape for AIS vessels that report COG but not heading.
+- Prevent "timelapse" jump after returning to a backgrounded tab.
+- Don't discard already-received Signal K data on WebSocket reconnection.
+- Enforce a single WebSocket connection; drop duplicate connections.
+- Scroll the chart list when it exceeds the viewport height.
+
 ## [0.16.0] - 2026-06-30
 
 ### Added
