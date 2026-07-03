@@ -563,25 +563,14 @@
   let isHoveringHandle = false;
   // Ruler label popup: shown when user clicks a label; holds screen position and ruler id.
   let rulerPopup = $state<{ rulerId: string; x: number; y: number } | null>(null);
-  // Gesture recognizer FSM — replaces separate rulerDrag, plannerDrag and long-press
-  // variables. All raw pointer events flow through the FSM; the phase determines
-  // which handlers are active and what constitutes a valid gesture.
+  // Drag FSM — only two phases needed. map.on('click') handles all taps (mouse + touch);
+  // the long-press timer below handles touch long-press. No tap state, no panning state.
   type GesturePhase =
     | { phase: 'idle' }
-    | { phase: 'down';
-        target: HitTarget | null;
-        clientX: number; clientY: number;
-        lngLat: maplibregl.LngLat; pointerId: number;
-        timer: ReturnType<typeof setTimeout> | null }
-    | { phase: 'panning' }
     | { phase: 'dragging'; target: DragTarget; pointerId: number }
-    | { phase: 'post-long-press'; pointerId: number }
   let gesturePhase: GesturePhase = { phase: 'idle' };
-  const LONG_PRESS_MS      = 500;
-  const LONG_PRESS_MOVE_PX = 10;
-  // Touch taps are dispatched in onPointerUp (before compat mouse events fire).
-  // map.on('click') checks this flag to skip the duplicate compat-event dispatch.
-  let touchTapHandled = false;
+  const LONG_PRESS_MS = 500;
+
 
   // Close the ruler popup on any pointer interaction outside it.
   // The popup div calls e.stopPropagation() on its own pointerdown, so this bubble-phase
@@ -845,153 +834,73 @@
 
   function onPointerDown(e: PointerEvent): void {
     if (!overlay || !map) return;
-    // Mouse drag and click are handled via map.on('mousedown') + map.on('click').
-    if (e.pointerType !== 'touch') return;
-
-    // Multi-touch: cancel any pending interaction; let MapLibre handle pinch-zoom.
+    // Right-click and other non-primary buttons go to contextmenu.
+    if (e.button !== 0) return;
+    // Second+ finger: cancel any active drag and let MapLibre handle pinch-zoom.
     if (!e.isPrimary) {
-      if (gesturePhase.phase === 'down' && gesturePhase.timer) clearTimeout(gesturePhase.timer);
       if (gesturePhase.phase === 'dragging') {
         mapContainer.releasePointerCapture(gesturePhase.pointerId);
         mapContainer.style.cursor = '';
         if (!followMode.following) map.dragPan.enable();
         handleGesture({ type: 'drag-cancel', target: gesturePhase.target });
+        gesturePhase = { phase: 'idle' };
       }
-      gesturePhase = { phase: 'idle' };
       return;
     }
-
     const rect = mapContainer.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
-    const lngLat = map.unproject([x, y]);
     const target = hit(x, y);
+    if (!target?.drag) return;  // no drag target — let MapLibre handle pan and click normally
 
-    // Empty map: start long-press timer, let MapLibre handle pan/zoom.
-    if (!target) {
-      const timer = setTimeout(() => {
-        gesturePhase = { phase: 'post-long-press', pointerId: e.pointerId };
-        handleGesture({ type: 'long-press', lngLat });
-      }, LONG_PRESS_MS);
-      gesturePhase = { phase: 'down', target: null, clientX: e.clientX, clientY: e.clientY, lngLat, pointerId: e.pointerId, timer };
-      return;
-    }
-
-    // Draggable targets: transition directly to dragging.
-    if (target.drag) {
-      const dragTarget = target as DragTarget;
-      map.dragPan.disable();
-      mapContainer.style.cursor = 'grabbing';
-      mapContainer.setPointerCapture(e.pointerId);
-      e.preventDefault(); e.stopPropagation();
-      gesturePhase = { phase: 'dragging', target: dragTarget, pointerId: e.pointerId };
-      handleGesture({ type: 'drag-start', target: dragTarget });
-      return;
-    }
-
-    // Non-draggable target: suppress compat mouse events so MapLibre doesn't synthesize a
-    // click (tap is dispatched in onPointerUp instead).
+    const dragTarget = target as DragTarget;
+    map.dragPan.disable();
+    mapContainer.style.cursor = 'grabbing';
+    mapContainer.setPointerCapture(e.pointerId);
     e.preventDefault(); e.stopPropagation();
-    gesturePhase = { phase: 'down', target, clientX: e.clientX, clientY: e.clientY, lngLat, pointerId: e.pointerId, timer: null };
+    gesturePhase = { phase: 'dragging', target: dragTarget, pointerId: e.pointerId };
+    handleGesture({ type: 'drag-start', target: dragTarget });
   }
 
   function onPointerMove(e: PointerEvent): void {
-    if (!map || e.pointerType !== 'touch') return;
-
-    if (gesturePhase.phase === 'dragging') {
-      const rect = mapContainer.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      const y = e.clientY - rect.top;
-      handleGesture({ type: 'drag-move', target: gesturePhase.target, lngLat: map.unproject([x, y]) });
-      e.preventDefault(); e.stopPropagation();
-      return;
-    }
-
-    if (gesturePhase.phase === 'down') {
-      const dx = e.clientX - gesturePhase.clientX;
-      const dy = e.clientY - gesturePhase.clientY;
-      if (Math.hypot(dx, dy) > LONG_PRESS_MOVE_PX) {
-        if (gesturePhase.timer) clearTimeout(gesturePhase.timer);
-        rulerPopup = null;
-        gesturePhase = { phase: 'panning' };
-      }
-    }
+    if (!map || gesturePhase.phase !== 'dragging') return;
+    const rect = mapContainer.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    handleGesture({ type: 'drag-move', target: gesturePhase.target, lngLat: map.unproject([x, y]) });
+    e.preventDefault(); e.stopPropagation();
   }
 
   function onPointerUp(e: PointerEvent): void {
-    if (e.pointerType !== 'touch') return;
-
-    if (gesturePhase.phase === 'post-long-press') {
-      e.preventDefault(); // suppress browser's post-long-press synthesised click
-      gesturePhase = { phase: 'idle' };
-      return;
-    }
-
-    if (gesturePhase.phase === 'dragging') {
-      const { target, pointerId } = gesturePhase;
-      const rect = mapContainer.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      const y = e.clientY - rect.top;
-      let snapId: string | undefined;
-      const coord = map!.unproject([x, y]);
-      let lng = coord.lng;
-      let lat = coord.lat;
-      if (target.drag.snapsToTargets) {
-        for (const t of liveSnapTargets) {
-          const pt = map!.project([t.position.longitude, t.position.latitude]);
-          if (Math.hypot(pt.x - x, pt.y - y) < RULER_SNAP_PX) {
-            snapId = t.id; lng = t.position.longitude; lat = t.position.latitude;
-            break;
-          }
+    if (gesturePhase.phase !== 'dragging') return;
+    const { target, pointerId } = gesturePhase;
+    const rect = mapContainer.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    const coord = map!.unproject([x, y]);
+    let lng = coord.lng, lat = coord.lat;
+    let snapId: string | undefined;
+    if (target.drag.snapsToTargets) {
+      for (const t of liveSnapTargets) {
+        const pt = map!.project([t.position.longitude, t.position.latitude]);
+        if (Math.hypot(pt.x - x, pt.y - y) < RULER_SNAP_PX) {
+          snapId = t.id; lng = t.position.longitude; lat = t.position.latitude; break;
         }
       }
-      mapContainer.releasePointerCapture(pointerId);
-      mapContainer.style.cursor = isHoveringHandle ? 'grab' : '';
-      if (!isHoveringHandle && !followMode.following) map?.dragPan.enable();
-      gesturePhase = { phase: 'idle' };
-      handleGesture({ type: 'drag-end', target, lngLat: new maplibregl.LngLat(lng, lat), snapId });
-      return;
     }
-
-    if (gesturePhase.phase === 'down') {
-      const { timer, target, lngLat, clientX, clientY } = gesturePhase;
-      if (timer) clearTimeout(timer);
-      gesturePhase = { phase: 'idle' };
-      // Signal to map.on('click') that this tap is already handled, so it skips the compat
-      // mouse event that the browser synthesizes after the touch sequence completes.
-      touchTapHandled = true;
-      // Moving-waypoint mode intercepts all taps, including empty-space ones.
-      if (movingWaypoint) {
-        const { uuid, name } = movingWaypoint;
-        movingWaypoint = null;
-        mapContainer.style.cursor = '';
-        updateWaypoint(settings.signalkHttpUrl, uuid, name, lngLat.lat, lngLat.lng, auth.authHeaders)
-          .then(() => waypoints.load(settings.signalkHttpUrl))
-          .catch((err: unknown) => { console.error('[waypoint] Failed to move:', err); });
-        return;
-      }
-      if (target) {
-        handleGesture({ type: 'tap', target, lngLat, clientX, clientY });
-      } else if (routePlanner.active) {
-        // Bare-map tap while planner active → add waypoint.
-        routePlanner.addWaypoint(lngLat.lng, lngLat.lat);
-      } else {
-        // Empty-map tap: dismiss any open popup.
-        activePopup?.remove();
-      }
-      return;
-    }
+    mapContainer.releasePointerCapture(pointerId);
+    mapContainer.style.cursor = isHoveringHandle ? 'grab' : '';
+    if (!isHoveringHandle && !followMode.following) map?.dragPan.enable();
+    gesturePhase = { phase: 'idle' };
+    handleGesture({ type: 'drag-end', target, lngLat: new maplibregl.LngLat(lng, lat), snapId });
   }
 
   function onPointerCancel(e: PointerEvent): void {
-    if (e.pointerType !== 'touch') return;
-    if (gesturePhase.phase === 'down' && gesturePhase.timer) clearTimeout(gesturePhase.timer);
-    if (gesturePhase.phase === 'dragging') {
-      mapContainer.releasePointerCapture(e.pointerId);
-      mapContainer.style.cursor = '';
-      if (!followMode.following) map?.dragPan.enable();
-      handleGesture({ type: 'drag-cancel', target: gesturePhase.target });
-    }
+    if (gesturePhase.phase !== 'dragging') return;
+    mapContainer.releasePointerCapture(e.pointerId);
+    mapContainer.style.cursor = '';
+    if (!followMode.following) map?.dragPan.enable();
+    handleGesture({ type: 'drag-cancel', target: gesturePhase.target });
     gesturePhase = { phase: 'idle' };
   }
 
@@ -1379,8 +1288,8 @@
     _scheduleRafTick = scheduleRafTick;
     scheduleRafTick();
 
-    // Touch events flow through the gesture recognizer (capture phase, touch only).
-    // Mouse drag and click are handled below via map.on('mousedown') / map.on('click').
+    // All pointer events flow through the capture-phase gesture recognizer.
+    // Taps (click/touch) are handled by map.on('click') below.
     mapContainer.addEventListener('pointerdown',   onPointerDown,   { capture: true });
     mapContainer.addEventListener('pointermove',   onPointerMove,   { capture: true });
     mapContainer.addEventListener('pointerup',     onPointerUp,     { capture: true });
@@ -1426,63 +1335,49 @@
       handleGesture({ type: 'context-menu', target, lngLat: e.lngLat });
     });
 
-    // Mouse drag: intercept via MapLibre's mousedown event and call e.preventDefault() on
-    // the MapMouseEvent (not the DOM event). This blocks MapLibre's pan handler without
-    // corrupting _mousedownPos — so map.on('click') remains reliable for all mouse interactions.
-    map.on('mousedown', (e) => {
-      if (e.originalEvent.button !== 0 || !overlay) return;
-      const { x, y } = e.point;
-      const target = hit(x, y);
-      if (!target?.drag) return;  // no drag target — let MapLibre handle pan normally
+    // Long-press (touch only) → navigate popup.
+    // map.on('contextmenu') is unreliable on touch; manual timer is more reliable.
+    {
+      let longPressTimer: ReturnType<typeof setTimeout> | null = null;
+      let longPressLngLat: maplibregl.LngLat | null = null;
+      let startX = 0, startY = 0;
+      const LONG_PRESS_MOVE_PX = 10;
 
-      const dragTarget = target as DragTarget;
-      e.preventDefault();  // MapMouseEvent.preventDefault() — blocks pan, does NOT suppress DOM mousedown
-      map!.dragPan.disable();
-      mapContainer.style.cursor = 'grabbing';
-      gesturePhase = { phase: 'dragging', target: dragTarget, pointerId: -1 };
-      handleGesture({ type: 'drag-start', target: dragTarget });
-
-      const rect = mapContainer.getBoundingClientRect();
-      const onMove = (me: MouseEvent) => {
-        if (!map) return;
-        const mx = me.clientX - rect.left;
-        const my = me.clientY - rect.top;
-        handleGesture({ type: 'drag-move', target: dragTarget, lngLat: map.unproject([mx, my]) });
-      };
-      const onUp = (me: MouseEvent) => {
-        document.removeEventListener('mousemove', onMove);
-        document.removeEventListener('mouseup',   onUp);
-        if (!map) return;
-        const mx = me.clientX - rect.left;
-        const my = me.clientY - rect.top;
-        const coord = map.unproject([mx, my]);
-        let lng = coord.lng, lat = coord.lat;
-        let snapId: string | undefined;
-        if (dragTarget.drag.snapsToTargets) {
-          for (const t of liveSnapTargets) {
-            const pt = map.project([t.position.longitude, t.position.latitude]);
-            if (Math.hypot(pt.x - mx, pt.y - my) < RULER_SNAP_PX) {
-              snapId = t.id; lng = t.position.longitude; lat = t.position.latitude; break;
-            }
-          }
+      map.on('touchstart', (e) => {
+        if (e.originalEvent.touches.length !== 1) {
+          if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
+          return;
         }
-        handleGesture({ type: 'drag-end', target: dragTarget, lngLat: new maplibregl.LngLat(lng, lat), snapId });
-        mapContainer.style.cursor = isHoveringHandle ? 'grab' : '';
-        if (!isHoveringHandle && !followMode.following) map.dragPan.enable();
-        gesturePhase = { phase: 'idle' };
+        const { x, y } = e.point;
+        if (hit(x, y)?.drag) return;  // drag handles start a drag, not a long-press
+        const touch = e.originalEvent.touches[0]!;
+        startX = touch.clientX; startY = touch.clientY;
+        longPressLngLat = e.lngLat;
+        longPressTimer = setTimeout(() => {
+          longPressTimer = null;
+          if (longPressLngLat) handleGesture({ type: 'long-press', lngLat: longPressLngLat });
+        }, LONG_PRESS_MS);
+      });
+      const cancelLong = () => {
+        if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
       };
-      document.addEventListener('mousemove', onMove);
-      document.addEventListener('mouseup',   onUp);
-    });
+      map.on('touchmove', (e) => {
+        if (!longPressTimer) return;
+        const touch = e.originalEvent.touches[0];
+        if (!touch) return;
+        if (Math.hypot(touch.clientX - startX, touch.clientY - startY) > LONG_PRESS_MOVE_PX) cancelLong();
+      });
+      map.on('touchend',    cancelLong);
+      map.on('touchcancel', cancelLong);
+    }
 
-    // Mouse click: unified tap dispatcher. Popups opened here are safe from the
-    // closeOnClick race — Evented.fire() snapshots its listener list before dispatching,
-    // so a closeOnClick listener registered inside this callback only fires on the next click.
-    // Touch taps are handled in onPointerUp; touchTapHandled suppresses the compat click event
-    // the browser synthesizes after a touch sequence so we don't double-dispatch.
+    // Unified click/tap dispatcher — handles both mouse clicks and touch taps.
+    // map.on('click') fires for both input types; MapLibre's TapRecognizer normalises them
+    // and suppresses the event after a pan on either device. Popups opened here are safe
+    // from the closeOnClick race: Evented.fire() snapshots listeners before dispatch, so
+    // a closeOnClick handler registered inside this callback only fires on the next click.
     map.on('click', (e) => {
-      if (touchTapHandled) { touchTapHandled = false; return; }
-      if (!overlay) return;
+      if (!overlay || gesturePhase.phase === 'dragging') return;
       const { x, y } = e.point;
       const rect = mapContainer.getBoundingClientRect();
       if (movingWaypoint) {
@@ -1503,8 +1398,8 @@
       handleGesture({ type: 'tap', target, lngLat: e.lngLat, clientX: rect.left + x, clientY: rect.top + y });
     });
 
-    // Mouse hover: update cursor and proactively disable dragPan over drag handles
-    // so the user can start dragging immediately without accidentally triggering a pan first.
+    // Hover: update cursor and proactively disable dragPan over drag handles so the user
+    // can start dragging immediately without accidentally triggering a pan first.
     map.on('mousemove', (e) => {
       if (!overlay) return;
       const { x, y } = e.point;
