@@ -2,6 +2,22 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.17.0] - 2026-07-03
+
+### Added
+- Vertical zoom slider.
+- Map scale switches to metres at close range.
+- Ruler snaps to the own vessel first, then to the nearest AIS target.
+
+### Changed
+- Panning the chart while the vessel is locked now updates the pinned position instead of being blocked.
+
+### Fixed
+- AIS popup opens at the vessel's actual position, not the click point.
+- AIS track now terminates at the vessel, not short of it.
+- Ruler popup closes on mousedown, consistent with other popups.
+- Pointer events no longer handled by two overlapping layers simultaneously.
+
 ## [0.16.1] - 2026-07-03
 
 ### Fixed
