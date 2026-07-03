@@ -6,17 +6,16 @@
   import type * as GeoJSON from 'geojson';
   import { get } from 'svelte/store';
   import { vesselState, vesselPosition, type VesselState } from '../stores/vessel';
-  import { settings, type LineAppearance, type LineStyle, type SettingsTab, type AppearanceSettings } from '../stores/settings.svelte';
+  import { settings, type SettingsTab, type AppearanceSettings } from '../stores/settings.svelte';
   import { fpsStore } from '../stores/fps.svelte';
   import { followMode, type FollowOffset } from '../stores/follow.svelte';
   import { rotateMode } from '../stores/rotateMode.svelte';
   import { charts } from '../stores/charts.svelte';
   import { baseLayers, BASE_LAYERS } from '../stores/baseLayers.svelte';
-  import { ais, AIS_HOT_STRIDE, AIS_F_LON, AIS_F_LAT, AIS_F_COG, AIS_F_SOG, AIS_F_HDG, AIS_F_ROT, AIS_F_AGE } from '../stores/ais.svelte';
+  import { ais, AIS_HOT_STRIDE, AIS_F_LON, AIS_F_LAT, AIS_F_COG, AIS_F_SOG, AIS_F_ROT, AIS_F_AGE } from '../stores/ais.svelte';
   import type { AisTarget } from '../stores/ais.svelte';
   import { MapboxOverlay } from '@deck.gl/mapbox';
   import { PathLayer, ScatterplotLayer, TextLayer } from '@deck.gl/layers';
-  import { PathStyleExtension } from '@deck.gl/extensions';
   import type { Layer } from '@deck.gl/core';
   import { rulers, rulerBearingText, rulerDistanceText, type Ruler } from '../stores/rulers.svelte';
   import { routePlanner } from '../stores/routePlanner.svelte';
@@ -28,12 +27,14 @@
   import { fetchAndResolveStyle } from '../lib/resolveStyle';
   import { auth } from '../stores/auth.svelte';
   import { fetchAisVesselTrack, navigateToPoint, clearCourse, activateRoute, setActiveRoutePointIndex, deleteRoute, saveWaypoint, updateWaypoint, deleteWaypoint } from '../lib/wasmRest';
-  import { VesselMorphLayer, MORPH_ARROW, MORPH_ANCHOR_DOT, MORPH_AGROUND_RING, MORPH_MOORING_BARS, MORPH_FISHING_GEAR, MORPH_NUC, MORPH_RESTRICTED, MORPH_DRAUGHT, type MorphGeometry } from '../layers/VesselMorphLayer';
-  import { VesselIconLayer, MOB_GEOMETRY } from '../layers/VesselIconLayer';
   import { extrapolatePos } from '../lib/deadReckoning';
   import { SvelteMap } from 'svelte/reactivity';
   import { mapView, loadSavedView, saveView } from '../stores/mapView.svelte';
   import { visibility } from '../stores/visibility.svelte';
+  import { buildTrackGradient, processTrack, processRouteCoords, splitRouteSegments } from '../lib/trackProcessing';
+  import { hexToRgba, dashArray } from '../lib/mapStyles';
+  import { buildAisLayers } from '../lib/aisLayerBuilder';
+  import { buildOwnVesselLayers, buildCourseLayers } from '../lib/vesselLayers';
 
   const { openSettings = () => { /* noop */ } }: { openSettings?: (tab: SettingsTab) => void } = $props();
 
@@ -254,274 +255,6 @@
   // Not $state — only read inside the $effect, never rendered.
   let activeStyleUrl: string | null = null;
 
-  // Returns null for solid lines — callers must pass null to setPaintProperty / omit from addLayer paint.
-  // MapLibre requires all dasharray values to be > 0; [1, 0] is invalid and causes worker errors.
-  function dashArray(style: LineStyle, width: number): number[] | null {
-    const w = Math.max(1, width);
-    switch (style) {
-      case 'dashed':   return [5, 3];
-      case 'dotted':   return [w, 3];
-      case 'dash-dot': return [5, 3, 1, 3];
-      default:         return null; // solid — no dasharray
-    }
-  }
-
-  // --- Track fade helpers -------------------------------------------------------
-
-  /** Shortest-path longitude delta from `prev` to `lon`, result in (-180, 180]. */
-  function unwrapLon(lon: number, prev: number): number {
-    const d = ((lon - prev + 180) % 360 + 360) % 360 - 180;
-    return prev + d;
-  }
-
-  /** Haversine distance in metres between two [lon, lat] points. */
-  function haversineMeters(a: [number, number], b: [number, number]): number {
-    const R = 6_371_000;
-    const dLat = (b[1] - a[1]) * (Math.PI / 180);
-    const dLon = (b[0] - a[0]) * (Math.PI / 180);
-    const lat1 = a[1] * (Math.PI / 180);
-    const lat2 = b[1] * (Math.PI / 180);
-    const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
-    return 2 * R * Math.asin(Math.sqrt(Math.min(1, h)));
-  }
-
-  /**
-   * Densify a GC segment between two already-unwrapped [lon, lat] positions.
-   * Returns intermediate points (excluding start) plus the exact endpoint.
-   * Inserts one intermediate point per ~50 km of arc; for short segments (< 50 km)
-   * this is a cheap no-op that just returns [[lon2, lat2]].
-   * Longitude continuity is maintained via progressive unwrapping from lon1.
-   *
-   * Uses spherical SLERP so intermediate points are exactly on the GC.
-   * The exact endpoint is pushed last to prevent floating-point drift accumulation.
-   */
-  function gcDensifySegment(
-    lon1: number, lat1: number,
-    lon2: number, lat2: number,
-  ): [number, number][] {
-    const R = 6_371_000;
-    const DEG = Math.PI / 180;
-    const φ1 = lat1 * DEG, λ1 = lon1 * DEG;
-    const φ2 = lat2 * DEG, λ2 = lon2 * DEG;
-    const cosD = Math.sin(φ1) * Math.sin(φ2) + Math.cos(φ1) * Math.cos(φ2) * Math.cos(λ2 - λ1);
-    const d = Math.acos(Math.min(1, Math.max(-1, cosD)));
-    const nSegs = Math.max(1, Math.ceil(d * R / 50_000));
-    if (nSegs === 1 || d < 1e-9) return [[lon2, lat2]];
-    const sinD = Math.sin(d);
-    const out: [number, number][] = [];
-    let prevλ = λ1;
-    for (let i = 1; i < nSegs; i++) {
-      const f = i / nSegs;
-      const A = Math.sin((1 - f) * d) / sinD;
-      const B = Math.sin(f * d) / sinD;
-      const x = A * Math.cos(φ1) * Math.cos(λ1) + B * Math.cos(φ2) * Math.cos(λ2);
-      const y = A * Math.cos(φ1) * Math.sin(λ1) + B * Math.cos(φ2) * Math.sin(λ2);
-      const z = A * Math.sin(φ1)                 + B * Math.sin(φ2);
-      const φi = Math.atan2(z, Math.sqrt(x * x + y * y));
-      const λiRaw = Math.atan2(y, x);
-      // Unwrap relative to previous intermediate point so longitude stays continuous.
-      const diff = λiRaw - prevλ;
-      const λi = prevλ + diff - Math.round(diff / (2 * Math.PI)) * 2 * Math.PI;
-      prevλ = λi;
-      out.push([λi / DEG, φi / DEG]);
-    }
-    out.push([lon2, lat2]);  // exact endpoint — avoids floating-point drift accumulation
-    return out;
-  }
-
-  /**
-   * Unwrap raw [-180, 180] track coordinates into a continuous longitude sequence,
-   * densify each segment along a GC path, and compute the fade stop fraction.
-   *
-   * Storing raw coords in the track store and unwrapping here avoids unbounded
-   * accumulation of out-of-range longitudes (e.g. 208°, 388°…) that would break
-   * MapLibre's line-metrics computation across multiple antimeridian crossings.
-   *
-   * Fade distance = min(0.5 nm, 10 % of total track length).
-   */
-  // Recursively split unwrapped+anchored coordinates into segments that each fit within
-  // MapLibre's ±540° rendering range. Points outside the range are shifted eastward by
-  // 720° (two world copies) so they appear in an adjacent but renderable world copy.
-  // Returns segments ordered oldest-first; each is guaranteed to have pts[0][0] >= -540.
-  // NOTE: only handles western overflow (pts[0] < −540). Tracks always accumulate westward
-  // so this is sufficient for own-vessel/AIS tracks.
-  function splitToFit(pts: [number, number][]): [number, number][][] {
-    if (pts.length === 0 || pts[0]![0] >= -540) return pts.length > 0 ? [pts] : [];
-    let si = 0;
-    while (si < pts.length - 1 && pts[si]![0] < -540) si++;
-    const recent = pts.slice(si);
-    const overflow = pts.slice(0, si + 1).map(pt => [pt[0] + 720, pt[1]] as [number, number]);
-    return [...splitToFit(overflow), recent];
-  }
-
-  /**
-   * Bidirectional split for routes (and any arbitrary line that may circle the globe).
-   * Handles both western overflow (< −540°) and eastern overflow (> +540°) by recursively
-   * shifting overflow segments by ∓720° into the nearest renderable world copy.
-   * Returns an array of segments all within ±540° longitude.
-   */
-  function splitRouteSegments(pts: [number, number][]): [number, number][][] {
-    if (pts.length === 0) return [];
-    if (pts[0]![0] < -540) {
-      let si = 0;
-      while (si < pts.length - 1 && pts[si]![0] < -540) si++;
-      const west = pts.slice(0, si + 1).map(p => [p[0] + 720, p[1]] as [number, number]);
-      return [...splitRouteSegments(west), ...splitRouteSegments(pts.slice(si))];
-    }
-    if (pts[pts.length - 1]![0] > 540) {
-      let si = pts.length - 1;
-      while (si > 0 && pts[si]![0] > 540) si--;
-      const east = pts.slice(si).map(p => [p[0] - 720, p[1]] as [number, number]);
-      return [...splitRouteSegments(pts.slice(0, si + 1)), ...splitRouteSegments(east)];
-    }
-    return [pts];
-  }
-
-  function processTrack(raw: [number, number][]): { coords: [number, number][]; overflowSegments: [number, number][][]; fadeStop: number } {
-    if (raw.length < 2) return { coords: raw, overflowSegments: [], fadeStop: 0 };
-    const out: [number, number][] = [[raw[0]![0], raw[0]![1]]];
-    for (let i = 1; i < raw.length; i++) {
-      const prev = out[out.length - 1]!;
-      const lon = unwrapLon(raw[i]![0], prev[0]);
-      // Densify along the great-circle path. For short segments (< 50 km, the common
-      // case for live tracks) gcDensifySegment is a cheap no-op returning just the endpoint.
-      for (const pt of gcDensifySegment(prev[0], prev[1], lon, raw[i]![1])) out.push(pt);
-    }
-    // Anchor the most-recent point to [-180, 180]. Without this, multiple antimeridian
-    // crossings accumulate unbounded longitude values which MapLibre cannot render.
-    const shift = Math.round(out[out.length - 1]![0] / 360) * 360;
-    if (shift !== 0) for (const pt of out) pt[0] -= shift;
-    // Split into segments each within ±540°; the last segment is the most recent.
-    const segments = splitToFit(out);
-    const coords = segments[segments.length - 1] ?? out;
-    const overflowSegments = segments.slice(0, -1);
-    // Fade stop is computed over the most-recent segment only (where the gradient applies).
-    let total = 0;
-    for (let i = 1; i < coords.length; i++) total += haversineMeters(coords[i - 1]!, coords[i]!);
-    const fadeStop = total > 0 ? Math.min(Math.min(0.5 * 1852, total * 0.1) / total, 1) : 0;
-    return { coords, overflowSegments, fadeStop };
-  }
-
-  /**
-   * Unwraps longitudes, GC-densifies, and anchors a route or two-point line for
-   * antimeridian-safe rendering. Anchors by the midpoint of first and last point so
-   * both ends of the route stay near [-180, 180].
-   */
-  function processRouteCoords(raw: [number, number][]): [number, number][] {
-    if (raw.length < 2) return raw;
-    const out: [number, number][] = [[raw[0]![0], raw[0]![1]]];
-    for (let i = 1; i < raw.length; i++) {
-      const prev = out[out.length - 1]!;
-      const lon = unwrapLon(raw[i]![0], prev[0]);
-      for (const pt of gcDensifySegment(prev[0], prev[1], lon, raw[i]![1])) out.push(pt);
-    }
-    const mid = (out[0]![0] + out[out.length - 1]![0]) / 2;
-    const shift = Math.round(mid / 360) * 360;
-    if (shift !== 0) for (const pt of out) pt[0] -= shift;
-    return out;
-  }
-
-  /**
-   * Builds a MapLibre `line-gradient` expression that fades from transparent at the
-   * track start (oldest point) to fully opaque at `fadeStop`, then stays opaque.
-   * Used for solid-style tracks; non-solid styles use plain `line-color`.
-   */
-  function buildTrackGradient(color: string, fadeStop: number): unknown[] {
-    const hex = color.replace('#', '');
-    const r = parseInt(hex.length === 3 ? hex.charAt(0) + hex.charAt(0) : hex.slice(0, 2), 16);
-    const g = parseInt(hex.length === 3 ? hex.charAt(1) + hex.charAt(1) : hex.slice(2, 4), 16);
-    const b = parseInt(hex.length === 3 ? hex.charAt(2) + hex.charAt(2) : hex.slice(4, 6), 16);
-    const transparent = `rgba(${String(r)},${String(g)},${String(b)},0)`;
-    if (fadeStop < 0.001) {
-      return ['interpolate', ['linear'], ['line-progress'], 0, color, 1, color];
-    }
-    return ['interpolate', ['linear'], ['line-progress'], 0, transparent, fadeStop, color, 1, color];
-  }
-
-  // --- End track fade helpers ---------------------------------------------------
-
-  /** Rhumb line destination. Returns unwrapped longitude so antimeridian crossings render correctly. */
-  function destPoint(lon: number, lat: number, bearingRad: number, distM: number): [number, number] {
-    const R = 6371000;
-    const δ = distM / R;
-    const φ1 = (lat * Math.PI) / 180;
-    const φ2 = φ1 + δ * Math.cos(bearingRad);
-    const Δψ = Math.log(Math.tan(φ2 / 2 + Math.PI / 4) / Math.tan(φ1 / 2 + Math.PI / 4));
-    const q = Math.abs(Δψ) > 1e-10 ? (φ2 - φ1) / Δψ : Math.cos(φ1);
-    const λ2 = (lon * Math.PI) / 180 + δ * Math.sin(bearingRad) / q;
-    return [(λ2 * 180) / Math.PI, (φ2 * 180) / Math.PI];
-  }
-
-  /**
-   * Generate densified rhumb line coords with progressive unwrapping.
-   * Unwrapped longitude keeps antimeridian crossings continuous for both Mercator and Globe.
-   */
-  function rhumbCoords(lon: number, lat: number, bearingRad: number, distM: number): [number, number][] {
-    const R = 6371000;
-    const φ1 = (lat * Math.PI) / 180;
-    const cosB = Math.cos(bearingRad);
-    if (Math.abs(cosB) > 1e-10) {
-      const capφ = cosB > 0 ? (85.0 * Math.PI) / 180 : -(85.0 * Math.PI) / 180;
-      const distToCap = ((capφ - φ1) / cosB) * R;
-      if (distToCap > 0 && distToCap < distM) distM = distToCap;
-    }
-    const SEGMENTS = 256;
-    const coords: [number, number][] = [];
-    let prevλ = (lon * Math.PI) / 180;
-    for (let i = 0; i <= SEGMENTS; i++) {
-      const [rawLon, rawLat] = destPoint(lon, lat, bearingRad, (i / SEGMENTS) * distM);
-      const rawλ = (rawLon * Math.PI) / 180;
-      const diff = rawλ - prevλ;
-      const λ = prevλ + diff - Math.round(diff / (2 * Math.PI)) * 2 * Math.PI;
-      prevλ = λ;
-      coords.push([(λ * 180) / Math.PI, rawLat]);
-    }
-    return coords;
-  }
-
-  function gcCoords(lon: number, lat: number, bearingRad: number, distM: number): [number, number][] {
-    const R = 6371000;
-    const SEGMENTS = 256;
-    const φ1 = (lat * Math.PI) / 180;
-    const λ1 = (lon * Math.PI) / 180;
-    const coords: [number, number][] = [];
-    let prevλ = λ1;
-
-    for (let i = 0; i <= SEGMENTS; i++) {
-      const d = (i / SEGMENTS) * distM / R;
-      const φ2 = Math.asin(Math.sin(φ1) * Math.cos(d) + Math.cos(φ1) * Math.sin(d) * Math.cos(bearingRad));
-      const λ2raw = λ1 + Math.atan2(Math.sin(bearingRad) * Math.sin(d) * Math.cos(φ1), Math.cos(d) - Math.sin(φ1) * Math.sin(φ2));
-      // Unwrap: keep longitude continuous across the antimeridian
-      const diff = λ2raw - prevλ;
-      const λ2 = prevλ + diff - Math.round(diff / (2 * Math.PI)) * 2 * Math.PI;
-      prevλ = λ2;
-      coords.push([(λ2 * 180) / Math.PI, (φ2 * 180) / Math.PI]);
-    }
-    return coords;
-  }
-
-  function hexToRgba(hex: string, alpha = 255): [number, number, number, number] {
-    const h = hex.replace('#', '');
-    const r = parseInt(h.slice(0, 2), 16);
-    const g = parseInt(h.slice(2, 4), 16);
-    const b = parseInt(h.slice(4, 6), 16);
-    return [isNaN(r) ? 0 : r, isNaN(g) ? 0 : g, isNaN(b) ? 0 : b, alpha];
-  }
-
-  /**
-   * Map a LineStyle + line width to a PathStyleExtension dash array [dashPx, gapPx].
-   * Values are in pixels (same units as widthUnits: 'pixels').
-   * Pattern scales with width so dots stay circular and dashes stay proportional.
-   */
-  function lineStyleDash(style: LineStyle, width: number): [number, number] {
-    const w = Math.max(1, width);
-    switch (style) {
-      case 'dashed':   return [6 * w, 3 * w];
-      case 'dotted':   return [w,     2 * w];  // dot ≈ square/circular, gap = 2× width
-      case 'dash-dot': return [6 * w, 2 * w];  // deck.gl only supports two-element arrays
-      default:         return [0, 0];
-    }
-  }
 
   /** Return the current map view for extension host API. */
   export function getView(): { center: [number, number]; zoom: number; bounds: [number, number, number, number] } {
@@ -2252,8 +1985,6 @@
     const ids      = ais.ids;
     const coldMap  = ais.coldMap;
     void ais.coldVersion; // register reactive dependency on cold data changes
-    const ap = settings.appearance.ais;
-    const settingsIconSize = ap.vesselSize / 64;
     const now = Date.now();
 
     // Only advance the upload timestamp when hotData itself changed (new WS batch).
@@ -2262,13 +1993,6 @@
     const hotDataChanged = hotData !== _lastAisHotData;
     _lastAisHotData = hotData;
     const uploadTs = hotDataChanged ? now : (aisUploadTimestamp || now);
-
-    // Capture COG line settings explicitly so Svelte 5 tracks them as dependencies
-    // and the closures below always close over the current values.
-    const cogColor         = ap.cog.color;
-    const cogWidth         = ap.cog.width;
-    const cogStyle         = ap.cog.style;
-    const cogLengthMinutes = ap.cog.lengthMinutes;
 
     if (!hotData || ids.length === 0) {
       aisLayerGroup = [];
@@ -2280,371 +2004,15 @@
       return;
     }
 
-    const S = AIS_HOT_STRIDE;
-    const n = ids.length;
-    // Single O(N) pass — independent axes, no cross-effects:
-    //   Motion axis  (SOG):      ghostIndices, cogIndices
-    //   Arrow axis   (always):   visIndices → all get a plain arrow
-    //   State axis   (navState): all state/type decorations live here
-    //   Hull gate    (heading+dims): hullIndices — gates the morph layers' getLength so
-    //                                vessels without a real hull stay icon-only forever.
-    const visIndices:            number[] = []; // all vessels → arrow (SART excluded)
-    const ghostIndices:          number[] = []; // valid SOG/COG → ghost DR arrow + COG
-    const cogIndices:            number[] = [];
-    const hullIndices:           number[] = [];
-    const anchoredIndices:       number[] = []; // nav state "anchored" → anchor-ball mark
-    const agroundIndices:        number[] = []; // nav state "aground" → aground-ring mark
-    const mooredIndices:         number[] = []; // nav state "moored" → mooring-bars mark
-    const fishingIndices:        number[] = []; // nav state "fishing" → fishing-gear mark
-    const nucIndices:            number[] = []; // nav state 2 "notUnderCommand" → two-dot mark
-    const restrictedIndices:     number[] = []; // nav state 3 "restrictedManoeuvrability" → ball-diamond-ball
-    const draughtIndices:        number[] = []; // nav state 4 "constrainedByDraught" → side-bars mark
-    const sarIndices:            number[] = []; // nav state 14 SART/MOB → special red icon, no arrow
-    // Ghost-decoration subsets — a state mark's GHOST (dead-reckoned) copy must only exist
-    // for vessels actually qualifying for dead-reckoning (same gate as ghostIndices above:
-    // valid SOG/COG telemetry to extrapolate from at all). Without this, a state mark's
-    // ghost copy could exist with no corresponding main ghost arrow, or vice versa. Note a
-    // vessel reporting SOG ≈ 0 still gets a ghost — it just dead-reckons to its own
-    // last-known position, so the ghost and confirmed marks simply coincide (no drift).
-    const anchoredGhostIndices:    number[] = [];
-    const agroundGhostIndices:     number[] = [];
-    const mooredGhostIndices:      number[] = [];
-    const fishingGhostIndices:     number[] = [];
-    const nucGhostIndices:         number[] = [];
-    const restrictedGhostIndices:  number[] = [];
-    const draughtGhostIndices:     number[] = [];
-
-    for (let i = 0; i < n; i++) {
-      // Nav state lookup first — SART vessels are routed entirely to their own layer.
-      const cold = coldMap.get(ids[i]!);
-      const ns = cold?.navState?.toLowerCase() ?? '';
-      const isSart = ns.includes('sart') || ns.includes('transponder');
-
-      if (isSart) {
-        sarIndices.push(i);
-        continue;
-      }
-
-      visIndices.push(i);
-
-      // Motion — SOG only, nav state irrelevant
-      const isog = hotData[i * S + AIS_F_SOG]!;
-      const icog = hotData[i * S + AIS_F_COG]!;
-      const isGhost = !isNaN(icog) && !isNaN(isog);
-      if (isGhost) {
-        ghostIndices.push(i);
-        cogIndices.push(i);
-      }
-
-      // Hull gate — orientation (heading or COG) + dimensions known. Vessels failing this
-      // stay icon-only forever (VesselMorphLayer forces t=0 when getLength returns 0).
-      // getHdg already falls back to COG when heading is NaN; the gate mirrors that so a
-      // vessel with dimensions but only COG orientation still morphs into a hull shape.
-      const ihdg = hotData[i * S + AIS_F_HDG]!;
-      const hasHull = (!isNaN(ihdg) || !isNaN(icog)) && (cold?.lengthM ?? 0) > 0 && (cold?.beamM ?? 0) > 0;
-      if (hasHull) {
-        hullIndices.push(i);
-      }
-
-      // State annotations — nav state only, SOG and ship type irrelevant. One morph layer
-      // per state handles both the icon-zoom mark and the hull-zoom mark (and everything
-      // between); no separate hull-having subset needed. The Ghost-subset push mirrors
-      // ghostIndices's own gate so a state mark's ghost copy never exists without a
-      // genuine dead-reckoning prediction also being shown for that vessel.
-      if (ns.includes('aground')) {
-        agroundIndices.push(i);
-        if (isGhost) agroundGhostIndices.push(i);
-      } else if (ns.includes('anchor')) {
-        anchoredIndices.push(i);
-        if (isGhost) anchoredGhostIndices.push(i);
-      } else if (ns.includes('moor')) {
-        mooredIndices.push(i);
-        if (isGhost) mooredGhostIndices.push(i);
-      } else if (ns.includes('fishing')) {
-        fishingIndices.push(i);
-        if (isGhost) fishingGhostIndices.push(i);
-      } else if (ns.includes('command')) {
-        // "notUnderCommand" — only nav state containing "command"
-        nucIndices.push(i);
-        if (isGhost) nucGhostIndices.push(i);
-      } else if (ns.includes('restrict')) {
-        restrictedIndices.push(i);
-        if (isGhost) restrictedGhostIndices.push(i);
-      } else if (ns.includes('draught')) {
-        // "constrainedByHerDraught" / "constrainedByDraught"
-        draughtIndices.push(i);
-        if (isGhost) draughtGhostIndices.push(i);
-      }
-    }
-
     // Snapshot for rafTick dead-reckoning (ruler snap).
     aisHotSnapshot = hotData;
     aisIdsSnapshot = ids;
     if (hotDataChanged) aisUploadTimestamp = now;
 
-    const vesselColor      = hexToRgba(ap.vesselColor, 220);
-    const ghostVesselColor = hexToRgba(ap.vesselColor, 130);
-
-    // Accessor lambdas — close over hotData, coldMap, ids. Zero allocations per frame.
-    const getPos  = (i: number): [number, number, number] => [hotData[i * S + AIS_F_LON]!, hotData[i * S + AIS_F_LAT]!, 0];
-    const getSog  = (i: number) => { const v = hotData[i * S + AIS_F_SOG]!; return isNaN(v) ? 0 : v; };
-    const getCog  = (i: number) => { const v = hotData[i * S + AIS_F_COG]!; return isNaN(v) ? 0 : v; };
-    const getHdg  = (i: number) => { const h = hotData[i * S + AIS_F_HDG]!; if (!isNaN(h)) return h; const c = hotData[i * S + AIS_F_COG]!; return isNaN(c) ? 0 : c; };
-    const getRot  = (i: number) => { const v = hotData[i * S + AIS_F_ROT]!; return isNaN(v) ? 0 : v; };
-    const getAge  = (i: number) => hotData[i * S + AIS_F_AGE]!;
-    const getLen  = (i: number, fallback: number) => coldMap.get(ids[i]!)?.lengthM ?? fallback;
-    const getBeam = (i: number, fallback: number) => coldMap.get(ids[i]!)?.beamM ?? fallback;
-    // The morph only fires when a hull polygon can actually be drawn for this vessel.
-    // Vessels with no orientation at all (both heading and COG unknown) have no hull →
-    // VesselMorphLayer forces t=0 and stays icon-only forever (see hasHull above).
-    const hullSet = new Set(hullIndices);
-    const getLengthForMorph = (i: number) => hullSet.has(i) ? getLen(i, 50) : 0;
-
-    // Builds one VesselMorphLayer instance for a nav-state category. `animate` selects
-    // confirmed (static, last-known position) vs ghost (GPU dead-reckoned) motion — both
-    // exist simultaneously, mirroring the old confirmed/ghost hull pair, so a moving
-    // vessel's state marks keep tracking its predicted position once morphed into the
-    // hull silhouette, not just at icon zoom.
-    const makeMorphLayer = (
-      id: string,
-      data: number[],
-      morphGeometry: MorphGeometry,
-      animate: boolean,
-      pickable: boolean,
-    ) =>
-      data.length > 0
-        ? new VesselMorphLayer({
-            id,
-            data,
-            getPosition:    getPos,
-            getSog:         animate ? getSog : () => 0,
-            getCog:         animate ? getCog : () => 0,
-            getHeading:     getHdg,
-            getRot:         animate ? getRot : () => 0,
-            getAgeAtUpload: animate ? getAge : () => 0,
-            getLength:      getLengthForMorph,
-            getBeam:        (i: number) => getBeam(i, 10),
-            getColor:       animate ? ghostVesselColor : vesselColor,
-            uploadTimestamp: uploadTs,
-            selfAnimate: animate,
-            animationIntervalMs: animate ? 1000 / settings.targetFps : 0,
-            settingsIconSize,
-            drCapSeconds: cogLengthMinutes * 60,
-            morphGeometry,
-            pickable,
-          })
-        : null;
-
-    const confirmedMainLayer   = makeMorphLayer('ais-confirmed-main',   visIndices,             MORPH_ARROW,        false, true);
-    const ghostMainLayer       = makeMorphLayer('ais-ghost-main',       ghostIndices,           MORPH_ARROW,        true,  true);
-    const anchoredLayer        = makeMorphLayer('ais-anchored',         anchoredIndices,        MORPH_ANCHOR_DOT,   false, false);
-    const anchoredGhostLayer   = makeMorphLayer('ais-anchored-ghost',   anchoredGhostIndices,   MORPH_ANCHOR_DOT,   true,  false);
-    const mooredLayer          = makeMorphLayer('ais-moored',           mooredIndices,          MORPH_MOORING_BARS, false, false);
-    const mooredGhostLayer     = makeMorphLayer('ais-moored-ghost',     mooredGhostIndices,     MORPH_MOORING_BARS, true,  false);
-    const agroundLayer         = makeMorphLayer('ais-aground',          agroundIndices,         MORPH_AGROUND_RING, false, false);
-    const agroundGhostLayer    = makeMorphLayer('ais-aground-ghost',    agroundGhostIndices,    MORPH_AGROUND_RING, true,  false);
-    const fishingLayer         = makeMorphLayer('ais-fishing',          fishingIndices,         MORPH_FISHING_GEAR, false, false);
-    const fishingGhostLayer    = makeMorphLayer('ais-fishing-ghost',    fishingGhostIndices,    MORPH_FISHING_GEAR, true,  false);
-    const nucLayer             = makeMorphLayer('ais-nuc',              nucIndices,             MORPH_NUC,          false, false);
-    const nucGhostLayer        = makeMorphLayer('ais-nuc-ghost',        nucGhostIndices,        MORPH_NUC,          true,  false);
-    const restrictedLayer      = makeMorphLayer('ais-restricted',       restrictedIndices,      MORPH_RESTRICTED,   false, false);
-    const restrictedGhostLayer = makeMorphLayer('ais-restricted-ghost', restrictedGhostIndices, MORPH_RESTRICTED,   true,  false);
-    const draughtLayer         = makeMorphLayer('ais-draught',          draughtIndices,         MORPH_DRAUGHT,      false, false);
-    const draughtGhostLayer    = makeMorphLayer('ais-draught-ghost',    draughtGhostIndices,    MORPH_DRAUGHT,      true,  false);
-
-    // MOB / AIS-SART — nav state 14. Replaces the arrow with a red swimmer icon. No hull
-    // counterpart exists (a person overboard / SART beacon has no AIS length/beam) — it
-    // stays icon-only forever via the plain VesselIconLayer (getLength = 0 disables any
-    // morph/cross-fade attempt). getHeading = 0 keeps the swimmer north-up (no meaningful
-    // orientation for a beacon).
-    const mobIconLayer = sarIndices.length > 0
-      ? new VesselIconLayer({
-          id: 'ais-mob-icon',
-          data: sarIndices,
-          getPosition:    getPos,
-          getSog:         () => 0,
-          getCog:         () => 0,
-          getHeading:     () => 0,
-          getRot:         () => 0,
-          getAgeAtUpload: () => 0,
-          getLength:      () => 0,
-          getColor:       () => [255, 40, 40, 220] as [number, number, number, number],
-          uploadTimestamp: uploadTs,
-          selfAnimate: false,
-          settingsIconSize,
-          iconGeometry: MOB_GEOMETRY,
-          pickable: true,
-        })
-      : null;
-
-    // getDashArray is a PathStyleExtension prop; spread from variable to bypass excess-property check.
-    const cogDashProps = { getDashArray: lineStyleDash(cogStyle, cogWidth) };
-
-    aisLayerGroup = [
-      // bottom: confirmed vessels at their last-known position, then their state marks
-      ...(confirmedMainLayer  ? [confirmedMainLayer]  : []),
-      ...(anchoredLayer       ? [anchoredLayer]       : []),
-      ...(mooredLayer         ? [mooredLayer]         : []),
-      ...(agroundLayer        ? [agroundLayer]        : []),
-      ...(fishingLayer        ? [fishingLayer]        : []),
-      ...(nucLayer            ? [nucLayer]            : []),
-      ...(restrictedLayer     ? [restrictedLayer]     : []),
-      ...(draughtLayer        ? [draughtLayer]        : []),
-      // ghost (GPU dead-reckoned) vessels and their state marks, drawn above confirmed
-      ...(ghostMainLayer      ? [ghostMainLayer]      : []),
-      ...(anchoredGhostLayer  ? [anchoredGhostLayer]  : []),
-      ...(mooredGhostLayer    ? [mooredGhostLayer]    : []),
-      ...(agroundGhostLayer   ? [agroundGhostLayer]   : []),
-      ...(fishingGhostLayer   ? [fishingGhostLayer]   : []),
-      ...(nucGhostLayer       ? [nucGhostLayer]       : []),
-      ...(restrictedGhostLayer ? [restrictedGhostLayer] : []),
-      ...(draughtGhostLayer   ? [draughtGhostLayer]   : []),
-      // COG arc prediction line
-      new PathLayer<number>({
-        id: 'ais-cog',
-        data: cogIndices,
-        getPath: (i: number) => {
-          const lon  = hotData[i * S + AIS_F_LON]!;
-          const lat  = hotData[i * S + AIS_F_LAT]!;
-          const c    = hotData[i * S + AIS_F_COG]!;
-          const s    = hotData[i * S + AIS_F_SOG]!;
-          const r    = hotData[i * S + AIS_F_ROT]!;
-          const totalSec = cogLengthMinutes * 60;
-          const rotRad = isNaN(r) ? 0 : r;
-          if (Math.abs(rotRad) < 1e-4) {
-            const [endLon, endLat] = extrapolatePos(lon, lat, c, isNaN(s) ? 0 : s, 0, 0, totalSec * 1000);
-            return [[lon, lat], [endLon, endLat]];
-          }
-          const N = 24;
-          // Cap the drawn arc to one full circle (2π / |rotRad| = seconds per revolution).
-          // All N segments are distributed evenly over that capped duration, so fast-turning
-          // vessels use their full segment budget for a single loop rather than spiral beyond it.
-          const fullCircleSec = (2 * Math.PI) / Math.abs(rotRad);
-          const clampedSec = Math.min(totalSec, fullCircleSec);
-          return Array.from({ length: N + 1 }, (_, k) => {
-            const [pLon, pLat] = extrapolatePos(lon, lat, c, isNaN(s) ? 0 : s, rotRad, 0, clampedSec * k / N * 1000);
-            return [pLon, pLat] as [number, number];
-          });
-        },
-        getColor: () => hexToRgba(cogColor, 200),
-        getWidth: cogWidth,
-        ...cogDashProps,
-        widthUnits: 'pixels',
-        widthMinPixels: 1,
-        pickable: false,
-        extensions: [new PathStyleExtension({ dash: true })],
-        updateTriggers: {
-          getPath:      [cogLengthMinutes],
-          getColor:     [cogColor],
-          getWidth:     [cogWidth],
-          getDashArray: [cogStyle, cogWidth],
-        },
-      }),
-      // MOB/SART — rendered last (always on top) with its own icon replacing the arrow
-      ...(mobIconLayer        ? [mobIconLayer]        : []),
-    ];
+    aisLayerGroup = buildAisLayers(hotData, ids, coldMap, settings.appearance.ais, uploadTs, settings.targetFps);
     flushLayers();
   });
 
-  /**
-   * Builds the own-vessel deck.gl layers: heading/COG/GC predictor lines plus the vessel
-   * icon. Rendered via deck.gl (not MapLibre) for the same reason as buildCourseLayers() —
-   * the deck.gl overlay (interleaved: false) always draws on its own canvas above MapLibre's,
-   * so a MapLibre predictor line could never be drawn on top of an AIS target.
-   * Pure function of its arguments — callers control what's tracked as an effect dependency.
-   * The position effect tracks $vesselState (60 Hz orientation ticks); the appearance effect
-   * must not, so it reads state/zoom/projection via untrack() and passes them in here instead.
-   */
-  function buildOwnVesselLayers(
-    ap: AppearanceSettings,
-    state: VesselState,
-    zoom: number,
-    projection: import('../stores/mapView.svelte').ProjectionId,
-  ): Layer[] {
-    const layers: Layer[] = [];
-    if (!state.position) return layers;
-    const { longitude, latitude } = state.position;
-
-    function lineDistM(line: LineAppearance, sogMs: number | null): number {
-      if (line.lengthUnit === 'nm')  return line.lengthValue * 1852;
-      if (line.lengthUnit === 'min') return sogMs !== null ? line.lengthValue * 60 * sogMs : 0;
-      // px → meters per pixel at current zoom & latitude (WebMercator, 512px tile)
-      const mpp = (Math.cos(latitude * Math.PI / 180) * 40075016.686) / (512 * Math.pow(2, zoom));
-      return line.lengthValue * mpp;
-    }
-
-    if (state.cog !== null) {
-      const cogDashProps = { getDashArray: lineStyleDash(ap.cog.style, ap.cog.width) };
-      layers.push(new PathLayer<[number, number][]>({
-        id: 'vessel-cog-line',
-        data: [rhumbCoords(longitude, latitude, state.cog, lineDistM(ap.cog, state.sog))],
-        getPath: d => d,
-        getColor: hexToRgba(ap.cog.color, 255),
-        getWidth: ap.cog.width,
-        ...cogDashProps,
-        widthUnits: 'pixels',
-        widthMinPixels: 1,
-        pickable: false,
-        extensions: [new PathStyleExtension({ dash: true })],
-      }));
-
-      const gcDashProps = { getDashArray: lineStyleDash(ap.gc.style, ap.gc.width) };
-      layers.push(new PathLayer<[number, number][]>({
-        id: 'vessel-gc-line',
-        data: [gcCoords(longitude, latitude, state.cog, lineDistM(ap.gc, state.sog))],
-        getPath: d => d,
-        getColor: hexToRgba(ap.gc.color, 255),
-        getWidth: ap.gc.width,
-        ...gcDashProps,
-        widthUnits: 'pixels',
-        widthMinPixels: 1,
-        pickable: false,
-        extensions: [new PathStyleExtension({ dash: true })],
-      }));
-    }
-
-    if (state.heading !== null) {
-      const hdgDashProps = { getDashArray: lineStyleDash(ap.heading.style, ap.heading.width) };
-      const project = projection === 'globe' ? gcCoords : rhumbCoords;
-      layers.push(new PathLayer<[number, number][]>({
-        id: 'vessel-hdg-line',
-        data: [project(longitude, latitude, state.heading, lineDistM(ap.heading, state.sog))],
-        getPath: d => d,
-        getColor: hexToRgba(ap.heading.color, 255),
-        getWidth: ap.heading.width,
-        ...hdgDashProps,
-        widthUnits: 'pixels',
-        widthMinPixels: 1,
-        pickable: false,
-        extensions: [new PathStyleExtension({ dash: true })],
-      }));
-    }
-
-    // Own vessel icon — rendered last (on top of its own predictor lines).
-    // VesselIconLayer handles globe mode, map-aligned rotation, and picking correctly.
-    const orientRad     = state.heading ?? state.cog ?? null;
-    const ownVesselColor = hexToRgba(ap.vesselColor, 255);
-    const ownVesselSize  = ap.vesselSize / 64;
-    layers.push(new VesselMorphLayer<number>({
-      id: 'own-vessel-icon',
-      data: [0],
-      getPosition:    () => [longitude, latitude, 0],
-      getSog:         () => 0,
-      getCog:         () => 0,
-      getHeading:     () => orientRad ?? 0,
-      getRot:         () => 0,
-      getAgeAtUpload: () => 0,
-      getLength:      () => 0,
-      getColor:       () => ownVesselColor,
-      morphGeometry:  MORPH_ARROW,
-      uploadTimestamp: 0,
-      selfAnimate: false,
-      settingsIconSize: ownVesselSize,
-      pickable: true,
-    }));
-
-    return layers;
-  }
   // Appearance-only effect: paint/layout properties that change only when settings change.
   // Deliberately does NOT read $vesselState so 60 Hz orientation updates don't trigger it.
   $effect(() => {
@@ -2684,7 +2052,7 @@
     map.setPaintProperty('all-routes-line', 'line-dasharray', dashArray(ra.allRoutes.style, ra.allRoutes.width) ?? undefined);
     // route-full/-leg/-bearing moved to deck.gl (see buildCourseLayers()) since MapLibre
     // layers can't render above the deck.gl overlay's own canvas.
-    courseLayerGroup = buildCourseLayers();
+    courseLayerGroup = buildCourseLayers(route.geometry, route.nextPoint, route.previousPoint, $vesselPosition, ra);
     flushLayers();
   });
 
@@ -2838,82 +2206,6 @@
       ta.style !== 'solid' ? dashArray(ta.style, ta.width) ?? undefined : undefined);
   });
 
-  /**
-   * Builds the active-route deck.gl layers: full planned polyline, active leg
-   * (previousPoint → nextPoint), and bearing line (own vessel → nextPoint).
-   * Rendered via deck.gl rather than MapLibre so they sit above AIS targets and the
-   * own-vessel icon — the deck.gl overlay (interleaved: false) always draws on its
-   * own canvas above MapLibre's, so a MapLibre line can never appear on top of them.
-   */
-  function buildCourseLayers(): Layer[] {
-    const geo     = route.geometry;
-    const nxtPt   = route.nextPoint;
-    const prevPt  = route.previousPoint;
-    const ownPos  = $vesselPosition;
-    const ra      = settings.appearance.route;
-    const layers: Layer[] = [];
-
-    // Full planned route polyline from the REST resource — GC-densified, antimeridian-unwrapped,
-    // and split bidirectionally so globe-circling routes render across all world copies.
-    if (geo) {
-      const processed = processRouteCoords(geo.geometry.coordinates as [number, number][]);
-      const segments  = splitRouteSegments(processed);
-      // getDashArray is a PathStyleExtension prop; spread from a variable to bypass the
-      // excess-property check (same technique as cogDashProps above).
-      const fullDashProps = { getDashArray: lineStyleDash(ra.remaining.style, ra.remaining.width) };
-      layers.push(new PathLayer<[number, number][]>({
-        id: 'route-full',
-        data: segments,
-        getPath: d => d,
-        getColor: hexToRgba(ra.remaining.color, 255),
-        getWidth: ra.remaining.width,
-        ...fullDashProps,
-        opacity: 0.65,
-        widthUnits: 'pixels',
-        widthMinPixels: 1,
-        pickable: true,
-        extensions: [new PathStyleExtension({ dash: true })],
-      }));
-    }
-
-    // Active leg: previousPoint → nextPoint (the current planned segment) — GC path.
-    if (nxtPt && prevPt) {
-      const path = processRouteCoords([[prevPt.longitude, prevPt.latitude], [nxtPt.longitude, nxtPt.latitude]]);
-      const legDashProps = { getDashArray: lineStyleDash(ra.segment.style, ra.segment.width) };
-      layers.push(new PathLayer<[number, number][]>({
-        id: 'route-leg',
-        data: [path],
-        getPath: d => d,
-        getColor: hexToRgba(ra.segment.color, 255),
-        getWidth: ra.segment.width,
-        ...legDashProps,
-        widthUnits: 'pixels',
-        widthMinPixels: 1,
-        pickable: true,
-        extensions: [new PathStyleExtension({ dash: true })],
-      }));
-    }
-
-    // Bearing line: own vessel → nextPoint (where I need to actually steer) — GC path.
-    if (nxtPt && ownPos) {
-      const path = processRouteCoords([[ownPos.longitude, ownPos.latitude], [nxtPt.longitude, nxtPt.latitude]]);
-      const bearingDashProps = { getDashArray: lineStyleDash(ra.bearing.style, ra.bearing.width) };
-      layers.push(new PathLayer<[number, number][]>({
-        id: 'route-bearing',
-        data: [path],
-        getPath: d => d,
-        getColor: hexToRgba(ra.bearing.color, 255),
-        getWidth: ra.bearing.width,
-        ...bearingDashProps,
-        widthUnits: 'pixels',
-        widthMinPixels: 1,
-        pickable: true,
-        extensions: [new PathStyleExtension({ dash: true })],
-      }));
-    }
-
-    return layers;
-  }
 
   // Route/course rendering — updates when route geometry, course points, own position,
   // or route appearance settings change.
@@ -2922,14 +2214,14 @@
   $effect(() => {
     const nxtPt   = route.nextPoint;
     const prevPt  = route.previousPoint;
-    void $vesselPosition;
+    const ownPos  = $vesselPosition;
     void settings.appearance.route;
     if (!map || !mapLoaded) return;
 
     const wptSrc = map.getSource(ROUTE_WPT_SRC);
     if (!(wptSrc instanceof maplibregl.GeoJSONSource)) return;
 
-    courseLayerGroup = buildCourseLayers();
+    courseLayerGroup = buildCourseLayers(route.geometry, nxtPt, prevPt, ownPos, settings.appearance.route);
     flushLayers();
 
     const wptFeatures: GeoJSON.Feature[] = [];
