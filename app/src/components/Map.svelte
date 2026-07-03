@@ -446,12 +446,12 @@
         if (p.coordinate) uniq.push({ idx, coord: p.coordinate as [number, number] });
       }
       if (uniq.length === 1) {
-        const { idx, coord } = uniq[0]!;
+        const { idx } = uniq[0]!;
         return {
           kind: 'ais-vessel',
           onTap: () => {
             const t = ais.getTarget(idx);
-            if (t?.position) handleAisClick(coord, t);
+            if (t?.position) handleAisClick(t);
           },
           onContextMenu: () => { /* noop */ },
         };
@@ -1416,7 +1416,7 @@
         : `${String(Math.floor(ageSec / 3600))}h ${String(Math.floor((ageSec % 3600) / 60))}m ago`;
   }
 
-  function handleAisClick(coordinate: [number, number], t: AisTarget): boolean {
+  function handleAisClick(t: AisTarget): boolean {
     if (!map) return false;
 
     if (aisAgeTimer !== null) {
@@ -1425,7 +1425,7 @@
     }
 
     const popup = openPopup(new maplibregl.Popup({ closeButton: true, maxWidth: 'none' })
-      .setLngLat(coordinate)
+      .setLngLat([t.position.longitude, t.position.latitude])
       .setHTML(buildAisPopupHtml(t))
       ).addTo(map);
 
@@ -1481,7 +1481,7 @@
 
     if (targets.length === 0) return;
     if (targets.length === 1) {
-      handleAisClick(coordinate, targets[0]!.target);
+      handleAisClick(targets[0]!.target);
       return;
     }
 
@@ -1510,7 +1510,7 @@
       const t = ais.getTarget(idx);
       if (!t?.position) return;
       popup.remove();
-      handleAisClick(coordinate, t);
+      handleAisClick(t);
     });
   }
 
