@@ -623,10 +623,22 @@
     let lng = coord.lng, lat = coord.lat;
     let snapId: string | undefined;
     if (target.drag.snapsToTargets) {
-      for (const t of liveSnapTargets) {
-        const pt = map!.project([t.position.longitude, t.position.latitude]);
+      // Own vessel has priority: snap to it first if within radius.
+      const own = liveSnapTargets.find(t => t.id === 'own-vessel');
+      if (own) {
+        const pt = map!.project([own.position.longitude, own.position.latitude]);
         if (Math.hypot(pt.x - x, pt.y - y) < RULER_SNAP_PX) {
-          snapId = t.id; lng = t.position.longitude; lat = t.position.latitude; break;
+          snapId = own.id; lng = own.position.longitude; lat = own.position.latitude;
+        }
+      }
+      // Otherwise snap to the nearest AIS target within radius.
+      if (!snapId) {
+        let bestDist = RULER_SNAP_PX;
+        for (const t of liveSnapTargets) {
+          if (t.id === 'own-vessel') continue;
+          const pt = map!.project([t.position.longitude, t.position.latitude]);
+          const d = Math.hypot(pt.x - x, pt.y - y);
+          if (d < bestDist) { bestDist = d; snapId = t.id; lng = t.position.longitude; lat = t.position.latitude; }
         }
       }
     }
@@ -683,7 +695,7 @@
     const aisFiltered = (showVessels && showPredictors)
       ? aisLayerGroup
       : aisLayerGroup.filter(l => (l instanceof PathLayer ? (showVessels && showPredictors) : showVessels));
-    overlay?.setProps({ layers: [...aisFiltered, ...courseLayerGroup, ...rulerLayerGroup, ...plannerLayerGroup, ...ownVesselLayerGroup] });
+    overlay?.setProps({ layers: [...aisFiltered, ...courseLayerGroup, ...plannerLayerGroup, ...ownVesselLayerGroup, ...rulerLayerGroup] });
   }
 
   let rafId = 0;
