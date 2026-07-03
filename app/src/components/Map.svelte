@@ -933,8 +933,9 @@
       const x = e.clientX - rect.left;
       const y = e.clientY - rect.top;
       let snapId: string | undefined;
-      let lng = map!.unproject([x, y]).lng;
-      let lat = map!.unproject([x, y]).lat;
+      const coord = map!.unproject([x, y]);
+      let lng = coord.lng;
+      let lat = coord.lat;
       if (target.drag.snapsToTargets) {
         for (const t of liveSnapTargets) {
           const pt = map!.project([t.position.longitude, t.position.latitude]);

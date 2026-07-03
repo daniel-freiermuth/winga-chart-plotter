@@ -11,11 +11,6 @@
  *
  * Gesture      — recognized user intentions emitted by the FSM to handleGesture.
  *               Adding a new gesture type requires one more case in handleGesture.
- *
- * DragTarget — HitTarget guaranteed to support dragging (drag property is required).
- *
- * Gesture    — recognized user intentions emitted by the FSM to handleGesture.
- *              Adding a new gesture type requires one more case in handleGesture.
  */
 
 import type maplibregl from 'maplibre-gl';
