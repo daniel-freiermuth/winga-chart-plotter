@@ -1443,7 +1443,15 @@
     const historyHours = settings.appearance.ais.track.historyHours;
     const serverBase = settings.signalkHttpUrl;
     fetchAisVesselTrack(serverBase, t.id, historyHours).then(coords => {
-      if (gen === _aisTrackGen) aisTrackRaw = coords;
+      if (gen !== _aisTrackGen) return;
+      // Append the current live position so the track reaches the vessel icon.
+      // The history API lags behind the live AIS stream by seconds to minutes.
+      const livePt: [number, number] = [t.position.longitude, t.position.latitude];
+      const last = coords[coords.length - 1];
+      const dx = last ? last[0] - livePt[0] : Infinity;
+      const dy = last ? last[1] - livePt[1] : Infinity;
+      // ~5 m threshold (matches server-side dedup); skip if history already ends at live pos.
+      aisTrackRaw = (last && dx * dx + dy * dy < 2.02e-9) ? coords : [...coords, livePt];
     }).catch(() => { /* server may not have history for this vessel — silently skip */ });
 
     popup.on('close', () => {
@@ -2125,6 +2133,21 @@
       _fetchedAisTrackIds.add(id);
       fetchAisVesselTrack(base, id, hours).then(coords => {
         if (_aisAllTracksGen !== cancelAtGen) return;
+        // Append current live position so each track reaches its vessel icon.
+        // hotData/ids are read outside the reactive scope (inside async .then) so no dep created.
+        const hotData = ais.hotData;
+        const idx = ais.ids.indexOf(id);
+        if (idx >= 0 && hotData) {
+          const lon = hotData[idx * AIS_HOT_STRIDE + AIS_F_LON]!;
+          const lat = hotData[idx * AIS_HOT_STRIDE + AIS_F_LAT]!;
+          if (!isNaN(lon) && !isNaN(lat)) {
+            const last = coords[coords.length - 1];
+            const dx = last ? last[0] - lon : Infinity;
+            const dy = last ? last[1] - lat : Infinity;
+            // ~5 m threshold — skip if history already ends at the live position.
+            if (!last || dx * dx + dy * dy >= 2.02e-9) coords = [...coords, [lon, lat] as [number, number]];
+          }
+        }
         if (coords.length >= 2) aisAllTracksMap.set(id, coords);
       }).catch(() => { /* no history for this vessel — silently skip */ });
     }
