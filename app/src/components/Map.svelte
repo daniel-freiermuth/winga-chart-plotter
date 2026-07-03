@@ -35,6 +35,7 @@
   import { hexToRgba, dashArray } from '../lib/mapStyles';
   import { buildAisLayers } from '../lib/aisLayerBuilder';
   import { buildOwnVesselLayers, buildCourseLayers } from '../lib/vesselLayers';
+  import ZoomSlider from './ZoomSlider.svelte';
 
   const { openSettings = () => { /* noop */ } }: { openSettings?: (tab: SettingsTab) => void } = $props();
 
@@ -98,7 +99,7 @@
     }
   }
   /** Zoom in one step, keeping the vessel at its current screen pixel when following. */
-  export function zoomIn() {
+  function zoomIn() {
     if (!map) return;
     if (followMode.following) {
       const pos = get(vesselState).position;
@@ -114,7 +115,7 @@
   }
 
   /** Zoom out one step, keeping the vessel at its current screen pixel when following. */
-  export function zoomOut() {
+  function zoomOut() {
     if (!map) return;
     if (followMode.following) {
       const pos = get(vesselState).position;
@@ -734,10 +735,7 @@
       attributionControl: false,
     });
 
-    // Zoom buttons + scale bar share the bottom-left slot, laid out as a row via CSS.
-    // MapLibre prepends into bottom-* containers (insertBefore firstChild), so the
-    // LAST control added ends up FIRST in the DOM → leftmost in our flex-row override.
-    // Add scale first so zoom buttons end up left of the scale.
+    // Scale bar in the bottom-left, alongside the compass.
     // Dynamic scale bar: nautical miles ≥ 0.5 nm, metres below.
     // Reuses MapLibre's `.maplibregl-ctrl-scale` class so all built-in styling applies.
     map.addControl((() => {
@@ -779,26 +777,6 @@
         onRemove(): void { m.off('move', tick); },
       };
     })(), 'bottom-left');
-    map.addControl({
-      onAdd(_: maplibregl.Map): HTMLElement {
-        const el = document.createElement('div');
-        el.className = 'maplibregl-ctrl zoom-ctrl-group';
-        const btnIn  = document.createElement('button');
-        btnIn.className   = 'zoom-ctrl-btn';
-        btnIn.title       = 'Zoom in';
-        btnIn.textContent = '+';
-        btnIn.addEventListener('click', () => { zoomIn(); });
-        const btnOut = document.createElement('button');
-        btnOut.className   = 'zoom-ctrl-btn';
-        btnOut.title       = 'Zoom out';
-        btnOut.textContent = '−';
-        btnOut.addEventListener('click', () => { zoomOut(); });
-        el.appendChild(btnIn);
-        el.appendChild(btnOut);
-        return el;
-      },
-      onRemove(_: maplibregl.Map): void { /* MapLibre removes the element */ },
-    }, 'bottom-left');
     map.doubleClickZoom.disable(); // double-click zoom is too easy to trigger accidentally on a chart
 
     // deck.gl overlay — non-interleaved mode: deck.gl renders on its own canvas (on top of
@@ -2709,7 +2687,7 @@
   //     Uses rAF accumulation so rapid scroll events batch into a single easeTo per frame,
   //     matching MapLibre's native speed and feel. Two-finger trackpad scroll generates
   //     wheel events too, so this path covers it automatically.
-  //   - Custom zoom buttons call zoomIn/Out({ around: vessel }) directly; no correction needed.
+  //   - Zoom slider and keyboard call zoomIn/Out (anchor-aware); zoomend re-anchors all others.
   //     Touch pinch and keyboard zoom are handled by a `zoomend` listener that re-anchors
   //     the vessel to its pinned screen pixel (guarded: no re-anchor during active gestures).
   //   - Rotation (right-click drag, two-finger rotate) remains active throughout.
@@ -2833,6 +2811,8 @@
   </svg>
 </button>
 
+<ZoomSlider map={map} zoom={mapZoom} onZoomIn={zoomIn} onZoomOut={zoomOut} />
+
 {#if rulerPopup}
 <div
   class="ruler-popup"
@@ -2878,8 +2858,8 @@
 
   .north-indicator {
     position: absolute;
-    top: 80px;
-    right: 10px;
+    bottom: 8px;
+    left: 8px;
     z-index: 10;
     background: none;
     border: none;
@@ -3039,47 +3019,14 @@
     cursor: pointer;
     font-size: 12px;
   }
-  /* MapLibre's ctrl containers use float+clear layout, not flexbox.
-     Switch bottom-left to a flex row so zoom buttons and scale sit side-by-side.
-     float and clear on flex items are ignored, so MapLibre's per-ctrl rules are harmless.
-     The zoom group has `maplibregl-ctrl` class for pointer-events:auto and margin. */
+  /* MapLibre's ctrl containers use float+clear layout; override to flex so the scale bar
+     sits to the right of the compass (absolute-positioned at left: 8px, width: 44px).
+     padding-left clears the 52 px compass footprint plus a small gap. */
   :global(.maplibregl-ctrl-bottom-left) {
     display: flex !important;
     flex-direction: row !important;
     align-items: flex-end !important;
-  }
-  :global(.zoom-ctrl-group) {
-    display: flex;
-    gap: 2px;
-  }
-  :global(.zoom-ctrl-btn) {
-    width: 26px;
-    height: 26px;
-    background: rgba(0, 0, 0, 0.7);
-    color: white;
-    border: none;
-    border-radius: 5px;
-    cursor: pointer;
-    font-size: 16px;
-    line-height: 1;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-  @media (hover: hover) and (pointer: fine) {
-    :global(.zoom-ctrl-btn:hover) { background: rgba(40, 40, 80, 0.9); }
-  }
-  :global(.zoom-ctrl-btn:active) { background: rgba(60, 60, 120, 0.95); }
-  /* MapLibre's own CSS applies:
-   *   @media (hover:hover) { .maplibregl-ctrl button:not(:disabled):hover { background-color: rgba(0,0,0,.05) } }
-   * That rule has specificity 0,3,1 — higher than our .zoom-ctrl-btn:hover (0,2,0) — and only
-   * guards on hover:hover, not pointer:fine. So on touch devices that still report hover:hover
-   * (e.g. phones with a stylus) it fires and makes the button transparent. We counter it with
-   * the same specificity (0,3,1) scoped to coarse/no-hover devices so source-order gives us the win. */
-  @media (hover: none), (pointer: coarse) {
-    :global(.maplibregl-ctrl button.zoom-ctrl-btn:hover) {
-      background: rgba(0, 0, 0, 0.7);
-    }
+    padding-left: 60px !important;
   }
 
 </style>
