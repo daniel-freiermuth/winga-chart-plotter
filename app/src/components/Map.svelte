@@ -160,6 +160,12 @@
   // consumed and cleared in moveend). Distinct from _isInteracting so moveend can still
   // read it after _isInteracting has been cleared.
   let _wasUserPan = false;
+  // True while at least one finger is physically on the screen. Set earlier than
+  // _isInteracting (which waits for movestart after the drag threshold). Prevents
+  // the vessel-follow easeTo from firing in the touchstart→movestart gap, where a
+  // competing camera movestart confuses MapLibre's DragPanHandler and silently
+  // drops the pending drag — the "panning fails every ~1 s in follow mode" bug.
+  let _touchActive = false;
   // True once the user has panned/zoomed/rotated the map by hand (gesture, not programmatic
   // easeTo/flyTo) — for the lifetime of this page load, never reset. Gates the one-shot
   // auto-fly-to-vessel below: once the user has shown intent to look elsewhere, never yank
@@ -1136,6 +1142,7 @@
       const LONG_PRESS_MOVE_PX = 10;
 
       map.on('touchstart', (e) => {
+        _touchActive = true;  // finger is down — suppress vessel easeTo until lifted
         if (e.originalEvent.touches.length !== 1) {
           if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
           return;
@@ -1159,8 +1166,8 @@
         if (!touch) return;
         if (Math.hypot(touch.clientX - startX, touch.clientY - startY) > LONG_PRESS_MOVE_PX) cancelLong();
       });
-      map.on('touchend',    cancelLong);
-      map.on('touchcancel', cancelLong);
+      map.on('touchend',    (e) => { if (e.originalEvent.touches.length === 0) _touchActive = false; cancelLong(); });
+      map.on('touchcancel', (e) => { if (e.originalEvent.touches.length === 0) _touchActive = false; cancelLong(); });
     }
 
     // Unified click/tap dispatcher — handles both mouse clicks and touch taps.
@@ -2661,7 +2668,7 @@
         followMode.offset!.left * W/2,
         followMode.offset!.top * H/2,
       ];
-      if (!_isInteracting && (posChanged || rmChanged || rm === 'heading' || rm === 'cog')) {
+      if (!_isInteracting && !_touchActive && (posChanged || rmChanged || rm === 'heading' || rm === 'cog')) {
         const center = map.getCenter();
         const dist = Math.hypot(center.lng - pos.longitude, center.lat - pos.latitude);
         const bOpts = bearing !== undefined ? { bearing } : {};
