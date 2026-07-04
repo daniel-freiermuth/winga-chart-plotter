@@ -146,12 +146,27 @@ impl SignalKClient {
             let Some(text) = e.data().as_string() else {
                 return;
             };
-            if apply_message(&mut storage_clone.borrow_mut(), &text).is_err() {
-                return;
+            let delta_ctx = match apply_message(&mut storage_clone.borrow_mut(), &text) {
+                Err(_) => return,
+                Ok(ctx) => ctx,
+            };
+            // Only forward own-vessel deltas to the extension relay.
+            // AIS deltas (context = "vessels.urn:mrn:imo:mmsi:…") must not
+            // bleed into widget subscriptions that expect self data.
+            // Pass through when:
+            //   • no context field (rare; some servers omit it for self)
+            //   • literal alias "vessels.self"
+            //   • matches the actual UUID learned from the Hello message
+            let forward = delta_ctx.as_deref().map_or(true, |ctx| {
+                let storage = storage_clone.borrow();
+                ctx == "vessels.self"
+                    || storage
+                        .self_id()
+                        .map_or(false, |sid| ctx == format!("vessels.{sid}"))
+            });
+            if forward {
+                let _ = on_delta.call1(&JsValue::NULL, &JsValue::from_str(&text));
             }
-            // Forward the raw delta text — consumers (e.g. extension relay) can
-            // parse path/value/timestamp tuples from it without a second WebSocket.
-            let _ = on_delta.call1(&JsValue::NULL, &JsValue::from_str(&text));
 
             // Always forward own-vessel state immediately — it's a single cheap struct.
             let state = extract_vessel_state(&storage_clone.borrow());

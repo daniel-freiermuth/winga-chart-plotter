@@ -208,6 +208,11 @@ impl Storage {
         self.self_id = Some(strip_vessels_prefix(context).to_string());
     }
 
+    /// Return the stripped own-vessel id (without the `vessels.` prefix), if known.
+    pub fn self_id(&self) -> Option<&str> {
+        self.self_id.as_deref()
+    }
+
     fn vessel_mut(&mut self, id: &str) -> &mut Vessel {
         self.vessels
             .entry(id.to_string())
@@ -470,10 +475,10 @@ fn active_route_from_value(value: &Json) -> Option<ActiveRoute> {
 /// expected in practice. If one arrives anyway, storage is left untouched
 /// (not reset) — there is nothing to parse it into, and silently discarding
 /// otherwise-good retained state would be worse than ignoring the message.
-pub fn apply_message(storage: &mut Storage, json: &str) -> Result<(), String> {
+pub fn apply_message(storage: &mut Storage, json: &str) -> Result<Option<String>, String> {
     let raw: Json = serde_json::from_str(json).map_err(|e| format!("JSON parse error: {e}"))?;
     let Some(obj) = raw.as_object() else {
-        return Ok(());
+        return Ok(None);
     };
 
     if let Some(updates) = obj.get("updates").and_then(Json::as_array) {
@@ -488,7 +493,7 @@ pub fn apply_message(storage: &mut Storage, json: &str) -> Result<(), String> {
             }
         }
         let Some(id) = context.map(strip_vessels_prefix) else {
-            return Ok(());
+            return Ok(None);
         };
         let vessel = storage.vessel_mut(id);
         for update in updates {
@@ -505,13 +510,14 @@ pub fn apply_message(storage: &mut Storage, json: &str) -> Result<(), String> {
                 apply_leaf(vessel, path, value, source);
             }
         }
+        return Ok(context.map(str::to_string));
     } else if obj.contains_key("self") && !obj.contains_key("vessels") {
         if let Some(self_) = obj.get("self").and_then(Json::as_str) {
             storage.set_self(self_);
         }
     }
     // Anything else (a Full snapshot, or an unrecognised shape) — see doc comment above.
-    Ok(())
+    Ok(None)
 }
 
 // ---------------------------------------------------------------------------
