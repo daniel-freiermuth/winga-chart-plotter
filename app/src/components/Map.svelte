@@ -5,8 +5,8 @@
   import 'maplibre-gl/dist/maplibre-gl.css';
   import type * as GeoJSON from 'geojson';
   import { get } from 'svelte/store';
-  import { vesselState, vesselPosition, type VesselState } from '../stores/vessel';
-  import { settings, type SettingsTab, type AppearanceSettings } from '../stores/settings.svelte';
+  import { vesselState, vesselPosition } from '../stores/vessel';
+  import { settings, type SettingsTab } from '../stores/settings.svelte';
   import { fpsStore } from '../stores/fps.svelte';
   import { followMode, type FollowOffset } from '../stores/follow.svelte';
   import { rotateMode } from '../stores/rotateMode.svelte';
