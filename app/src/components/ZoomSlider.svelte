@@ -22,14 +22,14 @@
 
   const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 
-  // Fraction: 0 = track top = max zoom, 1 = track bottom = min zoom
-  const thumbFrac = $derived(1 - clamp((zoom - minZoom) / range, 0, 1));
+  // Fraction: 0 = track top = min zoom, 1 = track bottom = max zoom
+  const thumbFrac = $derived(clamp((zoom - minZoom) / range, 0, 1));
 
   function applyZoomAt(clientY: number): void {
     if (!map || !trackEl) return;
     const rect = trackEl.getBoundingClientRect();
     const f = clamp((clientY - rect.top) / rect.height, 0, 1);
-    map.easeTo({ zoom: minZoom + (1 - f) * range, duration: 0 });
+    map.easeTo({ zoom: minZoom + f * range, duration: 0 });
   }
 
   function onPointerDown(e: PointerEvent): void {
@@ -72,7 +72,13 @@
     onpointerup={onPointerUp}
     onpointercancel={onPointerUp}
     onkeydown={onKeyDown}
-  ></div>
+  >
+    <!-- Chevrons centred in the visible left semicircle (x ≤ 22). -->
+    <svg class="zoom-hints" viewBox="0 0 44 44" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <polyline points="5,20 11,14 17,20" fill="none" stroke="rgba(255,255,255,0.55)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+      <polyline points="5,24 11,30 17,24" fill="none" stroke="rgba(255,255,255,0.55)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+  </div>
 </div>
 
 <style>
@@ -118,4 +124,15 @@
       border-color: rgba(255, 255, 255, 0.30);
     }
   }
+  .zoom-hints {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    transition: opacity 0.12s;
+  }
+  .zoom-thumb.dragging .zoom-hints,
+  .zoom-thumb:active .zoom-hints {
+    opacity: 0.35;
+  }
+
 </style>
