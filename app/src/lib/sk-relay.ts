@@ -23,7 +23,8 @@ export interface SkRelay {
 
 interface SkValue { path: string; value: unknown; }
 interface SkUpdate { timestamp: string; values: SkValue[]; }
-interface SkDelta { context?: string; updates?: SkUpdate[]; }
+// The Hello message has a `self` field with the own-vessel context string.
+interface SkDelta { context?: string; updates?: SkUpdate[]; self?: string; }
 
 // ── Internal subscription record ──────────────────────────────────────────────
 
@@ -44,7 +45,11 @@ export function createSkRelay(sendUpstream: (msg: string) => void): SkRelay {
   // path → Set<subId>  (for fan-out on incoming delta)
   const pathSubs = new Map<string, Set<string>>();
 
-  // ── Upstream helpers ─────────────────────────────────────────────────────────
+  // Own-vessel context string learned from the SK Hello message.
+  // Signal K servers resolve "vessels.self" to the actual UUID in delta
+  // responses (e.g. "vessels.urn:mrn:signalk:uuid:…"), so we must learn it
+  // from the Hello before we can filter correctly.
+  let selfContext: string | undefined;
 
   function subscribePathUpstream(path: string): void {
     sendUpstream(JSON.stringify({
@@ -67,12 +72,28 @@ export function createSkRelay(sendUpstream: (msg: string) => void): SkRelay {
     try { delta = JSON.parse(text) as SkDelta; }
     catch { return; }
 
-    // Only fan-out own-vessel deltas. AIS deltas arrive with a context like
-    // "vessels.urn:mrn:imo:mmsi:123456789" and must not bleed into widget
-    // subscriptions that expect self data.
-    if (delta.context !== undefined && delta.context !== 'vessels.self') return;
+    // Hello message: {"version":"…","self":"vessels.urn:mrn:signalk:uuid:…"}
+    // Capture the own-vessel context so we can filter deltas correctly below.
+    if (typeof delta.self === 'string' && !delta.updates) {
+      selfContext = delta.self;
+      return;
+    }
 
     if (!delta.updates) return;
+
+    // Only fan-out own-vessel deltas. AIS deltas arrive with a different
+    // context (e.g. "vessels.urn:mrn:imo:mmsi:…") and must not bleed into
+    // widget subscriptions that expect self data.
+    //
+    // Accept when:
+    //   • context is absent (rare; some servers omit it for self updates)
+    //   • context is the literal alias "vessels.self"
+    //   • context matches the actual UUID learned from the Hello message
+    if (delta.context !== undefined &&
+        delta.context !== 'vessels.self' &&
+        delta.context !== selfContext) {
+      return;
+    }
 
     for (const update of delta.updates) {
       if (!Array.isArray(update.values)) continue;
