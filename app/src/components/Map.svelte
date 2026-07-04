@@ -53,7 +53,7 @@
   };
 
   let mapContainer: HTMLDivElement;
-  let map: maplibregl.Map | undefined;
+  let map = $state.raw<maplibregl.Map | undefined>(undefined);
   let onFsChange = () => { /* noop */ };
 
   export function toggleFullscreen() {
