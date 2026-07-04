@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.17.1] - 2026-07-04
+
+### Fixed
+- Widget data delivery broken by the own-vessel filter introduced in 0.16.1.
+- Correct zoom slider direction; add a visual drag hint.
+
 ## [0.17.0] - 2026-07-03
 
 ### Added
