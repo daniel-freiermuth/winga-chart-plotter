@@ -1,6 +1,8 @@
 export interface WmtsLayerInfo {
   id: string;
   title: string;
+  /** MapLibre-compatible tile URL template ({z}/{x}/{y}) for this specific layer. */
+  tileUrl: string;
 }
 
 export interface WmtsInfo {
@@ -50,13 +52,17 @@ function parseDoc(doc: Document, baseUrl: string, preferLayer?: string): WmtsInf
   const layers = Array.from(doc.querySelectorAll('Contents > Layer'));
   if (layers.length === 0) throw new Error('No layers in capabilities document');
 
+  const sep = baseUrl.includes('?') ? '&' : '?';
+
+  // Build a tile URL for each layer so the picker can show per-layer previews
+  // without re-fetching capabilities (works for both REST and KVP WMTS).
   const availableLayers = layers.map(l => ({
-    id:    qs(l, 'Identifier') ?? '',
-    title: qs(l, 'Title') ?? qs(l, 'Identifier') ?? '',
+    id:      qs(l, 'Identifier') ?? '',
+    title:   qs(l, 'Title') ?? qs(l, 'Identifier') ?? '',
+    tileUrl: layerTileUrl(l, baseUrl, sep, compatibleTms),
   }));
 
   const targetLayer = pickLayer(layers, compatibleTms, preferLayer);
-  const sep = baseUrl.includes('?') ? '&' : '?';
   return buildInfo(baseUrl, sep, targetLayer, compatibleTms, availableLayers);
 }
 
@@ -66,7 +72,7 @@ function buildInfo(
   sep: string,
   targetLayer: Element,
   compatibleTms: Set<string>,
-  availableLayers: { id: string; title: string }[],
+  availableLayers: WmtsLayerInfo[],
 ): WmtsInfo {
   const layerName = qs(targetLayer, 'Identifier') ?? '';
   const fmt       = qs(targetLayer, 'Format') ?? 'image/png';
@@ -143,6 +149,37 @@ function pickTileMatrixSet(layer: Element, compatibleTms: Set<string>): string {
     if (compatibleTms.has(id)) return id;
   }
   return compatibleTms.values().next().value ?? 'WebMercatorQuad';
+}
+
+/**
+ * Build a MapLibre-compatible tile URL template for a single layer element.
+ * Handles both REST-style (ResourceURL) and KVP-style WMTS services.
+ */
+function layerTileUrl(
+  layer: Element,
+  baseUrl: string,
+  sep: string,
+  compatibleTms: Set<string>,
+): string {
+  const layerName = qs(layer, 'Identifier') ?? '';
+  const fmt       = qs(layer, 'Format') ?? 'image/png';
+  const tmsId     = pickTileMatrixSet(layer, compatibleTms);
+
+  const resourceUrl = layer.querySelector('ResourceURL[resourceType="tile"]');
+  if (resourceUrl) {
+    const template = resourceUrl.getAttribute('template') ?? '';
+    return template
+      .replace(/\{TileMatrixSet\}/g, tmsId)
+      .replace(/\{TileMatrix\}/g,    '{z}')
+      .replace(/\{TileRow\}/g,       '{y}')
+      .replace(/\{TileCol\}/g,       '{x}');
+  }
+
+  return `${baseUrl}${sep}SERVICE=WMTS&VERSION=1.0.0&REQUEST=GetTile` +
+    `&LAYER=${encodeURIComponent(layerName)}` +
+    `&TILEMATRIXSET=${encodeURIComponent(tmsId)}` +
+    `&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}` +
+    `&FORMAT=${encodeURIComponent(fmt)}`;
 }
 
 /** Query selector shorthand that returns the element's text content */

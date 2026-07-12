@@ -30,7 +30,7 @@ export function loadSavedView(): SavedMapView {
   return { center: [...DEFAULT_VIEW.center], zoom: DEFAULT_VIEW.zoom, bearing: DEFAULT_VIEW.bearing };
 }
 
-/** Persists the current camera view. Called on 'moveend' — cheap, low-frequency. */
+/** Call this on map `moveend` — keeps the store in sync and persists to localStorage. */
 export function saveView(center: [number, number], zoom: number, bearing: number): void {
   try { localStorage.setItem(VIEW_LS_KEY, JSON.stringify({ center, zoom, bearing })); } catch { /* ignore */ }
 }
@@ -45,17 +45,34 @@ function loadSavedProjection(): ProjectionId {
 }
 
 function createMapViewStore() {
+  const saved     = loadSavedView();
+  let _center     = $state<[number, number]>(saved.center);
+  let _zoom       = $state<number>(saved.zoom);
+  let _bearing    = $state<number>(saved.bearing);
   let projection  = $state<ProjectionId>(loadSavedProjection());
   let isFullscreen = $state(false);
 
   return {
-    get projection()   { return projection; },
+    get projection()    { return projection; },
     set projection(v: ProjectionId) {
       projection = v;
       try { localStorage.setItem(PROJECTION_LS_KEY, v); } catch { /* ignore */ }
     },
-    get isFullscreen() { return isFullscreen; },
-    set isFullscreen(v: boolean)    { isFullscreen = v; },
+    get isFullscreen()  { return isFullscreen; },
+    set isFullscreen(v: boolean) { isFullscreen = v; },
+
+    /** Live camera position (updated on every map `moveend`). */
+    get center():  [number, number] { return _center;  },
+    get zoom():    number           { return _zoom;    },
+    get bearing(): number           { return _bearing; },
+
+    /** Called on map `moveend` — updates reactive state and persists to localStorage. */
+    syncView(c: [number, number], z: number, b: number): void {
+      _center  = c;
+      _zoom    = z;
+      _bearing = b;
+      saveView(c, z, b);
+    },
   };
 }
 

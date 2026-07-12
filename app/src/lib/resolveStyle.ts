@@ -244,3 +244,37 @@ function maybeWrapStringArray(value: unknown): unknown {
   }
   return value;
 }
+
+/**
+ * Find the first raster tile URL template in a resolved MapLibre style.
+ * Checks `tiles[]` on inline sources first; falls back to fetching the
+ * TileJSON `url` pointer — exactly what MapLibre does internally.
+ * `styleBase` is the style JSON URL, used to resolve relative TileJSON URLs.
+ */
+export async function extractRasterTileUrl(style: object, styleBase: string): Promise<string | null> {
+  const sources = (style as Record<string, unknown>)['sources'];
+  if (sources == null || typeof sources !== 'object') return null;
+  for (const src of Object.values(sources as Record<string, unknown>)) {
+    if (src == null || typeof src !== 'object') continue;
+    const s = src as Record<string, unknown>;
+    if (s['type'] !== 'raster') continue;
+    // Inline tiles array — no extra request needed.
+    if (Array.isArray(s['tiles']) && typeof s['tiles'][0] === 'string') {
+      return s['tiles'][0];
+    }
+    // TileJSON url pointer — fetch it the same way MapLibre would.
+    if (typeof s['url'] === 'string') {
+      const tjUrl = new URL(s['url'], styleBase).href;
+      try {
+        const res = await fetch(tjUrl);
+        if (res.ok) {
+          const tj = await res.json() as Record<string, unknown>;
+          if (Array.isArray(tj['tiles']) && typeof tj['tiles'][0] === 'string') {
+            return tj['tiles'][0];
+          }
+        }
+      } catch { /* network error — try next source */ }
+    }
+  }
+  return null;
+}

@@ -434,18 +434,23 @@
   });
 
   function handleOpenSettings(tab: SettingsTab): void {
+    chartPickerOpen = false;
     settingsComp?.openTo(tab);
   }
   function handleOpenSettingsModal(): void {
     mapComp?.closePopup();
+    chartPickerOpen      = false;
+    layerVisibilityOpen  = false;
     settingsComp?.open();
   }
   function handleOpenChartPicker(): void {
     mapComp?.closePopup();
+    layerVisibilityOpen = false;
     chartPickerComp?.open();
   }
   function handleOpenLayerVisibility(): void {
     mapComp?.closePopup();
+    chartPickerOpen = false;
     layerVisibilityComp?.open();
   }
   function handleFlyToVessel(): void {
@@ -503,12 +508,6 @@
       onclick={handleOpenSettingsModal}
     ><FaIcon icon={faGear} /></button>
 
-    <button
-      class="map-btn"
-      class:map-btn--open={chartPickerOpen}
-      title="Charts &amp; layers"
-      onclick={handleOpenChartPicker}
-    ><FaIcon icon={faLayerGroup} /></button>
 
     <button
       class="map-btn"
@@ -656,6 +655,14 @@
       </svg>
     </button>
   </div>
+
+  <!-- Chart picker FAB — bottom-left, mirroring the MOB button -->
+  <button
+    class="chart-fab"
+    class:chart-fab--open={chartPickerOpen}
+    title="Charts &amp; layers"
+    onclick={handleOpenChartPicker}
+  ><FaIcon icon={faLayerGroup} /></button>
 </div>
 
 <style>
@@ -702,6 +709,35 @@
     background: rgba(255,255,255,0.15);
     margin: 2px 0;
   }
+
+  .chart-fab {
+    position: absolute;
+    bottom: 20px;
+    left: 16px;
+    z-index: 10;
+    width: 52px;
+    height: 52px;
+    border-radius: 50%;
+    border: none;
+    background: rgba(20, 20, 40, 0.85);
+    color: white;
+    font-size: 20px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.45);
+    transition: background 0.15s, transform 0.12s, box-shadow 0.15s;
+  }
+  .chart-fab--open {
+    background: rgba(76, 201, 240, 0.2);
+    box-shadow: 0 0 0 2px #4cc9f0, 0 2px 12px rgba(0, 0, 0, 0.45);
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .chart-fab:hover          { background: rgba(40, 40, 90, 0.95); transform: scale(1.06); }
+    .chart-fab--open:hover    { background: rgba(76, 201, 240, 0.3); }
+  }
+  .chart-fab:active           { transform: scale(0.94); }
 
   .mob-container {
     position: absolute;

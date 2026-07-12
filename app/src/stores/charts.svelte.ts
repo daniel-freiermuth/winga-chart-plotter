@@ -1,6 +1,6 @@
 import { SvelteSet, SvelteMap } from 'svelte/reactivity';
 import { fetchCharts, buildTileUrl, type Chart, type ChartRecord } from '../lib/wasmRest';
-import { resolveWmtsTileUrl, resolveWmtsLayer, type WmtsLayerInfo } from '../lib/wmts';
+import { resolveWmtsTileUrl, type WmtsLayerInfo } from '../lib/wmts';
 
 export type { Chart };
 export type { WmtsLayerInfo };
@@ -51,8 +51,8 @@ function createChartsStore() {
   const wmtsFilteredLayers = new SvelteMap<string, WmtsLayerInfo[]>();
   // Charts where user toggled "show all layers"
   const wmtsShowAll       = new SvelteSet<string>();
-  // Currently selected layer (persisted)
-  const wmtsLayerSel      = loadLS(LS_LAYER_SEL_KEY);
+  // Currently selected layer (persisted) — SvelteMap so isActive is reactive
+  const wmtsLayerSel = new SvelteMap<string, string>(loadLS(LS_LAYER_SEL_KEY));
 
   return {
     get available():  ChartRecord              { return available;  },
@@ -61,7 +61,6 @@ function createChartsStore() {
     get error():      string | null            { return error;      },
     get wmtsFailed():    SvelteSet<string>        { return wmtsFailed;    },
     get wmtsResolving(): SvelteSet<string>        { return wmtsResolving; },
-
     /** Layers to display in the picker for a given chart id. */
     visibleLayers(id: string): WmtsLayerInfo[] {
       if (wmtsShowAll.has(id)) return wmtsAllLayers.get(id) ?? [];
@@ -99,19 +98,11 @@ function createChartsStore() {
       wmtsFailed.add(id);
     },
 
-    async selectLayer(id: string, layerId: string) {
-      const chart = available[id];
-      if (chart?.type !== 'WMTS') return;
-      const url = chart.url?.startsWith('/') ? `${serverBase}${chart.url}` : (chart.url ?? '');
-      try {
-        const info = await resolveWmtsLayer(url, layerId);
-        wmtsResolved.set(id, info.tileUrlTemplate);
-        wmtsAllLayers.set(id, info.availableLayers);
-        wmtsLayerSel.set(id, info.layerName);
-        saveLS(LS_LAYER_SEL_KEY, wmtsLayerSel);
-      } catch (e) {
-        console.warn(`[charts] WMTS layer switch failed for ${id}:`, e);
-      }
+    /** Switch to a specific WMTS layer immediately (no re-fetch). */
+    activateLayer(id: string, layerId: string, tileUrl: string) {
+      wmtsResolved.set(id, tileUrl);
+      wmtsLayerSel.set(id, layerId);
+      saveLS(LS_LAYER_SEL_KEY, wmtsLayerSel);
     },
 
     tileUrl(chart: Chart): string {
@@ -138,9 +129,9 @@ function createChartsStore() {
       try {
         available = await fetchCharts(base);
 
-        // Restore previously selected charts that still exist on this server.
+        // Restore the previously selected chart (at most one — selection is exclusive).
         for (const id of savedSelected) {
-          if (id in available) selected.add(id);
+          if (id in available) { selected.add(id); break; }
         }
         savedSelected.clear();
       } catch (e) {
@@ -181,10 +172,19 @@ function createChartsStore() {
       void Promise.allSettled(wmtsTasks);
     },
 
+    /** Activate a chart. No-op if already active (never deactivates). */
     toggle(id: string) {
-      if (selected.has(id)) selected.delete(id);
-      else selected.add(id);
+      if (selected.has(id)) return; // already active — clicking again is a no-op
+      selected.clear();             // exclusive: only one chart at a time
+      selected.add(id);
       localStorage.setItem(LS_SELECTED_KEY, JSON.stringify([...selected]));
+    },
+
+    /** Clear chart selection (called when a base layer is selected). */
+    deselectAll() {
+      if (selected.size === 0) return;
+      selected.clear();
+      localStorage.setItem(LS_SELECTED_KEY, JSON.stringify([]));
     },
   };
 }

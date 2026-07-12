@@ -29,7 +29,7 @@
   import { fetchAisVesselTrack, navigateToPoint, clearCourse, activateRoute, setActiveRoutePointIndex, deleteRoute, saveWaypoint, updateWaypoint, deleteWaypoint } from '../lib/wasmRest';
   import { extrapolatePos } from '../lib/deadReckoning';
   import { SvelteMap } from 'svelte/reactivity';
-  import { mapView, loadSavedView, saveView } from '../stores/mapView.svelte';
+  import { mapView, loadSavedView } from '../stores/mapView.svelte';
   import { visibility } from '../stores/visibility.svelte';
   import { buildTrackGradient, processTrack, processRouteCoords, splitRouteSegments } from '../lib/trackProcessing';
   import { hexToRgba, dashArray } from '../lib/mapStyles';
@@ -1113,7 +1113,7 @@
           }
         }
       }
-      if (map) { const c = map.getCenter(); saveView([c.lng, c.lat], map.getZoom(), map.getBearing()); }
+      if (map) { const c = map.getCenter(); mapView.syncView([c.lng, c.lat], map.getZoom(), map.getBearing()); }
     });
 
     // Cursor feedback for interactive MapLibre layers. The route-full/-leg/-bearing
@@ -1954,8 +1954,10 @@
     if (!map || !mapLoaded) return;
     const enabled = baseLayers.enabled;
     for (const layer of BASE_LAYERS) {
-      if (!map.getLayer(layer.id)) continue;
-      map.setLayoutProperty(layer.id, 'visibility', enabled.has(layer.id) ? 'visible' : 'none');
+      const vis = enabled.has(layer.id) ? 'visible' : 'none';
+      for (const lid of [layer.id, ...(layer.extraLayerIds ?? [])]) {
+        if (map.getLayer(lid)) map.setLayoutProperty(lid, 'visibility', vis);
+      }
     }
   });
   // MapLibre layer visibility — toggled independently of deck.gl layers.
@@ -2804,7 +2806,7 @@
   onclick={() => { rotateMode.toggle($vesselState.cog !== null, $vesselState.heading !== null, route.nextPoint !== null); }}
   aria-label="Rotation mode: {rotateMode.label}"
 >
-  <svg width="44" height="44" viewBox="0 0 44 44" aria-hidden="true">
+  <svg width="52" height="52" viewBox="0 0 44 44" aria-hidden="true">
     <circle cx="22" cy="22" r="21"
       fill="rgba(0,0,0,0.72)"
       stroke="rgba(255,255,255,0.18)"
@@ -2865,8 +2867,8 @@
 
   .north-indicator {
     position: absolute;
-    bottom: 8px;
-    left: 8px;
+    bottom: 20px;
+    right: 84px;
     z-index: 10;
     background: none;
     border: none;
@@ -3026,14 +3028,14 @@
     cursor: pointer;
     font-size: 12px;
   }
-  /* MapLibre's ctrl containers use float+clear layout; override to flex so the scale bar
-     sits to the right of the compass (absolute-positioned at left: 8px, width: 44px).
-     padding-left clears the 52 px compass footprint plus a small gap. */
+  /* MapLibre's ctrl containers use float+clear layout; override to flex so the
+     scale bar sits horizontally. Offset from the left to clear the chart FAB
+     (left: 16px + 52px wide + 16px gap = 84px). */
   :global(.maplibregl-ctrl-bottom-left) {
     display: flex !important;
     flex-direction: row !important;
     align-items: flex-end !important;
-    padding-left: 60px !important;
+    padding-left: 84px !important;
   }
 
 </style>
