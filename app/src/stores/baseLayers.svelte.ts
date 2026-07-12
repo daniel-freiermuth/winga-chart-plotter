@@ -16,6 +16,11 @@ export const BASE_LAYERS: BaseLayer[] = [
     extraLayerIds: ['seamarks'],
     tileUrl: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
   },
+  {
+    id: 'watercolor',
+    name: 'Stamen Watercolor',
+    tileUrl: 'https://tiles.stadiamaps.com/tiles/stamen_watercolor/{z}/{x}/{y}.jpg',
+  },
 ];
 
 const LS_BASE_LAYERS_KEY = 'base-layers-enabled';

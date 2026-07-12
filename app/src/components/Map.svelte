@@ -43,12 +43,14 @@
     version: 8,
     projection: { type: 'mercator' },
     sources: {
-      'osm-tiles':  { type: 'raster', tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'], tileSize: 256, attribution: '© OpenStreetMap contributors' },
-      'openseamap': { type: 'raster', tiles: ['https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png'], tileSize: 256 },
+      'osm-tiles':        { type: 'raster', tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'], tileSize: 256, attribution: '© OpenStreetMap contributors' },
+      'openseamap':       { type: 'raster', tiles: ['https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png'], tileSize: 256 },
+      'watercolor-tiles': { type: 'raster', tiles: ['https://tiles.stadiamaps.com/tiles/stamen_watercolor/{z}/{x}/{y}.jpg'], tileSize: 256, maxzoom: 16, attribution: 'Map tiles by <a href="https://stamen.com">Stamen Design</a>, under <a href="https://creativecommons.org/licenses/by/3.0">CC BY 3.0</a>. Data by <a href="https://openstreetmap.org">OpenStreetMap</a>. Tiles hosted by <a href="https://stadiamaps.com">Stadia Maps</a>.' },
     },
     layers: [
-      { id: 'osm',      type: 'raster', source: 'osm-tiles' },
-      { id: 'seamarks', type: 'raster', source: 'openseamap' },
+      { id: 'osm',        type: 'raster', source: 'osm-tiles' },
+      { id: 'seamarks',   type: 'raster', source: 'openseamap' },
+      { id: 'watercolor', type: 'raster', source: 'watercolor-tiles', layout: { visibility: 'none' } },
     ],
   };
 
