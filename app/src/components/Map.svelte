@@ -314,11 +314,13 @@
   let isHoveringHandle = false;
   // Ruler label popup: shown when user clicks a label; holds screen position and ruler id.
   let rulerPopup = $state<{ rulerId: string; x: number; y: number } | null>(null);
+  // Planner handle popup: shown when user taps a route-planner waypoint handle.
+  let plannerHandlePopup = $state<{ idx: number; x: number; y: number } | null>(null);
   // Drag FSM — only two phases needed. map.on('click') handles all taps (mouse + touch);
   // the long-press timer below handles touch long-press. No tap state, no panning state.
   type GesturePhase =
     | { phase: 'idle' }
-    | { phase: 'dragging'; target: DragTarget; pointerId: number }
+    | { phase: 'dragging'; target: DragTarget; pointerId: number; moved: boolean; downX: number; downY: number }
   let gesturePhase: GesturePhase = { phase: 'idle' };
   const LONG_PRESS_MS = 500;
 
@@ -332,8 +334,15 @@
     document.addEventListener('pointerdown', dismiss);
     return () => { document.removeEventListener('pointerdown', dismiss); };
   });
+  $effect(() => {
+    if (!plannerHandlePopup) return;
+    const dismiss = () => { plannerHandlePopup = null; };
+    document.addEventListener('pointerdown', dismiss);
+    return () => { document.removeEventListener('pointerdown', dismiss); };
+  });
   // Close any open MapLibre popup when the route planner activates.
   $effect(() => { if (routePlanner.active) activePopup?.remove(); });
+  $effect(() => { if (!routePlanner.active) plannerHandlePopup = null; });
 
 
   // At most one MapLibre popup open at a time — each new popup closes the previous one.
@@ -379,7 +388,7 @@
           onEnd:     () => { /* position committed during onMove */ },
           onCancel:  () => { /* noop */ },
         },
-        onTap:         () => { /* noop */ },
+        onTap:         (_, clientX, clientY) => { plannerHandlePopup = { idx, x: clientX, y: clientY }; },
         onContextMenu: () => { routePlanner.removeWaypoint(idx); },
       };
     },
@@ -558,15 +567,18 @@
     switch (g.type) {
       case 'tap':
         rulerPopup = null;
+        plannerHandlePopup = null;
         activePopup?.remove();
         g.target.onTap(g.lngLat, g.clientX, g.clientY);
         return;
       case 'long-press':
         rulerPopup = null;
+        plannerHandlePopup = null;
         showNavigatePopup(g.lngLat);
         return;
       case 'drag-start':
         rulerPopup = null;
+        plannerHandlePopup = null;
         return;
       case 'drag-move':
         g.target.drag.onMove(g.lngLat);
@@ -579,6 +591,7 @@
         return;
       case 'context-menu':
         rulerPopup = null;
+        plannerHandlePopup = null;
         if (g.target) g.target.onContextMenu(g.lngLat);
         else showNavigatePopup(g.lngLat);
         return;
@@ -613,7 +626,7 @@
     mapContainer.style.cursor = 'grabbing';
     mapContainer.setPointerCapture(e.pointerId);
     e.preventDefault(); e.stopPropagation();
-    gesturePhase = { phase: 'dragging', target: dragTarget, pointerId: e.pointerId };
+    gesturePhase = { phase: 'dragging', target: dragTarget, pointerId: e.pointerId, moved: false, downX: x, downY: y };
     handleGesture({ type: 'drag-start', target: dragTarget });
   }
 
@@ -622,16 +635,29 @@
     const rect = mapContainer.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
-    handleGesture({ type: 'drag-move', target: gesturePhase.target, lngLat: map.unproject([x, y]) });
     e.preventDefault(); e.stopPropagation();
+    if (!gesturePhase.moved) {
+      if (Math.hypot(x - gesturePhase.downX, y - gesturePhase.downY) <= 4) return;
+      gesturePhase.moved = true;
+    }
+    handleGesture({ type: 'drag-move', target: gesturePhase.target, lngLat: map.unproject([x, y]) });
   }
 
   function onPointerUp(e: PointerEvent): void {
     if (gesturePhase.phase !== 'dragging') return;
-    const { target, pointerId } = gesturePhase;
+    const { target, pointerId, moved } = gesturePhase;
     const rect = mapContainer.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
+    mapContainer.releasePointerCapture(pointerId);
+    mapContainer.style.cursor = isHoveringHandle ? 'grab' : '';
+    if (!isHoveringHandle) map?.dragPan.enable();
+    gesturePhase = { phase: 'idle' };
+    if (!moved) {
+      // Zero-movement release — treat as a tap on the drag target.
+      handleGesture({ type: 'tap', target, lngLat: map!.unproject([x, y]), clientX: e.clientX, clientY: e.clientY });
+      return;
+    }
     const coord = map!.unproject([x, y]);
     let lng = coord.lng, lat = coord.lat;
     let snapId: string | undefined;
@@ -655,10 +681,6 @@
         }
       }
     }
-    mapContainer.releasePointerCapture(pointerId);
-    mapContainer.style.cursor = isHoveringHandle ? 'grab' : '';
-    if (!isHoveringHandle) map?.dragPan.enable();
-    gesturePhase = { phase: 'idle' };
     handleGesture({ type: 'drag-end', target, lngLat: new maplibregl.LngLat(lng, lat), snapId });
   }
 
@@ -2890,6 +2912,22 @@
 </div>
 {/if}
 
+{#if plannerHandlePopup}
+<div
+  class="planner-handle-popup"
+  role="dialog"
+  aria-label="Waypoint options"
+  tabindex="-1"
+  style="left: {plannerHandlePopup.x}px; top: {plannerHandlePopup.y}px;"
+  onpointerdown={(e) => { e.stopPropagation(); }}
+>
+  <button
+    class="planner-handle-popup-remove"
+    onclick={() => { if (plannerHandlePopup) { routePlanner.removeWaypoint(plannerHandlePopup.idx); plannerHandlePopup = null; } }}
+  >Remove waypoint {plannerHandlePopup.idx + 1}</button>
+</div>
+{/if}
+
 <style>
   .ruler-popup {
     position: fixed;
@@ -2915,6 +2953,32 @@
   }
   @media (hover: hover) and (pointer: fine) {
     .ruler-popup-remove:hover { background: #c53030; }
+  }
+
+  .planner-handle-popup {
+    position: fixed;
+    z-index: 20;
+    transform: translate(-50%, calc(-100% - 8px));
+    background: #1e1e2e;
+    border: 1px solid #444466;
+    border-radius: 8px;
+    padding: 6px 8px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+    pointer-events: all;
+  }
+  .planner-handle-popup-remove {
+    background: #e53e3e;
+    color: white;
+    border: none;
+    border-radius: 5px;
+    padding: 6px 16px;
+    font-size: 14px;
+    cursor: pointer;
+    font-weight: 600;
+    transition: background 0.15s;
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .planner-handle-popup-remove:hover { background: #c53030; }
   }
 
   .north-indicator {
