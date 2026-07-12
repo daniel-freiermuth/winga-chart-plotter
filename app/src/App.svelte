@@ -3,7 +3,7 @@
   import Map from './components/Map.svelte';
   import FaIcon from './lib/FaIcon.svelte';
   import {
-    faGear, faLayerGroup, faEye, faLocationCrosshairs, faRuler, faPencil,
+    faGear, faLayerGroup, faLocationCrosshairs, faRuler, faPencil,
     faExpand, faCompress,
   } from '@fortawesome/free-solid-svg-icons';
   import { routePlanner } from './stores/routePlanner.svelte';
@@ -43,7 +43,6 @@
   }
   import Settings from './components/Settings.svelte';
   import ChartPicker from './components/ChartPicker.svelte';
-  import LayerVisibility from './components/LayerVisibility.svelte';
   import WidgetPanel from './components/WidgetPanel.svelte';
   import ExtPanel from './components/ExtPanel.svelte';
   import { vesselState } from './stores/vessel';
@@ -95,8 +94,6 @@
   let settingsComp        = $state<{ open(): void; openTo(t: SettingsTab): void } | null>(null);
   let chartPickerComp     = $state<{ open(): void } | null>(null);
   let chartPickerOpen     = $state(false);
-  let layerVisibilityComp = $state<{ open(): void } | null>(null);
-  let layerVisibilityOpen = $state(false);
   let worker: Worker | null = null;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let reconnectDelay = 2000; // ms, doubles on each failure up to 30s
@@ -440,18 +437,11 @@
   function handleOpenSettingsModal(): void {
     mapComp?.closePopup();
     chartPickerOpen      = false;
-    layerVisibilityOpen  = false;
     settingsComp?.open();
   }
   function handleOpenChartPicker(): void {
     mapComp?.closePopup();
-    layerVisibilityOpen = false;
     chartPickerComp?.open();
-  }
-  function handleOpenLayerVisibility(): void {
-    mapComp?.closePopup();
-    chartPickerOpen = false;
-    layerVisibilityComp?.open();
   }
   function handleFlyToVessel(): void {
     mapComp?.flyToVessel();
@@ -489,7 +479,6 @@
   <Map bind:this={mapComp} openSettings={handleOpenSettings} />
   <Settings bind:this={settingsComp} />
   <ChartPicker bind:this={chartPickerComp} bind:isOpen={chartPickerOpen} onToggleProjection={handleToggleProjection} />
-  <LayerVisibility bind:this={layerVisibilityComp} bind:isOpen={layerVisibilityOpen} />
   {#each plotterExtensions.layout as placement (placement.instanceId)}
     {@const manifest = plotterExtensions.extensions.get(placement.extensionId)}
     {@const wDef = manifest?.widgets?.find(w => w.id === placement.widgetId)}
@@ -509,12 +498,6 @@
     ><FaIcon icon={faGear} /></button>
 
 
-    <button
-      class="map-btn"
-      class:map-btn--open={layerVisibilityOpen}
-      title="Layer visibility"
-      onclick={handleOpenLayerVisibility}
-    ><FaIcon icon={faEye} /></button>
     {#each [...plotterExtensions.extensions.entries()] as [extId, manifest] (extId)}
       {#each (manifest.buttons ?? []) as btn (btn.id)}
         {#if btn.slot === 'mapToolbar'}

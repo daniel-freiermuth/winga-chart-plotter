@@ -3,10 +3,9 @@
   import { cubicOut } from 'svelte/easing';
   import { charts } from '../stores/charts.svelte';
   import { baseLayers, BASE_LAYERS } from '../stores/baseLayers.svelte';
-  import { mapView } from '../stores/mapView.svelte';
-  import FaIcon from '../lib/FaIcon.svelte';
-  import { faGlobe, faMap } from '@fortawesome/free-solid-svg-icons';
   import MapThumb from './MapThumb.svelte';
+  import { visibility, type VisibilityState } from '../stores/visibility.svelte';
+  import { mapView } from '../stores/mapView.svelte';
 
   let {
     isOpen = $bindable(false),
@@ -44,7 +43,7 @@
     isDragging = false;
     // Snap to nearest breakpoint
     if      (sheetHeight > 80) sheetHeight = 100;
-    else if (sheetHeight > 36) sheetHeight = 52;
+    else if (sheetHeight > 30) sheetHeight = 52;
     else                       close();
   }
 
@@ -63,9 +62,10 @@
       if (px > 0 && sheetHeight < 100 && atTop) {
         e.preventDefault();
         sheetHeight = Math.min(100, sheetHeight + px * 0.08);
-      } else if (px < 0 && sheetHeight > 52 && atTop) {
+      } else if (px < 0 && atTop) {
         e.preventDefault();
-        sheetHeight = Math.max(52, sheetHeight + px * 0.08);
+        const next = sheetHeight + px * 0.08;
+        if (next < 30) { close(); } else { sheetHeight = Math.max(10, next); }
       }
     }
 
@@ -88,7 +88,7 @@
       const dh = -(dy / window.innerHeight) * 100; // + = expand, − = shrink
 
       if (!_intercepting && _tTop0 === 0 && Math.abs(dy) > 4) {
-        if ((dh > 0 && _tH0 < 100) || (dh < 0 && _tH0 > 52)) {
+        if ((dh > 0 && _tH0 < 100) || dh < 0) {
           _intercepting = true;
           isDragging    = true; // disable CSS transition while dragging
         }
@@ -96,16 +96,16 @@
 
       if (_intercepting) {
         e.preventDefault();
-        sheetHeight = Math.max(52, Math.min(100, _tH0 + dh));
+        sheetHeight = Math.max(10, Math.min(100, _tH0 + dh));
       }
     }
 
     function onTouchEnd() {
       if (!_intercepting) return;
       _intercepting = false;
-      isDragging    = false; // re-enable transition for any subsequent snap (handle drag)
-      // No breakpoint snap here — sheet stays wherever the user left it.
-      // The handle-bar onHandleUp is the deliberate resize gesture that snaps.
+      isDragging    = false;
+      if      (sheetHeight < 30) { close(); }
+      else if (sheetHeight < 52) { sheetHeight = 52; }
     }
 
     div.addEventListener('wheel',       onWheel,      { passive: false });
@@ -168,6 +168,37 @@
       css: (t: number) => `transform: translateY(${String((1 - t) * 100)}%)`,
     };
   }
+
+  interface Overlay {
+    key: keyof VisibilityState;
+    label: string;
+    svg: string;
+    children?: { key: keyof VisibilityState; label: string; svg: string }[];
+  }
+
+  const SVG_AIS    = `<svg viewBox="0 0 20 20" fill="none"><path d="M10 2L17 17H3L10 2Z" fill="currentColor"/></svg>`;
+  const SVG_TRACKS = `<svg viewBox="0 0 20 20" fill="none"><path d="M10 2L15 10H5L10 2Z" fill="currentColor"/><circle cx="10" cy="13" r="1.3" fill="currentColor" opacity=".65"/><circle cx="9.5" cy="16.5" r="1" fill="currentColor" opacity=".38"/></svg>`;
+  const SVG_COG    = `<svg viewBox="0 0 20 20" fill="none"><path d="M10 11L14.5 18.5H5.5L10 11Z" fill="currentColor"/><line x1="10" y1="11" x2="10" y2="2" stroke="currentColor" stroke-width="1.8"/><path d="M7 5L10 2L13 5" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/></svg>`;
+  const SVG_TRACK  = `<svg viewBox="0 0 20 20" fill="none"><circle cx="15.5" cy="4.5" r="2.5" fill="currentColor"/><circle cx="15.5" cy="4.5" r="4.5" stroke="currentColor" stroke-width="1" opacity=".3"/><path d="M14 7L11.5 9.5L13.5 12L10.5 14.5L12.5 17.5" stroke="currentColor" stroke-width="1.5" stroke-dasharray="2.5 2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+  const SVG_ROUTES = `<svg viewBox="0 0 20 20" fill="none"><path d="M3 17L11 7L18 13" stroke="currentColor" stroke-width="1.5" stroke-dasharray="2.5 2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="3" cy="17" r="2" fill="currentColor"/><circle cx="11" cy="7" r="2" fill="currentColor"/><circle cx="18" cy="13" r="2" fill="currentColor"/></svg>`;
+  const SVG_WAYPTS = `<svg viewBox="0 0 20 20" fill="none"><path d="M10 1.5C7 1.5 4.5 4 4.5 7C4.5 11.5 10 18.5 10 18.5S15.5 11.5 15.5 7C15.5 4 13 1.5 10 1.5Z" fill="currentColor"/><circle cx="10" cy="7" r="2.3" fill="#1e1e2e"/></svg>`;
+  const SVG_GLOBE = `<svg viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="8" stroke="currentColor" stroke-width="1.5"/><ellipse cx="10" cy="10" rx="4" ry="8" stroke="currentColor" stroke-width="1" opacity=".7"/><line x1="2" y1="10" x2="18" y2="10" stroke="currentColor" stroke-width="1" opacity=".7"/></svg>`;
+  const SVG_FLAT  = `<svg viewBox="0 0 20 20" fill="none"><rect x="2" y="4" width="16" height="12" rx="1" stroke="currentColor" stroke-width="1.5"/><line x1="2" y1="10" x2="18" y2="10" stroke="currentColor" stroke-width="0.8" opacity=".7"/><line x1="8" y1="4" x2="8" y2="16" stroke="currentColor" stroke-width="0.8" opacity=".7"/><line x1="14" y1="4" x2="14" y2="16" stroke="currentColor" stroke-width="0.8" opacity=".7"/></svg>`;
+
+  const OVERLAYS: Overlay[] = [
+    {
+      key:      'aisVessels',
+      label:    'AIS',
+      svg:      SVG_AIS,
+      children: [
+        { key: 'aisTracks',     label: 'Tracks', svg: SVG_TRACKS },
+        { key: 'aisPredictors', label: 'COG',    svg: SVG_COG   },
+      ],
+    },
+    { key: 'ownTrack',  label: 'Track',  svg: SVG_TRACK  },
+    { key: 'routes',    label: 'Routes', svg: SVG_ROUTES },
+    { key: 'waypoints', label: 'Waypts', svg: SVG_WAYPTS },
+  ];
 </script>
 
 {#if isOpen}
@@ -186,29 +217,85 @@
       <span class="handle"></span>
     </div>
 
-    <div class="sheet-header">
-      <div class="proj-seg">
-        <button
-          class="proj-opt"
-          class:proj-opt--active={mapView.projection === 'mercator'}
-          title="Mercator projection"
-          onclick={() => { if (mapView.projection !== 'mercator') onToggleProjection?.(); }}
-        >
-          <FaIcon icon={faMap} /> Mercator
-        </button>
-        <button
-          class="proj-opt"
-          class:proj-opt--active={mapView.projection === 'globe'}
-          title="Globe projection"
-          onclick={() => { if (mapView.projection !== 'globe') onToggleProjection?.(); }}
-        >
-          <FaIcon icon={faGlobe} /> Globe
-        </button>
-      </div>
-      <button class="close-btn" onclick={close} title="Close">✕</button>
-    </div>
-
     <div class="sheet-scroll" bind:this={_scrollEl}>
+      <!-- ── Overlay chips ──────────────────────────────────── -->
+      <div class="overlay-section">
+        <div class="overlay-row">
+          {#each OVERLAYS as item (item.key)}
+            {#if item.children}
+              {@const parentOn = visibility[item.key]}
+              <div class="ais-group" class:ais-group--on={parentOn}>
+                <button
+                  class="ov-chip ov-chip--parent"
+                  class:ov-chip--on={parentOn}
+                  aria-pressed={parentOn}
+                  aria-label="AIS vessels: {parentOn ? 'visible' : 'hidden'}"
+                  onclick={() => { visibility.toggle(item.key); }}
+                >
+                  <!-- eslint-disable-next-line svelte/no-at-html-tags -- hardcoded SVG, not user input -->
+                  {@html item.svg}
+                  <span class="ov-label">{item.label}</span>
+                </button>
+                <div class="ais-children" class:ais-children--inactive={!parentOn}>
+                  {#each item.children as child (child.key)}
+                    {@const on = parentOn && visibility[child.key]}
+                    <button
+                      class="ov-chip"
+                      class:ov-chip--on={on}
+                      aria-pressed={on}
+                      aria-disabled={!parentOn}
+                      aria-label="{child.label}: {on ? 'visible' : 'hidden'}"
+                      onclick={() => { if (visibility[item.key]) visibility.toggle(child.key); }}
+                    >
+                      <!-- eslint-disable-next-line svelte/no-at-html-tags -- hardcoded SVG, not user input -->
+                      {@html child.svg}
+                      <span class="ov-label">{child.label}</span>
+                    </button>
+                  {/each}
+                </div>
+              </div>
+            {:else}
+              {@const on = visibility[item.key]}
+              <button
+                class="ov-chip"
+                class:ov-chip--on={on}
+                aria-pressed={on}
+                aria-label="{item.label}: {on ? 'visible' : 'hidden'}"
+                onclick={() => { visibility.toggle(item.key); }}
+              >
+                <!-- eslint-disable-next-line svelte/no-at-html-tags -- hardcoded SVG, not user input -->
+                {@html item.svg}
+                <span class="ov-label">{item.label}</span>
+              </button>
+            {/if}
+          {/each}
+          <div class="proj-group">
+            <button
+              class="ov-chip"
+              class:ov-chip--on={mapView.projection === 'globe'}
+              aria-pressed={mapView.projection === 'globe'}
+              aria-label="Globe projection"
+              onclick={() => { if (mapView.projection !== 'globe') onToggleProjection?.(); }}
+            >
+              <!-- eslint-disable-next-line svelte/no-at-html-tags -- hardcoded SVG, not user input -->
+              {@html SVG_GLOBE}
+              <span class="ov-label">Globe</span>
+            </button>
+            <button
+              class="ov-chip"
+              class:ov-chip--on={mapView.projection === 'mercator'}
+              aria-pressed={mapView.projection === 'mercator'}
+              aria-label="Flat (Mercator) projection"
+              onclick={() => { if (mapView.projection !== 'mercator') onToggleProjection?.(); }}
+            >
+              <!-- eslint-disable-next-line svelte/no-at-html-tags -- hardcoded SVG, not user input -->
+              {@html SVG_FLAT}
+              <span class="ov-label">Flat</span>
+            </button>
+          </div>
+        </div>
+      </div>
+      <div class="charts-label">Charts</div>
       <div class="grid">
 
         <!-- ── Base layers ──────────────────────────────────────────────── -->
@@ -370,57 +457,6 @@
     background: rgba(255, 255, 255, 0.25);
   }
 
-  /* ── Header (projection + close) ────────────────────────────────────── */
-  .sheet-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 0 16px 12px;
-    flex-shrink: 0;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-  }
-
-  .proj-seg {
-    display: flex;
-    gap: 4px;
-    background: rgba(255, 255, 255, 0.06);
-    border-radius: 8px;
-    padding: 3px;
-  }
-
-  .proj-opt {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 5px 12px;
-    border: none;
-    border-radius: 6px;
-    background: none;
-    color: rgba(255, 255, 255, 0.6);
-    font-size: 13px;
-    cursor: pointer;
-    transition: background 0.15s, color 0.15s;
-  }
-
-  .proj-opt--active {
-    background: rgba(255, 255, 255, 0.15);
-    color: white;
-    font-weight: 600;
-  }
-
-  .close-btn {
-    background: none;
-    border: none;
-    color: rgba(255, 255, 255, 0.5);
-    font-size: 18px;
-    cursor: pointer;
-    padding: 4px 8px;
-    border-radius: 6px;
-    line-height: 1;
-    transition: color 0.15s;
-  }
-
-  .close-btn:hover { color: white; }
 
   /* ── Scrollable content ──────────────────────────────────────────────── */
   .sheet-scroll {
@@ -541,5 +577,169 @@
     overflow: hidden;
     text-overflow: ellipsis;
     line-height: 1.4;
+  }
+
+  /* ── Overlay chips ─────────────────────────────────────────────────── */
+  .overlay-section {
+    padding: 10px 16px 12px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  }
+
+
+  .overlay-row {
+    display: flex;
+    gap: 6px;
+  }
+
+  .ov-chip {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    padding: 8px 4px 7px;
+    border-radius: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.04);
+    color: rgba(255, 255, 255, 0.38);
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+    min-width: 0;
+    line-height: 1;
+  }
+
+  .ov-chip :global(svg) {
+    width: 20px;
+    height: 20px;
+    flex-shrink: 0;
+  }
+
+  .ov-chip:hover:not(.ov-chip--on) {
+    border-color: rgba(255, 255, 255, 0.22);
+    color: rgba(255, 255, 255, 0.65);
+    background: rgba(255, 255, 255, 0.08);
+  }
+
+  .ov-chip--on {
+    background: rgba(76, 201, 240, 0.14);
+    border-color: rgba(76, 201, 240, 0.45);
+    color: #4cc9f0;
+  }
+
+  .ov-chip--on:hover {
+    background: rgba(76, 201, 240, 0.24);
+    border-color: rgba(76, 201, 240, 0.6);
+  }
+
+
+  .ov-label {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+  }
+
+  /* ── Projection group ───────────────────────────────────────────────── */
+  .proj-group {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 10px;
+    padding: 3px;
+  }
+
+  .proj-group .ov-chip {
+    flex: 1;
+    border: none;
+    border-radius: 8px;
+    background: transparent;
+  }
+
+  .proj-group .ov-chip--on {
+    background: rgba(76, 201, 240, 0.2);
+  }
+
+  .proj-group .ov-chip:hover:not(.ov-chip--on) {
+    border: none;
+    background: rgba(255, 255, 255, 0.09);
+    color: rgba(255, 255, 255, 0.65);
+  }
+
+  .proj-group .ov-chip--on:hover {
+    background: rgba(76, 201, 240, 0.28);
+  }
+
+  /* ── AIS group ──────────────────────────────────────────────────────── */
+  .ais-group {
+    flex: 2;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 10px;
+    padding: 3px;
+    transition: border-color 0.15s, background 0.15s;
+  }
+
+  .ais-group--on {
+    border-color: rgba(76, 201, 240, 0.45);
+    background: rgba(76, 201, 240, 0.04);
+  }
+
+  /* Parent button — row layout (icon + label side-by-side) */
+  .ov-chip--parent {
+    flex-direction: row;
+    justify-content: center;
+    gap: 7px;
+    padding: 7px 8px;
+  }
+
+  /* Chips inside group: no individual border; group border owns the frame */
+  .ais-group .ov-chip {
+    border: none;
+    border-radius: 8px;
+    background: transparent;
+  }
+
+  .ais-group .ov-chip--on {
+    background: rgba(76, 201, 240, 0.2);
+  }
+
+  .ais-group .ov-chip:hover:not(.ov-chip--on) {
+    border: none;
+    background: rgba(255, 255, 255, 0.09);
+    color: rgba(255, 255, 255, 0.65);
+  }
+
+  .ais-group .ov-chip--on:hover {
+    background: rgba(76, 201, 240, 0.28);
+  }
+
+  /* Sub-row of dependent children */
+  .ais-children {
+    display: flex;
+    gap: 2px;
+  }
+
+  .ais-children .ov-chip {
+    flex: 1;
+  }
+
+  /* When AIS parent is off, dim children and block interaction */
+  .ais-children--inactive {
+    opacity: 0.25;
+    pointer-events: none;
+  }
+
+  .charts-label {
+    padding: 12px 16px 0;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: rgba(255, 255, 255, 0.35);
   }
 </style>
