@@ -411,6 +411,7 @@
   const rulerLabelInteractable: Interactable = {
     pick(x, y) {
       if (!overlay) return null;
+      if (routePlanner.active) return null;
       const p = overlay.pickObject({ x, y, radius: 14, layerIds: ['ruler-labels'] });
       if (!p?.object) return null;
       const rulerId = (p.object as { ruler: { id: string } }).ruler.id;
@@ -425,6 +426,7 @@
   const rulerHandleInteractable: Interactable = {
     pick(x, y) {
       if (!overlay) return null;
+      if (routePlanner.active) return null;
       const p = overlay.pickObject({ x, y, radius: 10, layerIds: ['ruler-handles'] });
       if (!p?.object) return null;
       const { rulerId, endpoint } = p.object as { rulerId: string; endpoint: 'a' | 'b' };
@@ -445,6 +447,7 @@
   const ownVesselInteractable: Interactable = {
     pick(x, y) {
       if (!overlay) return null;
+      if (routePlanner.active) return null;
       if (overlay.pickMultipleObjects({ x, y, radius: 5, layerIds: ['own-vessel-icon'] }).length === 0) return null;
       return {
         kind: 'own-vessel',
@@ -457,6 +460,7 @@
   const aisVesselInteractable: Interactable = {
     pick(x, y) {
       if (!overlay) return null;
+      if (routePlanner.active) return null;
       const hits = overlay.pickMultipleObjects({ x, y, radius: 5, layerIds: ['ais-confirmed-main', 'ais-ghost-main', 'ais-mob-icon'] });
       // eslint-disable-next-line svelte/prefer-svelte-reactivity
       const seen = new Set<number>();
@@ -494,6 +498,7 @@
   const waypointInteractable: Interactable = {
     pick(x, y) {
       if (!map) return null;
+      if (routePlanner.active) return null;
       const feats = map.queryRenderedFeatures([x, y], { layers: ['all-waypoints-circle'] });
       if (feats.length === 0) return null;
       const feature = feats[0]!;
@@ -508,6 +513,7 @@
   const activeRouteInteractable: Interactable = {
     pick(x, y) {
       if (!overlay || !map) return null;
+      if (routePlanner.active) return null;
       const routeLine = overlay.pickObject({ x, y, radius: 6, layerIds: ['route-full', 'route-leg', 'route-bearing'] });
       const routeWpts = map.queryRenderedFeatures([x, y], { layers: ['route-waypoints'] });
       if (!routeLine?.object && routeWpts.length === 0) return null;
@@ -523,6 +529,7 @@
   const routeInteractable: Interactable = {
     pick(x, y) {
       if (!map) return null;
+      if (routePlanner.active) return null;
       const feats = map.queryRenderedFeatures([x, y], { layers: ['all-routes-line'] });
       if (feats.length === 0) return null;
       const feature = feats[0]!;
@@ -574,7 +581,7 @@
       case 'long-press':
         rulerPopup = null;
         plannerHandlePopup = null;
-        showNavigatePopup(g.lngLat);
+        if (!routePlanner.active) showNavigatePopup(g.lngLat);
         return;
       case 'drag-start':
         rulerPopup = null;
@@ -593,7 +600,7 @@
         rulerPopup = null;
         plannerHandlePopup = null;
         if (g.target) g.target.onContextMenu(g.lngLat);
-        else showNavigatePopup(g.lngLat);
+        else if (!routePlanner.active) showNavigatePopup(g.lngLat);
         return;
       default:
         g satisfies never;
@@ -1143,11 +1150,11 @@
     // Cursor feedback for interactive MapLibre layers. The route-full/-leg/-bearing
     // lines moved to deck.gl (see buildCourseLayers()) and don't get hover-cursor
     // feedback here — only the click handler below picks them.
-    map.on('mouseenter', 'route-waypoints', () => { if (map) map.getCanvas().style.cursor = 'pointer'; });
+    map.on('mouseenter', 'route-waypoints', () => { if (map && !routePlanner.active) map.getCanvas().style.cursor = 'pointer'; });
     map.on('mouseleave', 'route-waypoints', () => { if (map) map.getCanvas().style.cursor = ''; });
-    map.on('mouseenter', 'all-routes-line',      () => { if (map) map.getCanvas().style.cursor = 'pointer'; });
+    map.on('mouseenter', 'all-routes-line',      () => { if (map && !routePlanner.active) map.getCanvas().style.cursor = 'pointer'; });
     map.on('mouseleave', 'all-routes-line',      () => { if (map) map.getCanvas().style.cursor = ''; });
-    map.on('mouseenter', 'all-waypoints-circle', () => { if (map) map.getCanvas().style.cursor = 'pointer'; });
+    map.on('mouseenter', 'all-waypoints-circle', () => { if (map && !routePlanner.active) map.getCanvas().style.cursor = 'pointer'; });
     map.on('mouseleave', 'all-waypoints-circle', () => { if (map) map.getCanvas().style.cursor = ''; });
 
     // Context-menu re-hit-tests at the event position; each target's onContextMenu handles its own action.
@@ -1227,7 +1234,7 @@
       if (!overlay) return;
       const { x, y } = e.point;
       try {
-        const layers = ['ruler-handles', ...(routePlanner.active ? ['planner-handles'] : [])];
+        const layers = routePlanner.active ? ['planner-handles'] : ['ruler-handles'];
         setHandleHover(!!overlay.pickObject({ x, y, radius: 10, layerIds: layers })?.object);
       } catch { /* transient overlay state during style reload */ }
     });
