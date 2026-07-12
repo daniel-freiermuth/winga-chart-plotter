@@ -35,6 +35,7 @@ function createRoutePlannerStore() {
     set name(v: string)                { name = v; },
 
     enter(): void  { active = true; name = ''; },
+    enterAt(lon: number, lat: number): void { active = true; name = ''; waypoints = [{ lon, lat }]; },
     exit(): void   { reset(); },
 
     /** Enter planner pre-loaded with an existing route's waypoints for editing. */

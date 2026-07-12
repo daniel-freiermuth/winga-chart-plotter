@@ -563,7 +563,7 @@
         return;
       case 'long-press':
         rulerPopup = null;
-        if (!routePlanner.active) showNavigatePopup(g.lngLat);
+        showNavigatePopup(g.lngLat);
         return;
       case 'drag-start':
         rulerPopup = null;
@@ -580,7 +580,7 @@
       case 'context-menu':
         rulerPopup = null;
         if (g.target) g.target.onContextMenu(g.lngLat);
-        else if (!routePlanner.active) showNavigatePopup(g.lngLat);
+        else showNavigatePopup(g.lngLat);
         return;
       default:
         g satisfies never;
@@ -1459,6 +1459,10 @@
         <div class="ais-links" style="margin-top:6px">
           <button class="popup-settings-btn add-waypoint-here-btn"
             data-lat="${String(t.position.latitude)}" data-lon="${String(t.position.longitude)}">Add waypoint here</button>
+          <button class="popup-settings-btn route-here-btn"
+            data-lat="${String(t.position.latitude)}" data-lon="${String(t.position.longitude)}">
+            ${routePlanner.active ? 'Add to route' : 'Start route from here'}
+          </button>
           <button class="popup-settings-btn" data-settings="ais">AIS settings</button>
         </div>
       </div>`;
@@ -1528,6 +1532,15 @@
       if (wpBtn && !wpBtn.disabled) {
         popup.remove();
         promptAndSaveWaypoint(Number(wpBtn.dataset['lat']), Number(wpBtn.dataset['lon']));
+        return;
+      }
+      const routeBtn = el.closest<HTMLButtonElement>('.route-here-btn');
+      if (routeBtn) {
+        popup.remove();
+        const rlat = Number(routeBtn.dataset['lat']);
+        const rlon = Number(routeBtn.dataset['lon']);
+        if (routePlanner.active) routePlanner.addWaypoint(rlon, rlat);
+        else routePlanner.enterAt(rlon, rlat);
       }
     });
 
@@ -1615,6 +1628,9 @@
             ${canWaypoint ? `data-lat="${String(lat)}" data-lon="${String(lon)}"` : 'disabled title="Login required"'}>
             Add waypoint here
           </button>
+          <button class="popup-settings-btn route-here-btn">
+            ${routePlanner.active ? 'Add to route' : 'Start route from here'}
+          </button>
         </div>
       `)
       ).addTo(map);
@@ -1633,6 +1649,13 @@
       if (wpBtn && !wpBtn.disabled) {
         popup.remove();
         promptAndSaveWaypoint(lat, lon);
+        return;
+      }
+      const routeBtn = el.closest<HTMLButtonElement>('.route-here-btn');
+      if (routeBtn) {
+        popup.remove();
+        if (routePlanner.active) routePlanner.addWaypoint(lon, lat);
+        else routePlanner.enterAt(lon, lat);
       }
     });
   }
@@ -1641,12 +1664,17 @@
     if (!map) return;
     const ownPos = get(vesselState).position;
     const canWaypoint = auth.isLoggedIn && ownPos != null;
+    const canRoute = ownPos != null;
     const popup = openPopup(new maplibregl.Popup({ closeButton: false, offset: 14, className: 'vessel-self-popup' })
       .setLngLat(lngLat)
       .setHTML(`
         <button class="vessel-self-settings-btn">Own vessel settings</button>
         <button class="popup-settings-btn add-waypoint-here-btn"
           ${canWaypoint ? `data-lat="${String(ownPos.latitude)}" data-lon="${String(ownPos.longitude)}"` : 'disabled title="Login required"'}>Add waypoint here</button>
+        <button class="popup-settings-btn route-here-btn"
+          ${canRoute ? `data-lat="${String(ownPos.latitude)}" data-lon="${String(ownPos.longitude)}"` : 'disabled title="Position unknown"'}>
+          ${routePlanner.active ? 'Add to route' : 'Start route from here'}
+        </button>
       `)
       ).addTo(map);
     popup.getElement().addEventListener('click', (ev) => {
@@ -1656,6 +1684,15 @@
       if (wpBtn && !wpBtn.disabled) {
         popup.remove();
         promptAndSaveWaypoint(Number(wpBtn.dataset['lat']), Number(wpBtn.dataset['lon']));
+        return;
+      }
+      const routeBtn = (ev.target as HTMLElement).closest<HTMLButtonElement>('.route-here-btn');
+      if (routeBtn && !routeBtn.disabled) {
+        popup.remove();
+        const rlat = Number(routeBtn.dataset['lat']);
+        const rlon = Number(routeBtn.dataset['lon']);
+        if (routePlanner.active) routePlanner.addWaypoint(rlon, rlat);
+        else routePlanner.enterAt(rlon, rlat);
       }
     });
   }
@@ -1776,6 +1813,10 @@
           <div class="ais-links" style="margin-top:4px">
             <button class="popup-settings-btn navigate-here-btn"
               ${auth.isLoggedIn ? '' : 'disabled title="Login required"'}>Navigate here</button>
+            <button class="popup-settings-btn route-here-btn"
+              data-lat="${String(lat)}" data-lon="${String(lon)}">
+              ${routePlanner.active ? 'Add to route' : 'Start route from here'}
+            </button>
             <button class="popup-settings-btn rename-waypoint-btn"
               ${canAct ? `data-uuid="${uuid}" data-name="${name}" data-lat="${String(lat)}" data-lon="${String(lon)}"` : 'disabled title="Login required"'}>Rename</button>
             <button class="popup-settings-btn move-waypoint-btn"
@@ -1820,6 +1861,15 @@
         deleteWaypoint(settings.signalkHttpUrl, uuid, auth.authHeaders)
           .then(() => waypoints.load(settings.signalkHttpUrl))
           .catch((err: unknown) => { console.error('[waypoint] Failed to delete:', err); });
+        return;
+      }
+      const routeBtn = el.closest<HTMLButtonElement>('.route-here-btn');
+      if (routeBtn) {
+        popup.remove();
+        const rlat = Number(routeBtn.dataset['lat']);
+        const rlon = Number(routeBtn.dataset['lon']);
+        if (routePlanner.active) routePlanner.addWaypoint(rlon, rlat);
+        else routePlanner.enterAt(rlon, rlat);
       }
     });
   }

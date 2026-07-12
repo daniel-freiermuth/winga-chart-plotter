@@ -3,7 +3,7 @@
   import Map from './components/Map.svelte';
   import FaIcon from './lib/FaIcon.svelte';
   import {
-    faGear, faLayerGroup, faLocationCrosshairs, faRuler, faPencil,
+    faGear, faLayerGroup, faLocationCrosshairs, faRuler,
     faExpand, faCompress,
   } from '@fortawesome/free-solid-svg-icons';
   import { routePlanner } from './stores/routePlanner.svelte';
@@ -539,13 +539,6 @@
     ><FaIcon icon={faLocationCrosshairs} /></button>
 
     <div class="map-toolbar-divider"></div>
-
-    <button
-      class="map-btn"
-      class:map-btn--active={routePlanner.active}
-      title={routePlanner.active ? 'Exit route planner' : 'Route planner'}
-      onclick={() => { if (!routePlanner.active) routePlanner.enter(); }}
-    ><FaIcon icon={faPencil} /></button>
 
     <button
       class="map-btn"
