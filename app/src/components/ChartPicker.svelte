@@ -1,10 +1,11 @@
 <script lang="ts">
   import type { StyleSpecification } from 'maplibre-gl';
   import { cubicOut } from 'svelte/easing';
-  import { charts } from '../stores/charts.svelte';
-  import { baseLayers, BASE_LAYERS } from '../stores/baseLayers.svelte';
+  import { charts, type Chart, type WmtsLayerInfo } from '../stores/charts.svelte';
+  import { baseLayers, BASE_LAYERS, type BaseLayer } from '../stores/baseLayers.svelte';
   import MapThumb from './MapThumb.svelte';
   import { visibility, type VisibilityState } from '../stores/visibility.svelte';
+  import { chartLru } from '../stores/chartLru.svelte';
   import { mapView } from '../stores/mapView.svelte';
 
   let {
@@ -22,7 +23,19 @@
   let _dragY = 0;
 
   export function open() { isOpen = true; sheetHeight = 52; }
-  function close()       { isOpen = false; }
+  function close() {
+    const activeIds: string[] = [...baseLayers.enabled];
+    for (const cid of charts.selected) {
+      if (charts.available[cid]?.type === 'WMTS') {
+        const layerId = charts.getLayerSel(cid);
+        if (layerId) activeIds.push(`${cid}:${layerId}`);
+      } else {
+        activeIds.push(cid);
+      }
+    }
+    chartLru.touch(activeIds);
+    isOpen = false;
+  }
 
   // ── Handle drag ── live height tracking, snap on release ─────────────────
   function onHandleDown(e: PointerEvent) {
@@ -199,6 +212,37 @@
     { key: 'routes',    label: 'Routes', svg: SVG_ROUTES },
     { key: 'waypoints', label: 'Waypts', svg: SVG_WAYPTS },
   ];
+
+  // Items in the global LRU grid.  WMTS charts are flattened into individual
+  // layer entries so each layer competes independently in the global sort.
+  type GridItem =
+    | { kind: 'base';             id: string; layer: BaseLayer }
+    | { kind: 'chart';            id: string; chart: Chart }
+    | { kind: 'wmts';             id: string; chartId: string; chart: Chart; wmtsLayer: WmtsLayerInfo }
+    | { kind: 'wmts-placeholder'; id: string; chart: Chart };
+
+  const sortedItems: GridItem[] = $derived(
+    (() => {
+      const items: GridItem[] = BASE_LAYERS.map(l => ({ kind: 'base', id: l.id, layer: l }));
+      if (!charts.loading && !charts.error) {
+        for (const [cid, chart] of Object.entries(charts.available)) {
+          if (chart.type !== 'WMTS') {
+            items.push({ kind: 'chart', id: cid, chart });
+          } else {
+            const layers = charts.visibleLayers(cid);
+            if (layers.length === 0) {
+              items.push({ kind: 'wmts-placeholder', id: cid, chart });
+            } else {
+              for (const wmtsLayer of layers) {
+                items.push({ kind: 'wmts', id: `${cid}:${wmtsLayer.id}`, chartId: cid, chart, wmtsLayer });
+              }
+            }
+          }
+        }
+      }
+      return items.sort((a, b) => chartLru.rank(b.id) - chartLru.rank(a.id));
+    })()
+  );
 </script>
 
 {#if isOpen}
@@ -298,22 +342,92 @@
       <div class="charts-label">Charts</div>
       <div class="grid">
 
-        <!-- ── Base layers ──────────────────────────────────────────────── -->
-        {#each BASE_LAYERS as layer (layer.id)}
-          <button
-            class="card"
-            class:selected={baseLayers.enabled.has(layer.id)}
-            aria-pressed={baseLayers.enabled.has(layer.id)}
-            onclick={() => { charts.deselectAll(); baseLayers.toggle(layer.id); }}
-          >
-            <div class="card-preview">
-              <MapThumb style={rasterStyle(layer.tileUrl)} />
-            </div>
-            <div class="card-label">{layer.name}</div>
-          </button>
+        {#each sortedItems as item (`${item.kind}:${item.id}`)}
+          {#if item.kind === 'base'}
+            <button
+              class="card"
+              class:selected={baseLayers.enabled.has(item.id)}
+              aria-pressed={baseLayers.enabled.has(item.id)}
+              onclick={() => { charts.deselectAll(); baseLayers.toggle(item.id); }}
+            >
+              <div class="card-preview">
+                <MapThumb style={rasterStyle(item.layer.tileUrl)} />
+              </div>
+              <div class="card-label">{item.layer.name}</div>
+            </button>
+          {/if}
+          {#if item.kind === 'chart'}
+            {@const styleUrl = charts.styleUrl(item.chart)}
+            {@const tileUrl  = charts.tileUrl(item.chart)}
+            {#if styleUrl}
+              <!-- Vector / style-based -->
+              <button
+                class="card"
+                class:selected={charts.selected.has(item.id)}
+                aria-pressed={charts.selected.has(item.id)}
+                onclick={() => { baseLayers.deselectAll(); charts.toggle(item.id); }}
+              >
+                <div class="card-preview">
+                  <MapThumb style={styleUrl} bounds={item.chart.bounds} />
+                </div>
+                <div class="card-label">{item.chart.name}</div>
+              </button>
+            {:else}
+              <!-- Raster tile chart (tilelayer, WMS, pbf …) -->
+              <button
+                class="card"
+                class:selected={charts.selected.has(item.id)}
+                aria-pressed={charts.selected.has(item.id)}
+                onclick={() => { baseLayers.deselectAll(); charts.toggle(item.id); }}
+              >
+                <div class="card-preview">
+                  {#if tileUrl}
+                    <MapThumb style={rasterStyle(tileUrl)} bounds={item.chart.bounds} />
+                  {/if}
+                </div>
+                <div class="card-label">{item.chart.name}</div>
+              </button>
+            {/if}
+          {/if}
+          {#if item.kind === 'wmts'}
+            {@const isActive = charts.selected.has(item.chartId) && charts.getLayerSel(item.chartId) === item.wmtsLayer.id}
+            <button
+              class="card"
+              class:selected={isActive}
+              aria-pressed={isActive}
+              onclick={() => { clickWmts(item.chartId, item.wmtsLayer.id, item.wmtsLayer.tileUrl); }}
+            >
+              <div class="card-preview">
+                {#if item.wmtsLayer.tileUrl}
+                  <MapThumb style={rasterStyle(item.wmtsLayer.tileUrl)} bounds={item.chart.bounds} />
+                {:else}
+                  <div class="card-preview--pulse" style="width:100%;height:100%"></div>
+                {/if}
+              </div>
+              <div class="card-label">{item.chart.name}</div>
+              <div class="card-sub">{item.wmtsLayer.title}</div>
+            </button>
+          {/if}
+          {#if item.kind === 'wmts-placeholder'}
+            {#if charts.wmtsResolving.has(item.id)}
+              <div class="card card--ghost">
+                <div class="card-preview card-preview--pulse"></div>
+                <div class="card-label">{item.chart.name}</div>
+                <div class="card-sub">Loading layers…</div>
+              </div>
+            {:else}
+              <div class="card card--disabled">
+                <div class="card-preview"></div>
+                <div class="card-label">{item.chart.name}</div>
+                <div class="card-sub">
+                  {charts.wmtsFailed.has(item.id) ? 'Failed to load' : 'No layers'}
+                </div>
+              </div>
+            {/if}
+          {/if}
         {/each}
 
-        <!-- ── SignalK charts ────────────────────────────────────────────── -->
+        <!-- Loading / error placeholder sits after sorted items -->
         {#if charts.loading}
           <div class="card card--ghost">
             <div class="card-preview card-preview--pulse"></div>
@@ -324,88 +438,6 @@
             <div class="card-preview"></div>
             <div class="card-label">Error: {charts.error}</div>
           </div>
-        {:else}
-          {#each Object.entries(charts.available) as [id, chart] (id)}
-            {@const styleUrl   = charts.styleUrl(chart)}
-            {@const tileUrl    = charts.tileUrl(chart)}
-
-            {#if styleUrl}
-              <!-- Vector / style-based — one live MapThumb per chart -->
-              <button
-                class="card"
-                class:selected={charts.selected.has(id)}
-                aria-pressed={charts.selected.has(id)}
-                onclick={() => { baseLayers.deselectAll(); charts.toggle(id); }}
-              >
-                <div class="card-preview">
-                  <MapThumb style={styleUrl} bounds={chart.bounds} />
-                </div>
-                <div class="card-label">{chart.name}</div>
-              </button>
-
-            {:else if chart.type === 'WMTS'}
-              <!-- WMTS — one card per visible layer -->
-              {#if charts.wmtsResolving.has(id) && charts.visibleLayers(id).length === 0}
-                <!-- Capabilities still loading -->
-                <div class="card card--ghost">
-                  <div class="card-preview card-preview--pulse"></div>
-                  <div class="card-label">{chart.name}</div>
-                  <div class="card-sub">Loading layers…</div>
-                </div>
-              {:else if charts.visibleLayers(id).length === 0}
-                <!-- Failed or no layers -->
-                <div class="card card--disabled">
-                  <div class="card-preview"></div>
-                  <div class="card-label">{chart.name}</div>
-                  <div class="card-sub">
-                    {charts.wmtsFailed.has(id) ? 'Failed to load' : 'No layers'}
-                  </div>
-                </div>
-              {:else}
-                {#each charts.visibleLayers(id) as layer (layer.id)}
-                  {@const isActive = charts.selected.has(id) && charts.getLayerSel(id) === layer.id}
-                  <button
-                    class="card"
-                    class:selected={isActive}
-                    aria-pressed={isActive}
-                    onclick={() => { clickWmts(id, layer.id, layer.tileUrl); }}
-                  >
-                    <div class="card-preview">
-                      {#if layer.tileUrl}
-                        <MapThumb
-                          style={rasterStyle(layer.tileUrl)}
-                          bounds={chart.bounds}
-                        />
-                      {:else}
-                        <div class="card-preview--pulse" style="width:100%;height:100%"></div>
-                      {/if}
-                    </div>
-                    <div class="card-label">{chart.name}</div>
-                    <div class="card-sub">{layer.title}</div>
-                  </button>
-                {/each}
-              {/if}
-
-            {:else}
-              <!-- Raster tile chart (tilelayer, WMS, pbf …) -->
-              <button
-                class="card"
-                class:selected={charts.selected.has(id)}
-                aria-pressed={charts.selected.has(id)}
-                onclick={() => { baseLayers.deselectAll(); charts.toggle(id); }}
-              >
-                <div class="card-preview">
-                  {#if tileUrl}
-                    <MapThumb
-                      style={rasterStyle(tileUrl)}
-                      bounds={chart.bounds}
-                    />
-                  {/if}
-                </div>
-                <div class="card-label">{chart.name}</div>
-              </button>
-            {/if}
-          {/each}
         {/if}
 
       </div>
