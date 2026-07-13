@@ -2,6 +2,24 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.18.0] - 2026-07-13
+
+### Added
+- Chart picker completely redesigned as a bottom pane with live previews; only one chart active at a time.
+- Layer visibility controls moved into the chart/layer menu.
+- Watercolor base map option.
+- Charts sorted by most recently used.
+- PWA launches in fullscreen mode.
+
+### Changed
+- Measurements and route drawing now start from the context menu (long-press / right-click on the chart) instead of a dedicated toolbar button.
+- Rotation control and compass merged into a single combined control, relocated to the bottom-left alongside the pin control.
+
+### Fixed
+- Touch-to-pan made reliable.
+- Route-point deletion restored on mobile.
+- All other interactions blocked while a measurement or route is being drawn.
+
 ## [0.17.1] - 2026-07-04
 
 ### Fixed
