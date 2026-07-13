@@ -4,7 +4,7 @@
   "description": "Professional sea chart plotting for sailing",
   "start_url": "./",
   "scope": "./",
-  "display": "standalone",
+  "display": "fullscreen",
   "background_color": "#1a1a2e",
   "theme_color": "#1a1a2e",
   "orientation": "any",
