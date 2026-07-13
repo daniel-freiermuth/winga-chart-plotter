@@ -144,7 +144,6 @@
   let _aisAllTracksGen = 0;
   // eslint-disable-next-line svelte/prefer-svelte-reactivity
   const _fetchedAisTrackIds = new Set<string>();
-  let mapBearing  = $state(0);
 
   // When we switch mercator→globe, MapLibre creates a fresh VerticalPerspectiveProjection
   // whose GPU latitude-error correction starts at 0. Over 500 ms the correction converges,
@@ -1121,7 +1120,7 @@
     document.addEventListener('fullscreenchange', onFsChange);
 
     map.on('zoom',   () => { mapZoom    = map?.getZoom()    ?? mapZoom; });
-    map.on('rotate', () => { mapBearing = map?.getBearing() ?? mapBearing; });
+    map.on('rotate', () => { mapView.updateBearing(map?.getBearing() ?? mapView.bearing); });
     // Track user interactions so programmatic easeTo calls don't interrupt gestures.
     map.on('movestart', (e: { originalEvent?: unknown }) => {
       if (e.originalEvent) { _isInteracting = true; _wasUserPan = true; _userHasInteracted = true; rulerPopup = null; }
@@ -1372,7 +1371,7 @@
       });
 
       mapZoom    = m.getZoom();
-      mapBearing = m.getBearing();
+      mapView.updateBearing(m.getBearing());
       // Re-apply the stored projection on every style (re)load.
       // DEFAULT_STYLE hardcodes 'mercator'; setStyle() on chart-source switches
       // also resets it. Without this, new layers render in Mercator while MapLibre
@@ -2879,27 +2878,6 @@
   </div>
 {/if}
 
-<!-- Compass: always visible; clicking cycles rotation mode (N → COG → HDG → BRG → MAN → N).
-     The needle rotates with map bearing so it always points toward true North. -->
-<button
-  class="north-indicator"
-  title="Rotation: {rotateMode.label}"
-  onclick={() => { rotateMode.toggle($vesselState.cog !== null, $vesselState.heading !== null, route.nextPoint !== null); }}
-  aria-label="Rotation mode: {rotateMode.label}"
->
-  <svg width="52" height="52" viewBox="0 0 44 44" aria-hidden="true">
-    <circle cx="22" cy="22" r="21"
-      fill="rgba(0,0,0,0.72)"
-      stroke="rgba(255,255,255,0.18)"
-      stroke-width="1.5"/>
-    <g transform="rotate({-mapBearing}, 22, 22)">
-      <polygon points="22,5 17,23 22,20 27,23" fill="#e53e3e"/>
-      <polygon points="22,39 17,21 22,24 27,21" fill="rgba(200,200,200,0.75)"/>
-    </g>
-    <text x="22" y="15.5" text-anchor="middle" font-size="7" font-family="system-ui,sans-serif"
-      fill="rgba(255,255,255,0.55)" transform="rotate({-mapBearing}, 22, 22)">N</text>
-  </svg>
-</button>
 
 <ZoomSlider map={map} zoom={mapZoom} onZoomIn={zoomIn} onZoomOut={zoomOut} />
 
@@ -2988,23 +2966,6 @@
     .planner-handle-popup-remove:hover { background: #c53030; }
   }
 
-  .north-indicator {
-    position: absolute;
-    bottom: 20px;
-    right: 84px;
-    z-index: 10;
-    background: none;
-    border: none;
-    padding: 0;
-    cursor: pointer;
-    border-radius: 50%;
-    transition: opacity 0.15s ease;
-  }
-  @media (hover: hover) and (pointer: fine) {
-    .north-indicator:hover { opacity: 0.8; }
-    /* circle fill is set inline; darken on hover via brightness filter */
-    .north-indicator:hover svg { filter: brightness(1.25); }
-  }
 
   :global(.ais-popup) {
     font-family: system-ui, sans-serif;

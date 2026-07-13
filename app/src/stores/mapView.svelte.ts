@@ -73,6 +73,8 @@ function createMapViewStore() {
       _bearing = b;
       saveView(c, z, b);
     },
+    /** Called on map `rotate` — updates reactive bearing without persisting (persist happens on moveend). */
+    updateBearing(b: number): void { _bearing = b; },
   };
 }
 

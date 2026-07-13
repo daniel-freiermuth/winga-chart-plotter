@@ -57,33 +57,42 @@ function createRotateModeStore() {
   return {
     get mode() { return mode; },
     get resumeMode() { return resumeMode; },
-    get label() { return LABELS[mode]; },
+    get label()         { return LABELS[mode]; },
+    /** Label shown in the compass SVG center — 'FREE' replaces 'MAN'. */
+    get compassLabel()  { return mode === 'manual' ? 'FREE' : LABELS[mode]; },
 
-    /** Called when the user manually rotates the map (gesture detected). */
-    setManual() {
-      if (mode !== 'manual') {
-        resumeMode = mode;
-        mode = 'manual';
+    /**
+     * Tap action on the compass button.
+     * - Free mode → re-engage last remembered auto mode.
+     * - Auto mode → advance to the next available auto mode (manual not in cycle).
+     */
+    toggle(hasCog: boolean, hasHeading: boolean, hasCourse: boolean) {
+      if (mode === 'manual') {
+        // Tap while free → snap back to last auto mode.
+        mode = resumeMode;
         save(mode, resumeMode);
+        return;
       }
+      // Cycle through available auto modes only.
+      const available = AUTO_MODES.filter(m => isAvailable(m, hasCog, hasHeading, hasCourse));
+      if (available.length === 0) return;
+      const idx = available.indexOf(mode);
+      mode = available[(idx + 1) % available.length]!;
+      save(mode, resumeMode);
     },
 
     /**
-     * Called when the button is clicked.
-     * - If in manual: return to the saved auto mode.
-     * - If in auto: advance to the next available auto mode.
+     * Long-press action on the compass button.
+     * Toggles between free rotation (manual) and the last remembered auto mode.
+     * Orthogonal to position pinning — does not affect followMode.
      */
-    toggle(hasCog: boolean, hasHeading: boolean, hasCourse: boolean) {
-      // Cycle: [available auto modes..., manual] → wraps back to start.
-      const available: RotateMode[] = [
-        ...AUTO_MODES.filter(m => isAvailable(m, hasCog, hasHeading, hasCourse)),
-        'manual',
-      ];
-      const idx = available.indexOf(mode);
-      const next = available[(idx + 1) % available.length]!;
-      // Save auto mode when entering manual so ensureAvailable has a valid fallback.
-      if (next === 'manual') resumeMode = mode as AutoRotateMode;
-      mode = next;
+    toggleLock() {
+      if (mode === 'manual') {
+        mode = resumeMode;
+      } else {
+        resumeMode = mode;
+        mode = 'manual';
+      }
       save(mode, resumeMode);
     },
 

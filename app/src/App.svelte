@@ -446,6 +446,25 @@
   function handleFlyToVessel(): void {
     mapComp?.flyToVessel();
   }
+  let _compassPressTimer: ReturnType<typeof setTimeout> | null = null;
+  let _compassWasLongPress = false;
+
+  function onCompassPointerDown() {
+    _compassWasLongPress = false;
+    _compassPressTimer = setTimeout(() => {
+      _compassWasLongPress = true;
+      _compassPressTimer = null;
+      rotateMode.toggleLock();
+      if ('vibrate' in navigator) navigator.vibrate(30);
+    }, 500);
+  }
+  function onCompassPointerEnd() {
+    if (_compassPressTimer !== null) { clearTimeout(_compassPressTimer); _compassPressTimer = null; }
+  }
+  function onCompassClick() {
+    if (_compassWasLongPress) { _compassWasLongPress = false; return; }
+    rotateMode.toggle($vesselState.cog !== null, $vesselState.heading !== null, route.nextPoint !== null);
+  }
   function handleAddRuler(): void {
     mapComp?.addRuler();
   }
@@ -520,23 +539,6 @@
       title="{mapView.isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}"
       onclick={handleToggleFullscreen}
     ><FaIcon icon={mapView.isFullscreen ? faCompress : faExpand} /></button>
-
-    <div class="map-toolbar-divider"></div>
-
-    <button
-      class="map-btn map-btn--label"
-      class:map-btn--active={rotateMode.mode !== 'manual'}
-      title="Rotation mode: {rotateMode.label}"
-      onclick={() => { rotateMode.toggle($vesselState.cog !== null, $vesselState.heading !== null, route.nextPoint !== null); }}
-    >{rotateMode.label}</button>
-
-    <button
-      class="map-btn"
-      class:map-btn--active={followMode.following}
-      title={followMode.following ? 'Stop following vessel' : 'Follow vessel'}
-      disabled={!followMode.following && !$vesselState.position}
-      onclick={handleFlyToVessel}
-    ><FaIcon icon={faLocationCrosshairs} /></button>
 
     <div class="map-toolbar-divider"></div>
 
@@ -632,13 +634,57 @@
     </button>
   </div>
 
-  <!-- Chart picker FAB — bottom-left, mirroring the MOB button -->
-  <button
-    class="chart-fab"
-    class:chart-fab--open={chartPickerOpen}
-    title="Charts &amp; layers"
-    onclick={handleOpenChartPicker}
-  ><FaIcon icon={faLayerGroup} /></button>
+  <!-- Navigation stack: compass (top) → pin → layers (bottom), bottom-left corner -->
+  <div class="nav-stack">
+    <!-- Compass: tap cycles auto modes, long-press toggles free rotation -->
+    <button
+      class="nav-fab compass-fab"
+      class:compass-fab--free={rotateMode.mode === 'manual'}
+      title={rotateMode.mode === 'manual'
+        ? 'Free rotation — tap to re-engage, hold to lock'
+        : `Rotation: ${rotateMode.label} — tap to cycle, hold for free`}
+      aria-label="Rotation mode: {rotateMode.compassLabel}"
+      onpointerdown={onCompassPointerDown}
+      onpointerup={onCompassPointerEnd}
+      onpointercancel={onCompassPointerEnd}
+      onclick={onCompassClick}
+    >
+      <svg width="52" height="52" viewBox="0 0 44 44" aria-hidden="true">
+        <circle cx="22" cy="22" r="21"
+          fill="rgba(0,0,0,0.72)"
+          stroke={rotateMode.mode === 'manual' ? '#f59e0b' : 'rgba(255,255,255,0.18)'}
+          stroke-width="1.5"/>
+        <!-- Rotating needle always points true North -->
+        <g transform="rotate({-mapView.bearing}, 22, 22)">
+          <polygon points="22,5 17,23 22,20 27,23" fill="#e53e3e"/>
+          <polygon points="22,39 17,21 22,24 27,21" fill="rgba(200,200,200,0.75)"/>
+        </g>
+        <!-- Static mode label drawn on top of needle -->
+        <rect x="5" y="16" width="34" height="12" rx="6" fill="rgba(0,0,0,0.75)"/>
+        <text x="22" y="22" text-anchor="middle" dominant-baseline="middle"
+          font-size="12" font-family="system-ui,sans-serif" font-weight="700"
+          fill={rotateMode.mode === 'manual' ? '#f59e0b' : 'white'}
+        >{rotateMode.compassLabel}</text>
+      </svg>
+    </button>
+
+    <!-- Position pin -->
+    <button
+      class="nav-fab"
+      class:nav-fab--active={followMode.following}
+      title={followMode.following ? 'Stop following vessel' : 'Follow vessel'}
+      disabled={!followMode.following && !$vesselState.position}
+      onclick={handleFlyToVessel}
+    ><FaIcon icon={faLocationCrosshairs} /></button>
+
+    <!-- Chart &amp; layer picker -->
+    <button
+      class="nav-fab"
+      class:nav-fab--open={chartPickerOpen}
+      title="Charts &amp; layers"
+      onclick={handleOpenChartPicker}
+    ><FaIcon icon={faLayerGroup} /></button>
+  </div>
 </div>
 
 <style>
@@ -669,16 +715,10 @@
     .map-btn:hover:not(:disabled)  { background: rgba(40,40,80,0.9); }
   }
   .map-btn:disabled              { opacity: 0.35; cursor: default; }
-  .map-btn--active               { background: rgba(255,255,255,0.9); color: #111827; }
-  @media (hover: hover) and (pointer: fine) {
-    .map-btn--active:hover:not(:disabled) { background: rgba(220,220,240,0.95); }
-  }
   .map-btn--open                 { background: rgba(80,100,140,0.85); border-bottom: 2px solid rgba(150,200,255,0.8); }
   @media (hover: hover) and (pointer: fine) {
     .map-btn--open:hover:not(:disabled)  { background: rgba(90,115,160,0.9); }
   }
-  /* Label-only buttons (rotation mode): fixed width so the toolbar doesn't jump */
-  .map-btn--label                { font-size: 12px; font-weight: 700; letter-spacing: 0.03em; width: 40px; display: flex; align-items: center; justify-content: center; padding-left: 0; padding-right: 0; }
 
   .map-toolbar-divider {
     height: 1px;
@@ -686,16 +726,22 @@
     margin: 2px 0;
   }
 
-  .chart-fab {
+  .nav-stack {
     position: absolute;
     bottom: 20px;
     left: 16px;
     z-index: 10;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .nav-fab {
     width: 52px;
     height: 52px;
     border-radius: 50%;
-    border: none;
-    background: rgba(20, 20, 40, 0.85);
+    border: 1.5px solid rgba(255,255,255,0.18);
+    background: rgba(0,0,0,0.72);
     color: white;
     font-size: 20px;
     cursor: pointer;
@@ -703,17 +749,25 @@
     align-items: center;
     justify-content: center;
     box-shadow: 0 2px 12px rgba(0, 0, 0, 0.45);
-    transition: background 0.15s, transform 0.12s, box-shadow 0.15s;
+    transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
+    padding: 0;
   }
-  .chart-fab--open {
-    background: rgba(76, 201, 240, 0.2);
-    box-shadow: 0 0 0 2px #4cc9f0, 0 2px 12px rgba(0, 0, 0, 0.45);
-  }
+  .nav-fab:disabled              { opacity: 0.35; cursor: default; }
+  .nav-fab--active               { background: rgba(255,255,255,0.9); color: #111827; border-color: rgba(255,255,255,0.9); }
+  .nav-fab--open                 { background: rgba(76,201,240,0.15); box-shadow: 0 0 0 2px #4cc9f0, 0 2px 12px rgba(0,0,0,0.45); }
   @media (hover: hover) and (pointer: fine) {
-    .chart-fab:hover          { background: rgba(40, 40, 90, 0.95); transform: scale(1.06); }
-    .chart-fab--open:hover    { background: rgba(76, 201, 240, 0.3); }
+    .nav-fab:hover:not(:disabled)         { background: rgba(40,40,80,0.9); }
+    .nav-fab--active:hover:not(:disabled) { background: rgba(220,220,240,0.95); }
+    .nav-fab--open:hover                  { background: rgba(76,201,240,0.25); }
   }
-  .chart-fab:active           { transform: scale(0.94); }
+  .nav-fab:active:not(:disabled) { transform: scale(0.94); }
+
+  /* Compass FAB: the SVG renders its own circle; the button wrapper is transparent. */
+  .compass-fab { background: none; border: none; box-shadow: none; padding: 0; }
+  @media (hover: hover) and (pointer: fine) {
+    .compass-fab:hover svg { filter: brightness(1.25); }
+  }
+  .compass-fab:active { transform: scale(0.94); }
 
   .mob-container {
     position: absolute;
