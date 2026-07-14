@@ -53,4 +53,4 @@ all: install build
 
 # Build and publish npm package
 publish: package
-    npm pack && npm publish
+    pnpm pack && pnpm publish --no-git-checks
