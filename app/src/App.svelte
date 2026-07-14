@@ -654,17 +654,16 @@
           fill="rgba(0,0,0,0.72)"
           stroke={rotateMode.mode === 'manual' ? '#f59e0b' : 'rgba(255,255,255,0.18)'}
           stroke-width="1.5"/>
-        <!-- Rotating needle always points true North -->
+        <!-- Rotating needle always points true North; label rotates with it -->
         <g transform="rotate({-mapView.bearing}, 22, 22)">
           <polygon points="22,5 17,23 22,20 27,23" fill="#e53e3e"/>
           <polygon points="22,39 17,21 22,24 27,21" fill="rgba(200,200,200,0.75)"/>
+          <circle cx="22" cy="22" r="6" fill="rgba(0,0,0,0.75)"/>
+          <text x="22" y="22" text-anchor="middle" dominant-baseline="middle"
+            font-size="12" font-family="system-ui,sans-serif" font-weight="700"
+            fill={rotateMode.mode === 'manual' ? '#f59e0b' : 'white'}
+          >{rotateMode.compassLabel}</text>
         </g>
-        <!-- Static mode label drawn on top of needle -->
-        <rect x="5" y="16" width="34" height="12" rx="6" fill="rgba(0,0,0,0.75)"/>
-        <text x="22" y="22" text-anchor="middle" dominant-baseline="middle"
-          font-size="12" font-family="system-ui,sans-serif" font-weight="700"
-          fill={rotateMode.mode === 'manual' ? '#f59e0b' : 'white'}
-        >{rotateMode.compassLabel}</text>
       </svg>
     </button>
 
