@@ -3,7 +3,7 @@
   import { cubicOut } from 'svelte/easing';
   import { charts, type Chart, type WmtsLayerInfo } from '../stores/charts.svelte';
   import { baseLayers, BASE_LAYERS, type BaseLayer } from '../stores/baseLayers.svelte';
-  import MapThumb from './MapThumb.svelte';
+  import LazyMapThumb from './LazyMapThumb.svelte';
   import { visibility, type VisibilityState } from '../stores/visibility.svelte';
   import { chartLru } from '../stores/chartLru.svelte';
   import { mapView } from '../stores/mapView.svelte';
@@ -140,9 +140,9 @@
   // Stable object cache keyed by tile URL.  SvelteSet fires coarsely, so any
   // chart selection change re-evaluates every {#each} item body, which would
   // call rasterStyle() again and produce a new object reference — enough to
-  // re-run MapThumb's fetch $effect and recreate the MapLibre instance.
+  // re-run LazyMapThumb → MapThumb's fetch $effect and recreate the MapLibre instance.
   // Returning the same reference for the same URL short-circuits Svelte's prop
-  // diffing so MapThumb never sees a "changed" style prop.
+  // diffing so the inner MapThumb never sees a "changed" style prop.
   // Intentionally plain Map (not SvelteMap): mutating reactive state inside a template expression
   // causes state_unsafe_mutation. This cache is pure memoization — it must not be reactive.
   // eslint-disable-next-line svelte/prefer-svelte-reactivity
@@ -351,7 +351,7 @@
               onclick={() => { charts.deselectAll(); baseLayers.toggle(item.id); }}
             >
               <div class="card-preview">
-                <MapThumb style={rasterStyle(item.layer.tileUrl)} />
+                <LazyMapThumb style={rasterStyle(item.layer.tileUrl)} />
               </div>
               <div class="card-label">{item.layer.name}</div>
             </button>
@@ -368,7 +368,7 @@
                 onclick={() => { baseLayers.deselectAll(); charts.toggle(item.id); }}
               >
                 <div class="card-preview">
-                  <MapThumb style={styleUrl} bounds={item.chart.bounds} />
+                  <LazyMapThumb style={styleUrl} bounds={item.chart.bounds} />
                 </div>
                 <div class="card-label">{item.chart.name}</div>
               </button>
@@ -382,7 +382,7 @@
               >
                 <div class="card-preview">
                   {#if tileUrl}
-                    <MapThumb style={rasterStyle(tileUrl)} bounds={item.chart.bounds} />
+                    <LazyMapThumb style={rasterStyle(tileUrl)} bounds={item.chart.bounds} />
                   {/if}
                 </div>
                 <div class="card-label">{item.chart.name}</div>
@@ -399,7 +399,7 @@
             >
               <div class="card-preview">
                 {#if item.wmtsLayer.tileUrl}
-                  <MapThumb style={rasterStyle(item.wmtsLayer.tileUrl)} bounds={item.chart.bounds} />
+                  <LazyMapThumb style={rasterStyle(item.wmtsLayer.tileUrl)} bounds={item.chart.bounds} />
                 {:else}
                   <div class="card-preview--pulse" style="width:100%;height:100%"></div>
                 {/if}
