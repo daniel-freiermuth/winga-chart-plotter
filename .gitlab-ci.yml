@@ -1,0 +1,173 @@
+# .gitlab-ci.yml
+#
+# Pipeline for signalk-chart-rs
+#
+# Stages:
+#   check  — cargo fmt, clippy, svelte-check, eslint, cargo test (parallel)
+#   build  — wasm-pack + Vite production bundle
+#   deploy — GitLab Pages:
+#              default branch → root URL  (production)
+#              MR pipelines   → /mr-<IID>/ (preview, auto-deleted on MR close/merge)
+#
+# Preview URL: https://<namespace>.gitlab.io/<project>/mr-<IID>/
+#
+# The Vite build uses base:'./' (relative asset paths), making the bundle
+# subpath-agnostic — no rebuild or config change is needed for preview paths.
+#
+# pages.path_prefix uses GitLab Parallel Deployments (GitLab ≥17.4).
+# The CI/CD mechanism works on all tiers; the management UI requires Premium.
+
+stages:
+  - check
+  - build
+  - deploy
+
+variables:
+  # Pin Cargo home inside the project so GitLab CI can cache it under .cargo/
+  CARGO_HOME: "$CI_PROJECT_DIR/.cargo"
+  # Incremental compilation is counterproductive in CI — each job starts clean.
+  CARGO_INCREMENTAL: "0"
+
+# ---------------------------------------------------------------------------
+# Job templates
+# ---------------------------------------------------------------------------
+
+# Rust only (cargo fmt, clippy, cargo test)
+.rust-setup:
+  image: rust:latest
+  before_script:
+    - rustup component add rustfmt clippy
+    - rustup target add wasm32-unknown-unknown
+
+# Rust + Node.js (lint also runs svelte-check and eslint)
+.rust-node-setup:
+  image: rust:latest
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq ca-certificates curl gnupg
+    - curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+    - apt-get install -y -qq nodejs
+    - rustup component add rustfmt clippy
+    - rustup target add wasm32-unknown-unknown
+
+# Rust + Node.js + wasm-pack (lint and build)
+# Guard the install: when .cargo/bin/ is restored from cache, cargo install fails
+# with "already exists" because .crates.toml is not cached.  Checking for the
+# binary directly avoids the collision and keeps the cache hit fast.
+.rust-node-wasm-setup:
+  image: rust:latest
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq ca-certificates curl gnupg
+    - curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+    - apt-get install -y -qq nodejs
+    - rustup component add rustfmt clippy
+    - rustup target add wasm32-unknown-unknown
+    - |
+      if [ ! -x "$CARGO_HOME/bin/wasm-pack" ]; then
+        cargo install wasm-pack
+      fi
+    - export PATH="$CARGO_HOME/bin:$PATH"
+
+# ---------------------------------------------------------------------------
+# Stage: check — runs lint and tests in parallel
+# ---------------------------------------------------------------------------
+
+lint:
+  extends: .rust-node-wasm-setup
+  stage: check
+  cache:
+    - key:
+        files: [Cargo.lock]
+      paths: [.cargo/registry/, .cargo/git/, .cargo/bin/, target/]
+    - key:
+        files: [app/package-lock.json]
+      paths: [app/node_modules/]
+  script:
+    - cargo fmt --check
+    - cargo clippy --all-targets --all-features -- -D warnings
+    # Build WASM with dev profile — same JS/TS bindings as release, but faster.
+    # svelte-check needs the generated app/src/wasm/ files to resolve imports.
+    - wasm-pack build crates/core --target web --dev --out-dir ../../app/src/wasm
+    - (cd app && npm ci --prefer-offline)
+    - (cd app && npx svelte-check --tsconfig tsconfig.json)
+    - (cd app && npx eslint src)
+
+test:
+  extends: .rust-setup
+  stage: check
+  cache:
+    key:
+      files: [Cargo.lock]
+    paths: [.cargo/registry/, .cargo/git/, target/]
+  script:
+    - cargo test
+
+# ---------------------------------------------------------------------------
+# Stage: build
+# ---------------------------------------------------------------------------
+
+build:
+  extends: .rust-node-wasm-setup
+  stage: build
+  cache:
+    - key:
+        files: [Cargo.lock]
+      paths:
+        - .cargo/registry/
+        - .cargo/git/
+        - .cargo/bin/      # caches the wasm-pack binary for subsequent runs
+        - target/
+    - key:
+        files: [app/package-lock.json]
+      paths: [app/node_modules/]
+  script:
+    - (cd app && npm ci --prefer-offline)
+    # Compile Rust core to WebAssembly
+    # --out-dir is relative to the crate (crates/core), so ../../app/src/wasm resolves correctly
+    - wasm-pack build crates/core --target web --out-dir ../../app/src/wasm
+    # Bundle Svelte + TypeScript frontend
+    - (cd app && npm run build)
+  artifacts:
+    name: "dist-$CI_COMMIT_REF_SLUG"
+    paths: [app/dist/]
+    expire_in: 1 week
+
+# ---------------------------------------------------------------------------
+# Stage: deploy — GitLab Pages
+# ---------------------------------------------------------------------------
+
+# Production: default branch → root Pages URL
+# https://<namespace>.gitlab.io/<project>/
+pages-production:
+  stage: deploy
+  image: alpine:latest
+  needs: [build]
+  before_script: []
+  script:
+    - mv app/dist public
+  pages:
+    publish: public
+  environment:
+    name: production
+    url: $CI_PAGES_URL
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+# MR preview: parallel Pages deployment scoped to /mr-<IID>/
+# https://<namespace>.gitlab.io/<project>/mr-<IID>/
+# GitLab auto-deletes this deployment when the MR is closed or merged.
+pages-mr-preview:
+  stage: deploy
+  image: alpine:latest
+  needs: [build]
+  before_script: []
+  script:
+    - mv app/dist public
+  pages:
+    publish: public
+    path_prefix: "mr-$CI_MERGE_REQUEST_IID"
+    expire_in: 1 week
+  environment:
+    name: "preview/mr-$CI_MERGE_REQUEST_IID"
+    url: $CI_PAGES_URL
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
