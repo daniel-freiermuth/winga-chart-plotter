@@ -37,7 +37,13 @@
   import { buildOwnVesselLayers, buildCourseLayers } from '../lib/vesselLayers';
   import ZoomSlider from './ZoomSlider.svelte';
 
-  const { openSettings = () => { /* noop */ } }: { openSettings?: (tab: SettingsTab) => void } = $props();
+  const {
+    openSettings = () => { /* noop */ },
+    onMapClick   = () => { /* noop */ },
+  }: {
+    openSettings?: (tab: SettingsTab) => void;
+    onMapClick?:   () => void;
+  } = $props();
 
   const DEFAULT_STYLE: maplibregl.StyleSpecification = {
     version: 8,
@@ -1207,6 +1213,7 @@
     // a closeOnClick handler registered inside this callback only fires on the next click.
     map.on('click', (e) => {
       if (!overlay || gesturePhase.phase === 'dragging') return;
+      onMapClick();
       const { x, y } = e.point;
       const rect = mapContainer.getBoundingClientRect();
       if (movingWaypoint) {

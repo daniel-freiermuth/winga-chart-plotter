@@ -466,6 +466,7 @@
     rotateMode.toggle($vesselState.cog !== null, $vesselState.heading !== null, route.nextPoint !== null);
   }
   function handleAddRuler(): void {
+    chartPickerOpen = false;
     mapComp?.addRuler();
   }
   function handleToggleProjection(): void {
@@ -495,7 +496,7 @@
 </script>
 
 <div style="position: relative; width: 100%; height: 100%;">
-  <Map bind:this={mapComp} openSettings={handleOpenSettings} />
+  <Map bind:this={mapComp} openSettings={handleOpenSettings} onMapClick={() => { chartPickerOpen = false; }} />
   <Settings bind:this={settingsComp} />
   <ChartPicker bind:this={chartPickerComp} bind:isOpen={chartPickerOpen} onToggleProjection={handleToggleProjection} />
   {#each plotterExtensions.layout as placement (placement.instanceId)}
