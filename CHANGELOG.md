@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.18.1] - 2026-07-15
+
+### Added
+- Chart picker closes when clicking anywhere on the main map.
+- Chart previews load lazily — faster initial chart picker open.
+- Compass button visual polish.
+
 ## [0.18.0] - 2026-07-13
 
 ### Added
