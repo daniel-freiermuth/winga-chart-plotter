@@ -3,6 +3,7 @@ import ts from 'typescript-eslint';
 import svelte from 'eslint-plugin-svelte';
 import svelteParser from 'svelte-eslint-parser';
 import globals from 'globals';
+import importX from 'eslint-plugin-import-x';
 
 export default ts.config(
   js.configs.recommended,
@@ -54,6 +55,16 @@ export default ts.config(
         argsIgnorePattern: '^_',
         varsIgnorePattern: '^_',
         caughtErrorsIgnorePattern: '^_',
+      }],
+    },
+  },
+  {
+    // Catch imports of packages not declared in package.json.
+    // devDependencies are allowed only in config files (eslint, vite, svelte).
+    plugins: { 'import-x': importX },
+    rules: {
+      'import-x/no-extraneous-dependencies': ['error', {
+        devDependencies: ['**/*.config.js', '**/*.config.ts'],
       }],
     },
   },
