@@ -55,6 +55,8 @@ export interface WidgetPlacement {
   widgetId: string;
   x: number;            // left offset from map container
   y: number;            // top offset from map container
+  w?: number;           // per-instance pixel override (undefined → use WidgetDef.size)
+  h?: number;
 }
 
 export interface OpenPanelState {
@@ -134,6 +136,8 @@ export interface PlotterExtensions {
   addWidget(extensionId: string, widgetId: string): string;
   /** Update persisted position after a drag. */
   moveWidget(instanceId: string, x: number, y: number): void;
+  /** Update persisted pixel size after a resize. */
+  resizeWidget(instanceId: string, w: number, h: number): void;
   removeWidget(instanceId: string): void;
 
   openPanelFor(state: OpenPanelState): void;
@@ -203,6 +207,11 @@ function createPlotterExtensions(): PlotterExtensions {
 
   function moveWidget(instanceId: string, x: number, y: number): void {
     layout = layout.map((p) => p.instanceId === instanceId ? { ...p, x, y } : p);
+    saveLayout(layout);
+  }
+
+  function resizeWidget(instanceId: string, w: number, h: number): void {
+    layout = layout.map((p) => p.instanceId === instanceId ? { ...p, w, h } : p);
     saveLayout(layout);
   }
 
@@ -299,6 +308,7 @@ function createPlotterExtensions(): PlotterExtensions {
     load,
     addWidget,
     moveWidget,
+    resizeWidget,
     removeWidget,
     openPanelFor,
     closePanelFor,
