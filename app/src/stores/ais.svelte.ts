@@ -20,12 +20,22 @@ export const AIS_F_AGE = 6; // seconds elapsed since last position update at upl
 // Cold data — strings and REST-enriched vessel metadata
 // ---------------------------------------------------------------------------
 
+/** CPA data published by a Signal K plugin under `navigation.closestApproach`. */
+export interface SkClosestApproach {
+  /** Closest point of approach distance, metres. */
+  distanceM: number;
+  /** Time to closest point of approach, seconds. */
+  timeToS: number;
+}
+
 /** Persistent cold metadata for an AIS vessel, keyed by vessel id in `coldMap`. */
 export interface AisColdData {
   id: string;
   // From AIS stream (SignalK):
   name?: string | undefined;
   mmsi?: string | undefined;
+  /** CPA/TCPA published by a SK plugin (e.g. signalk-derived-data). Optional — absent when no plugin is running. */
+  skCpa?: SkClosestApproach | undefined;
   // From REST API (fetchVesselInfo):
   shipType?: string | undefined;
   navState?: string | undefined;
@@ -39,6 +49,13 @@ export interface AisColdData {
   draftM?: number | undefined;
   airHeightM?: number | undefined;
 }
+
+// ---------------------------------------------------------------------------
+// Selection state
+// ---------------------------------------------------------------------------
+
+/** Two-step AIS vessel selection: first click highlights, second opens popup. */
+export type AisSelectionPhase = 'highlighted' | 'popup';
 
 // ---------------------------------------------------------------------------
 // On-demand target reconstruction (used only for picking / popup display)
@@ -86,7 +103,10 @@ function createAisStore() {
    * Effects that read coldMap should also read coldVersion to register the dependency.
    */
   let coldVersion = $state(0);
-
+  /** ID of the currently selected vessel (null = none). */
+  let selectedId = $state<string | null>(null);
+  /** Selection phase: 'highlighted' on first click, 'popup' on second. */
+  let selectionPhase = $state<AisSelectionPhase | null>(null);
   return {
     get hotData(): Float64Array | null { return hotData; },
     get ids(): string[] { return ids; },
@@ -102,7 +122,7 @@ function createAisStore() {
     updateBinary(
       hot: ArrayBuffer,
       newIds: string[],
-      cold: { id: string; name?: string; mmsi?: string }[],
+      cold: { id: string; name?: string; mmsi?: string; skCpa?: SkClosestApproach }[],
     ) {
       hotData = new Float64Array(hot);
       ids = newIds;
@@ -111,8 +131,9 @@ function createAisStore() {
         coldMap.set(c.id, {
           ...existing,
           id: c.id,
-          name: c.name ?? existing?.name,
-          mmsi: c.mmsi ?? existing?.mmsi,
+          name:  c.name  ?? existing?.name,
+          mmsi:  c.mmsi  ?? existing?.mmsi,
+          skCpa: c.skCpa ?? existing?.skCpa,
         });
       }
     },
@@ -141,6 +162,32 @@ function createAisStore() {
         });
       }
       coldVersion++;
+    },
+
+    // -----------------------------------------------------------------------
+    // Selection state
+    // -----------------------------------------------------------------------
+
+    /** Highlight a vessel on first click. */
+    highlight(id: string) { selectedId = id; selectionPhase = 'highlighted'; },
+
+    /** Elevate highlighted vessel to popup state on second click. */
+    elevateToPopup() { if (selectedId) selectionPhase = 'popup'; },
+
+    /** Clear selection, track, and CPA overlays. */
+    clear() { selectedId = null; selectionPhase = null; },
+
+    get selectedId(): string | null { return selectedId; },
+    get selectionPhase(): AisSelectionPhase | null { return selectionPhase; },
+
+    /**
+     * Index of the selected vessel in the current `ids` array, or null.
+     * Recalculated on every read — cheap O(n) scan, called at most a few times per frame.
+     */
+    get selectedIndex(): number | null {
+      if (!selectedId) return null;
+      const idx = ids.indexOf(selectedId);
+      return idx >= 0 ? idx : null;
     },
 
     /**

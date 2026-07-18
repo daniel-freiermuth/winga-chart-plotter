@@ -138,6 +138,8 @@ pub struct AisTarget {
     pub heading: Option<f64>, // rad true
     pub rot: Option<f64>,     // rad/s, + = turning right
     pub stw: Option<f64>,     // speed through water, m/s
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sk_cpa: Option<SkClosestApproach>,
     /// Epoch ms of the last received position update (wall-clock time on receive).
     pub last_position_update_ms: f64,
 }
@@ -155,6 +157,22 @@ pub struct AisColdData {
     pub name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mmsi: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sk_cpa: Option<SkClosestApproach>,
+}
+
+/// CPA data published by a Signal K plugin (e.g. `signalk-derived-data`,
+/// `signalk-ais-target-prioritizer`) on `navigation.closestApproach`.
+/// Only the two SK-spec-canonical fields are captured; plugin-specific
+/// extensions (collisionRiskRating, collisionAlarmState, etc.) are ignored.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkClosestApproach {
+    /// Closest point of approach distance, metres.
+    #[serde(rename = "distanceM")]
+    pub distance_m: f64,
+    /// Time to closest point of approach, seconds.
+    #[serde(rename = "timeToS")]
+    pub time_to_s: f64,
 }
 
 /// Stride of the typed array produced by [`extract_ais_binary`]: 7 `f64` values per vessel.
@@ -180,6 +198,7 @@ struct Navigation {
     /// Parsed eagerly on receipt so AIS staleness checks never re-parse the string.
     datetime_ms: Option<f64>,
     course: Option<CourseState>,
+    closest_approach: Option<SkClosestApproach>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -264,6 +283,7 @@ enum LeafKind {
     CourseNextPoint,
     CoursePreviousPoint,
     CourseActiveRoute,
+    ClosestApproach,
 }
 
 static LEAF_DISPATCH: phf::Map<&'static str, LeafKind> = phf::phf_map! {
@@ -282,6 +302,7 @@ static LEAF_DISPATCH: phf::Map<&'static str, LeafKind> = phf::phf_map! {
     // Whole-object delivery — SK sends this when subscribed to the parent
     // `navigation.course` and any sub-field changes.
     "navigation.course"              => LeafKind::Course,
+    "navigation.closestApproach" => LeafKind::ClosestApproach,
 };
 
 /// Extracts a string from a Signal K string-leaf value, which may arrive as
@@ -427,6 +448,25 @@ fn apply_leaf(vessel: &mut Vessel, path: &str, value: &Json, source: Option<&str
                     .course
                     .get_or_insert_with(CourseState::default)
                     .active_route = Some(route);
+            }
+        }
+        LeafKind::ClosestApproach => {
+            if value.is_null() {
+                vessel.nav.closest_approach = None;
+            } else {
+                // SK sends the leaf as a bare object {distance, timeTo} or null.
+                // The `signalk-ais-target-prioritizer` plugin adds extra fields
+                // (collisionRiskRating etc.) which we safely ignore.
+                let dist = value.get("distance").and_then(Json::as_f64);
+                let time_to = value.get("timeTo").and_then(Json::as_f64);
+                if let (Some(d), Some(t)) = (dist, time_to) {
+                    if d.is_finite() && t.is_finite() {
+                        vessel.nav.closest_approach = Some(SkClosestApproach {
+                            distance_m: d,
+                            time_to_s: t,
+                        });
+                    }
+                }
             }
         }
     }
@@ -628,6 +668,7 @@ pub fn extract_ais_targets(storage: &Storage, now_ms: f64, stale_ms: f64) -> Vec
                 heading,
                 rot: vessel.nav.rate_of_turn.filter(|v| v.is_finite()),
                 stw: vessel.nav.speed_through_water.filter(|v| v.is_finite()),
+                sk_cpa: vessel.nav.closest_approach.clone(),
                 last_position_update_ms: last_ms,
             })
         })
@@ -680,6 +721,7 @@ pub fn extract_ais_binary(
             id: t.id.clone(),
             name: t.name,
             mmsi: t.mmsi,
+            sk_cpa: t.sk_cpa.clone(),
         });
         ids.push(t.id);
     }
@@ -1153,5 +1195,36 @@ mod tests {
         assert_eq!(route.href, "/resources/routes/y");
         assert_eq!(route.point_index, 1);
         assert!(route.reverse);
+    }
+
+    #[test]
+    fn test_closest_approach_leaf() {
+        let mut storage = Storage::default();
+        storage.set_self("vessels.urn:mrn:signalk:uuid:self");
+        // Simulate an AIS vessel delta with navigation.closestApproach;
+        // plugin adds extra fields (collisionRiskRating) which must be ignored.
+        let delta = r#"{"context":"vessels.urn:mrn:imo:mmsi:123456789","updates":[{"$source":"sk-derived","values":[{"path":"navigation.position","value":{"latitude":60.1,"longitude":24.9}},{"path":"navigation.datetime","value":"2024-01-01T12:00:00.000Z"},{"path":"navigation.closestApproach","value":{"distance":500.0,"timeTo":300.0,"collisionRiskRating":0.85}}]}]}"#;
+        apply_message(&mut storage, delta).unwrap();
+        let targets = extract_ais_targets(&storage, 1704110400000.0 + 1000.0, 600_000.0);
+        assert_eq!(targets.len(), 1);
+        let sk_cpa = targets[0].sk_cpa.as_ref().expect("sk_cpa should be set");
+        assert_eq!(sk_cpa.distance_m, 500.0);
+        assert_eq!(sk_cpa.time_to_s, 300.0);
+    }
+
+    #[test]
+    fn test_closest_approach_null_clears() {
+        let mut storage = Storage::default();
+        storage.set_self("vessels.urn:mrn:signalk:uuid:self");
+        let delta1 = r#"{"context":"vessels.urn:mrn:imo:mmsi:111111111","updates":[{"$source":"x","values":[{"path":"navigation.position","value":{"latitude":60.0,"longitude":25.0}},{"path":"navigation.datetime","value":"2024-01-01T12:00:00.000Z"},{"path":"navigation.closestApproach","value":{"distance":800.0,"timeTo":120.0}}]}]}"#;
+        apply_message(&mut storage, delta1).unwrap();
+        let delta2 = r#"{"context":"vessels.urn:mrn:imo:mmsi:111111111","updates":[{"$source":"x","values":[{"path":"navigation.closestApproach","value":null}]}]}"#;
+        apply_message(&mut storage, delta2).unwrap();
+        let targets = extract_ais_targets(&storage, 1704110400000.0 + 1000.0, 600_000.0);
+        assert_eq!(targets.len(), 1);
+        assert!(
+            targets[0].sk_cpa.is_none(),
+            "null delta should clear sk_cpa"
+        );
     }
 }

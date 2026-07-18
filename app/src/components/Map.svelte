@@ -34,6 +34,8 @@
   import { buildTrackGradient, processTrack, processRouteCoords, splitRouteSegments } from '../lib/trackProcessing';
   import { hexToRgba, dashArray } from '../lib/mapStyles';
   import { buildAisLayers } from '../lib/aisLayerBuilder';
+  import { buildCpaLayers, formatCpaLabel, type SkCpaInput } from '../lib/aisCpaLayer';
+  import { computeCpa } from '../lib/wasmGeo';
   import { buildOwnVesselLayers, buildCourseLayers } from '../lib/vesselLayers';
   import ZoomSlider from './ZoomSlider.svelte';
 
@@ -150,6 +152,10 @@
   let _aisAllTracksGen = 0;
   // eslint-disable-next-line svelte/prefer-svelte-reactivity
   const _fetchedAisTrackIds = new Set<string>();
+  // CPA visualization deck.gl layers (projection lines, ghost dots).
+  let cpaLayerGroup: Layer[] = [];
+  // MapLibre mini-label popup near the selected vessel showing CPA/TCPA.
+  let cpaLabelPopup: maplibregl.Popup | null = null;
 
   // When we switch mercator→globe, MapLibre creates a fresh VerticalPerspectiveProjection
   // whose GPU latitude-error correction starts at 0. Over 500 ms the correction converges,
@@ -581,6 +587,8 @@
         rulerPopup = null;
         plannerHandlePopup = null;
         activePopup?.remove();
+        // Clear AIS selection whenever the user taps anything that isn't an AIS vessel.
+        if (g.target.kind !== 'ais-vessel' && g.target.kind !== 'ais-vessels-ambig') ais.clear();
         g.target.onTap(g.lngLat, g.clientX, g.clientY);
         return;
       case 'long-press':
@@ -742,7 +750,7 @@
     const aisFiltered = (showVessels && showPredictors)
       ? aisLayerGroup
       : aisLayerGroup.filter(l => (l instanceof PathLayer ? (showVessels && showPredictors) : showVessels));
-    overlay?.setProps({ layers: [...aisFiltered, ...courseLayerGroup, ...plannerLayerGroup, ...ownVesselLayerGroup, ...rulerLayerGroup] });
+    overlay?.setProps({ layers: [...aisFiltered, ...cpaLayerGroup, ...courseLayerGroup, ...plannerLayerGroup, ...ownVesselLayerGroup, ...rulerLayerGroup] });
   }
 
   let rafId = 0;
@@ -1228,6 +1236,7 @@
       const target = hit(x, y);
       if (!target) {
         activePopup?.remove();
+        ais.clear();
         if (routePlanner.active) routePlanner.addWaypoint(e.lngLat.lng, e.lngLat.lat);
         return;
       }
@@ -1514,19 +1523,43 @@
         : `${String(Math.floor(ageSec / 3600))}h ${String(Math.floor((ageSec % 3600) / 60))}m ago`;
   }
 
-  function handleAisClick(t: AisTarget): boolean {
-    if (!map) return false;
-
-    if (aisAgeTimer !== null) {
-      clearInterval(aisAgeTimer);
-      aisAgeTimer = null;
+  function handleAisClick(t: AisTarget): void {
+    if (!map) return;
+    if (ais.selectedId === t.id && ais.selectionPhase === 'highlighted') {
+      // Second click on the same vessel → elevate to popup.
+      ais.elevateToPopup();
+      openAisPopup(t);
+      return;
     }
+    // First click (new vessel or re-clicking a popup vessel) → highlight only.
+    // Cancel any in-flight track fetch and clear existing track.
+    _aisTrackGen++;
+    aisTrackRaw = [];
+    if (aisAgeTimer !== null) { clearInterval(aisAgeTimer); aisAgeTimer = null; }
+    ais.highlight(t.id);
+    // Fetch position history; shown while vessel is highlighted or in popup.
+    const gen = ++_aisTrackGen;
+    const historyHours = settings.appearance.ais.track.historyHours;
+    fetchAisVesselTrack(settings.signalkHttpUrl, t.id, historyHours).then(coords => {
+      if (gen !== _aisTrackGen) return;
+      // Append live position so track reaches the vessel icon.
+      const livePt: [number, number] = [t.position.longitude, t.position.latitude];
+      const last = coords[coords.length - 1];
+      const dx = last ? last[0] - livePt[0] : Infinity;
+      const dy = last ? last[1] - livePt[1] : Infinity;
+      // ~5 m threshold (matches server-side dedup).
+      aisTrackRaw = (last && dx * dx + dy * dy < 2.02e-9) ? coords : [...coords, livePt];
+    }).catch(() => { /* server may not have history — silently skip */ });
+  }
 
+  /** Open the detail popup for an already-selected (highlighted) vessel. */
+  function openAisPopup(t: AisTarget): void {
+    if (!map) return;
+    if (aisAgeTimer !== null) { clearInterval(aisAgeTimer); aisAgeTimer = null; }
     const popup = openPopup(new maplibregl.Popup({ closeButton: true, maxWidth: 'none' })
       .setLngLat([t.position.longitude, t.position.latitude])
       .setHTML(buildAisPopupHtml(t))
-      ).addTo(map);
-
+    ).addTo(map);
     const timerId = setInterval(() => {
       const el = document.getElementById('ais-age');
       if (!el) { clearInterval(timerId); aisAgeTimer = null; return; }
@@ -1534,31 +1567,10 @@
       el.textContent = `(${formatAge(posMs)})`;
     }, 1000);
     aisAgeTimer = timerId;
-
-    // Fetch and display this vessel's position history.
-    aisTrackRaw = [];
-    const gen = ++_aisTrackGen;
-    const historyHours = settings.appearance.ais.track.historyHours;
-    const serverBase = settings.signalkHttpUrl;
-    fetchAisVesselTrack(serverBase, t.id, historyHours).then(coords => {
-      if (gen !== _aisTrackGen) return;
-      // Append the current live position so the track reaches the vessel icon.
-      // The history API lags behind the live AIS stream by seconds to minutes.
-      const livePt: [number, number] = [t.position.longitude, t.position.latitude];
-      const last = coords[coords.length - 1];
-      const dx = last ? last[0] - livePt[0] : Infinity;
-      const dy = last ? last[1] - livePt[1] : Infinity;
-      // ~5 m threshold (matches server-side dedup); skip if history already ends at live pos.
-      aisTrackRaw = (last && dx * dx + dy * dy < 2.02e-9) ? coords : [...coords, livePt];
-    }).catch(() => { /* server may not have history for this vessel — silently skip */ });
-
     popup.on('close', () => {
       if (aisAgeTimer !== null) { clearInterval(aisAgeTimer); aisAgeTimer = null; }
-      // Cancel any in-flight fetch and clear the track display.
-      _aisTrackGen++;
-      aisTrackRaw = [];
+      ais.clear(); // triggers reactive cleanup of track + CPA label + layers
     });
-
     popup.getElement().addEventListener('click', (ev) => {
       const el = ev.target as HTMLElement;
       const settingsBtn = el.closest<HTMLElement>('[data-settings]');
@@ -1578,8 +1590,6 @@
         else routePlanner.enterAt(rlon, rlat);
       }
     });
-
-    return true;
   }
 
   function openDisambigPopup(coordinate: [number, number], indices: number[]) {
@@ -2163,8 +2173,92 @@
     aisIdsSnapshot = ids;
     if (hotDataChanged) aisUploadTimestamp = now;
 
-    aisLayerGroup = buildAisLayers(hotData, ids, coldMap, settings.appearance.ais, uploadTs, settings.targetFps);
+    aisLayerGroup = buildAisLayers(hotData, ids, coldMap, settings.appearance.ais, uploadTs, settings.targetFps, ais.selectedIndex);
     flushLayers();
+  });
+
+  // Clean up track, CPA label, and age timer when the AIS selection is cleared.
+  $effect(() => {
+    if (ais.selectionPhase !== null) return;
+    _aisTrackGen++;
+    aisTrackRaw = [];
+    cpaLabelPopup?.remove();
+    cpaLabelPopup = null;
+    cpaLayerGroup = [];
+    flushLayers();
+    if (aisAgeTimer !== null) { clearInterval(aisAgeTimer); aisAgeTimer = null; }
+  });
+
+  // Recompute Rust CPA and rebuild CPA visualization whenever selection or AIS data changes.
+  // Own vessel state is read untracked to avoid rerunning at 60 Hz on heading ticks.
+  $effect(() => {
+    const selId  = ais.selectedId;
+    const selIdx = ais.selectedIndex;
+    const hotData = ais.hotData;
+
+    if (!selId || selIdx === null || !hotData || !map || !mapLoaded) {
+      cpaLayerGroup = [];
+      flushLayers();
+      return;
+    }
+
+    const S  = AIS_HOT_STRIDE;
+    const b  = selIdx * S;
+    const tgtLon = hotData[b + AIS_F_LON]!;
+    const tgtLat = hotData[b + AIS_F_LAT]!;
+    const tgtCog = hotData[b + AIS_F_COG]!;
+    const tgtSog = hotData[b + AIS_F_SOG]!;
+    const tgtRot = hotData[b + AIS_F_ROT]!;
+
+    const vs     = untrack(() => get(vesselState));
+    const ownPos = vs.position;
+    const ownCog = vs.cog;
+    const ownSog = vs.sog;
+
+    if (!ownPos || ownCog === null || ownSog === null) {
+      cpaLayerGroup = [];
+      flushLayers();
+      return;
+    }
+
+    const rustCpa = computeCpa(
+      ownPos.longitude, ownPos.latitude, ownCog, ownSog,
+      isNaN(tgtLon) ? NaN : tgtLon, isNaN(tgtLat) ? NaN : tgtLat,
+      isNaN(tgtCog) ? NaN : tgtCog, isNaN(tgtSog) ? NaN : tgtSog,
+      isNaN(tgtRot) ? 0 : tgtRot,
+    );
+
+    if (!rustCpa) { cpaLayerGroup = []; flushLayers(); return; }
+
+    // SK CPA from delta stream (present only when a compatible SK plugin is running).
+    const skCpaRaw = ais.coldMap.get(selId)?.skCpa ?? null;
+    const skCpa: SkCpaInput | null = skCpaRaw
+      ? { distanceM: skCpaRaw.distanceM, timeToS: skCpaRaw.timeToS }
+      : null;
+
+    cpaLayerGroup = buildCpaLayers(
+      ownPos.longitude, ownPos.latitude, ownCog, ownSog,
+      tgtLon, tgtLat, isNaN(tgtCog) ? NaN : tgtCog, isNaN(tgtSog) ? NaN : tgtSog, isNaN(tgtRot) ? 0 : tgtRot,
+      rustCpa, skCpa,
+    );
+    flushLayers();
+
+    // Update or create the mini-label popup near the target vessel.
+    const labelHtml = formatCpaLabel(rustCpa, skCpa);
+    if (!cpaLabelPopup) {
+      cpaLabelPopup = new maplibregl.Popup({
+        closeButton: false,
+        closeOnClick: false,
+        className: 'ais-cpa-label',
+        anchor: 'bottom',
+        offset: 8,
+      })
+      .setLngLat([tgtLon, tgtLat])
+      .setHTML(labelHtml)
+      .addTo(map);
+    } else {
+      cpaLabelPopup.setLngLat([tgtLon, tgtLat]).setHTML(labelHtml);
+    }
   });
 
   // Appearance-only effect: paint/layout properties that change only when settings change.
@@ -2973,6 +3067,23 @@
     .planner-handle-popup-remove:hover { background: #c53030; }
   }
 
+
+  /* CPA mini-label popup — shown near a highlighted AIS vessel */
+  :global(.ais-cpa-label .maplibregl-popup-content) {
+    background: rgba(15, 15, 25, 0.88);
+    border: 1px solid rgba(255, 200, 50, 0.45);
+    border-radius: 4px;
+    padding: 4px 8px;
+    font-family: system-ui, sans-serif;
+    font-size: 11px;
+    line-height: 1.4;
+    pointer-events: none;
+    white-space: nowrap;
+  }
+  :global(.ais-cpa-label .maplibregl-popup-tip) { display: none; }
+  :global(.cpa-value)   { color: #ffc832; font-weight: 600; }
+  :global(.cpa-opening) { color: #9ca3af; }
+  :global(.cpa-sk)      { color: #50c8ff; font-size: 10px; }
 
   :global(.ais-popup) {
     font-family: system-ui, sans-serif;

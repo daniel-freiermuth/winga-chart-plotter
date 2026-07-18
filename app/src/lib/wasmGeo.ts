@@ -15,6 +15,7 @@ import {
   gcBearingDeg as wasmGcBearingDeg,
   gcDistanceNm as wasmGcDistanceNm,
   gcLine as wasmGcLine,
+  gcComputeCpa as wasmGcComputeCpa,
 } from '../wasm/signalk_chart_core.js';
 import { ready as wasmReady } from './wasmInit';
 
@@ -51,4 +52,55 @@ export function gcLine(
 ): [number, number][] {
   if (!ready) return [[lonA, latA], [lonB, latB]];
   return wasmGcLine(lonA, latA, lonB, latB, segments) as [number, number][];
+}
+
+/** CPA result: plain JS object copied out of the WASM struct (no free() needed after this). */
+export interface CpaResult {
+  /** CPA distance in nautical miles. */
+  cpa_nm: number;
+  /**
+   * Minutes to CPA.
+   * Negative  = opening (vessels already diverging; show range only, no ghost).
+   * ≥ 120.0   = capped at 2 h; ghost positions are at the 2 h projected mark.
+   */
+  tcpa_min: number;
+  /** Own vessel's projected longitude at TCPA (or 2 h, or current if opening). */
+  own_lon: number;
+  /** Own vessel's projected latitude at TCPA. */
+  own_lat: number;
+  /** Target's projected longitude at TCPA. */
+  tgt_lon: number;
+  /** Target's projected latitude at TCPA. */
+  tgt_lat: number;
+  /** True when vessels are already diverging (TCPA < 0). */
+  isOpening: boolean;
+  /** True when TCPA > 2 h (ghost at 2 h mark, not true CPA). */
+  isCapped: boolean;
+}
+
+/**
+ * Compute CPA between own vessel (linear track) and a target (arc track via RoT).
+ * All angles in radians; SOG in m/s; RoT in rad/s (pass NaN if unknown).
+ * Returns null when WASM is not ready or inputs are invalid (own/target pos/COG/SOG NaN).
+ */
+export function computeCpa(
+  ownLon: number, ownLat: number, ownCog: number, ownSog: number,
+  tgtLon: number, tgtLat: number, tgtCog: number, tgtSog: number, tgtRot: number,
+): CpaResult | null {
+  if (!ready) return null;
+  const r = wasmGcComputeCpa(ownLon, ownLat, ownCog, ownSog, tgtLon, tgtLat, tgtCog, tgtSog, tgtRot);
+  const cpa_nm = r.cpa_nm;
+  if (isNaN(cpa_nm)) { r.free(); return null; }
+  const result: CpaResult = {
+    cpa_nm,
+    tcpa_min: r.tcpa_min,
+    own_lon:  r.own_lon,
+    own_lat:  r.own_lat,
+    tgt_lon:  r.tgt_lon,
+    tgt_lat:  r.tgt_lat,
+    isOpening: r.tcpa_min < 0,
+    isCapped:  r.tcpa_min >= 120.0,
+  };
+  r.free();
+  return result;
 }

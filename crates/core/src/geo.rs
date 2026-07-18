@@ -7,6 +7,13 @@
 
 use wasm_bindgen::prelude::*;
 
+/// Meters per degree of latitude (WGS-84 mean meridian).
+const M_PER_DEG_LAT: f64 = 111_319.0;
+/// Number of 10-second steps covering a 2-hour CPA horizon.
+const CPA_STEPS: usize = 720;
+/// Duration of each CPA integration step, in seconds.
+const CPA_STEP_S: f64 = 10.0;
+
 /// Great-circle bearing from A to B, in degrees `[0, 360)`.
 fn bearing_deg(lon_a: f64, lat_a: f64, lon_b: f64, lat_b: f64) -> f64 {
     let phi1 = lat_a.to_radians();
@@ -72,6 +79,113 @@ fn line_coords(lon_a: f64, lat_a: f64, lon_b: f64, lat_b: f64, segments: u32) ->
     coords
 }
 
+/// Result of a CPA (Closest Point of Approach) computation.
+#[wasm_bindgen]
+pub struct CpaResult {
+    /// CPA distance in nautical miles.
+    pub cpa_nm: f64,
+    /// Minutes to CPA.  Sentinel values:
+    ///   -1.0  = opening (vessels already diverging — CPA is now)
+    ///  120.0  = capped  (true TCPA > 2 h; ghost positions are at the 2 h mark)
+    pub tcpa_min: f64,
+    /// Own vessel's projected longitude at TCPA (or 2 h mark, or current if opening).
+    pub own_lon: f64,
+    /// Own vessel's projected latitude at TCPA (or 2 h mark, or current if opening).
+    pub own_lat: f64,
+    /// Target's projected longitude at TCPA (or 2 h mark, or current if opening).
+    pub tgt_lon: f64,
+    /// Target's projected latitude at TCPA (or 2 h mark, or current if opening).
+    pub tgt_lat: f64,
+}
+
+/// Analytic position of a (possibly turning) vessel at time `t_s` seconds.
+///
+/// Uses a local flat-earth coordinate system (east = +x, north = +y, metres).
+/// `cog` = heading from north clockwise (radians). `sog` = speed (m/s).
+/// `rot` = rate of turn (rad/s, positive = turning right).
+///
+/// Arc integrals when `rot` ≠ 0:
+///   x(t) = x0 + (sog/rot) · [cos(cog) − cos(cog + rot·t)]
+///   y(t) = y0 + (sog/rot) · [sin(cog + rot·t) − sin(cog)]
+fn target_pos_at(x0: f64, y0: f64, cog: f64, sog: f64, rot: f64, t_s: f64) -> (f64, f64) {
+    if rot.abs() < 1e-5 {
+        (x0 + sog * cog.sin() * t_s, y0 + sog * cog.cos() * t_s)
+    } else {
+        let heading_t = cog + rot * t_s;
+        let x = x0 + (sog / rot) * (cog.cos() - heading_t.cos());
+        let y = y0 + (sog / rot) * (heading_t.sin() - cog.sin());
+        (x, y)
+    }
+}
+
+/// Pure CPA computation.  Own vessel is assumed to maintain a linear track;
+/// the target may follow a curved arc described by `tgt_rot` (rad/s).
+///
+/// Integrates at [`CPA_STEP_S`]-second intervals over a [`CPA_STEPS`]-step
+/// (2 hour) horizon.  Returns the [`CpaResult`] at the step of minimum range.
+#[allow(clippy::too_many_arguments)]
+fn cpa_core(
+    own_lon: f64,
+    own_lat: f64,
+    own_cog: f64,
+    own_sog: f64,
+    tgt_lon: f64,
+    tgt_lat: f64,
+    tgt_cog: f64,
+    tgt_sog: f64,
+    tgt_rot: f64,
+) -> CpaResult {
+    let cos_lat = (own_lat * std::f64::consts::PI / 180.0).cos();
+    let tgt_x0 = (tgt_lon - own_lon) * M_PER_DEG_LAT * cos_lat;
+    let tgt_y0 = (tgt_lat - own_lat) * M_PER_DEG_LAT;
+
+    let own_vx = own_sog * own_cog.sin();
+    let own_vy = own_sog * own_cog.cos();
+
+    let mut best_d_sq = f64::INFINITY;
+    let mut best_step: usize = 0;
+
+    for step in 0..=CPA_STEPS {
+        let t = step as f64 * CPA_STEP_S;
+        let ox = own_vx * t;
+        let oy = own_vy * t;
+        let (tx, ty) = target_pos_at(tgt_x0, tgt_y0, tgt_cog, tgt_sog, tgt_rot, t);
+        let d_sq = (tx - ox).powi(2) + (ty - oy).powi(2);
+        if d_sq < best_d_sq {
+            best_d_sq = d_sq;
+            best_step = step;
+        }
+    }
+
+    let cpa_nm = best_d_sq.sqrt() / 1852.0;
+    let is_opening = best_step == 0;
+    // When best_step == CPA_STEPS the true TCPA exceeds the 2-hour horizon;
+    // tcpa_min will naturally evaluate to 120.0 and callers use that sentinel.
+    let tcpa_min = if is_opening {
+        -1.0
+    } else {
+        best_step as f64 * CPA_STEP_S / 60.0
+    };
+
+    let ghost_t = if is_opening {
+        0.0
+    } else {
+        best_step as f64 * CPA_STEP_S
+    };
+    let own_gx = own_vx * ghost_t;
+    let own_gy = own_vy * ghost_t;
+    let (tgt_gx, tgt_gy) = target_pos_at(tgt_x0, tgt_y0, tgt_cog, tgt_sog, tgt_rot, ghost_t);
+
+    CpaResult {
+        cpa_nm,
+        tcpa_min,
+        own_lon: own_lon + own_gx / (M_PER_DEG_LAT * cos_lat),
+        own_lat: own_lat + own_gy / M_PER_DEG_LAT,
+        tgt_lon: own_lon + tgt_gx / (M_PER_DEG_LAT * cos_lat),
+        tgt_lat: own_lat + tgt_gy / M_PER_DEG_LAT,
+    }
+}
+
 /// Great-circle bearing from A to B, in degrees `[0, 360)`.
 #[wasm_bindgen(js_name = gcBearingDeg)]
 pub fn gc_bearing_deg(lon_a: f64, lat_a: f64, lon_b: f64, lat_b: f64) -> f64 {
@@ -96,6 +210,64 @@ pub fn gc_line(
 ) -> Result<JsValue, JsValue> {
     let coords = line_coords(lon_a, lat_a, lon_b, lat_b, segments);
     serde_wasm_bindgen::to_value(&coords).map_err(|e| JsValue::from_str(&e.to_string()))
+}
+
+/// Compute CPA between own vessel (linear track, no RoT) and a target (arc track via RoT).
+///
+/// All angles in radians; SOG in m/s; RoT in rad/s (NaN → treated as 0).
+/// Returns `NaN` in `cpa_nm` when any essential positional input
+/// (own/tgt lon/lat/cog/sog) is NaN.
+#[allow(clippy::too_many_arguments)]
+#[wasm_bindgen(js_name = gcComputeCpa)]
+pub fn gc_compute_cpa(
+    own_lon: f64,
+    own_lat: f64,
+    own_cog_rad: f64,
+    own_sog_ms: f64,
+    tgt_lon: f64,
+    tgt_lat: f64,
+    tgt_cog_rad: f64,
+    tgt_sog_ms: f64,
+    tgt_rot_rad_s: f64,
+) -> CpaResult {
+    if [
+        own_lon,
+        own_lat,
+        own_cog_rad,
+        own_sog_ms,
+        tgt_lon,
+        tgt_lat,
+        tgt_cog_rad,
+        tgt_sog_ms,
+    ]
+    .iter()
+    .any(|v| v.is_nan())
+    {
+        return CpaResult {
+            cpa_nm: f64::NAN,
+            tcpa_min: f64::NAN,
+            own_lon: f64::NAN,
+            own_lat: f64::NAN,
+            tgt_lon: f64::NAN,
+            tgt_lat: f64::NAN,
+        };
+    }
+    let rot = if tgt_rot_rad_s.is_nan() {
+        0.0
+    } else {
+        tgt_rot_rad_s
+    };
+    cpa_core(
+        own_lon,
+        own_lat,
+        own_cog_rad,
+        own_sog_ms,
+        tgt_lon,
+        tgt_lat,
+        tgt_cog_rad,
+        tgt_sog_ms,
+        rot,
+    )
 }
 
 #[cfg(test)]
@@ -168,5 +340,116 @@ mod tests {
             (last_lon - 181.0).abs() < 1e-6,
             "expected unwrapped longitude ~181°, got {last_lon}"
         );
+    }
+
+    #[test]
+    fn test_cpa_converging_no_rot() {
+        // Own: origin, heading north (cog=0), 5 m/s.
+        // Target: 100 m east, 1000 m north, heading south (cog=π), 5 m/s.
+        // Closest approach at t≈100 s: own at (0, 500 m), target at (100 m, 500 m) → CPA = 100 m.
+        let r = cpa_core(
+            0.0,
+            0.0,
+            0.0,
+            5.0,
+            100.0 / M_PER_DEG_LAT,
+            1000.0 / M_PER_DEG_LAT,
+            std::f64::consts::PI,
+            5.0,
+            0.0,
+        );
+        assert!(
+            (r.cpa_nm - 100.0 / 1852.0).abs() < 0.001,
+            "CPA should be ~100 m, got {} nm",
+            r.cpa_nm
+        );
+        assert!(
+            (r.tcpa_min - 100.0 / 60.0).abs() < 0.2,
+            "TCPA should be ~1.67 min, got {}",
+            r.tcpa_min
+        );
+        assert!(r.tcpa_min > 0.0, "should be converging");
+    }
+
+    #[test]
+    fn test_cpa_diverging() {
+        // Own: origin, heading north; Target: 100 m east, 500 m south, heading south (opening).
+        let r = cpa_core(
+            0.0,
+            0.0,
+            0.0,
+            5.0,
+            100.0 / M_PER_DEG_LAT,
+            -500.0 / M_PER_DEG_LAT,
+            std::f64::consts::PI,
+            5.0,
+            0.0,
+        );
+        assert_eq!(r.tcpa_min, -1.0, "should be opening sentinel");
+        let expected_nm = (100.0_f64.powi(2) + 500.0_f64.powi(2)).sqrt() / 1852.0;
+        assert!(
+            (r.cpa_nm - expected_nm).abs() < 0.001,
+            "CPA should equal current distance, got {} nm (expected {} nm)",
+            r.cpa_nm,
+            expected_nm
+        );
+    }
+
+    #[test]
+    fn test_cpa_beyond_2h() {
+        // Slow closing — target 10 km away, combined closing speed 0.5 m/s → ETA ≈ 20 000 s >> 7 200 s.
+        let r = cpa_core(
+            0.0,
+            0.0,
+            0.0,
+            0.1,
+            0.0,
+            10_000.0 / M_PER_DEG_LAT,
+            std::f64::consts::PI,
+            0.4,
+            0.0,
+        );
+        assert_eq!(r.tcpa_min, 120.0, "should be capped at 2 h sentinel");
+    }
+
+    #[test]
+    fn test_cpa_rot_curves_track() {
+        // Own: origin, heading north.  Target: 50 m east, 500 m north, heading south.
+        // Negative RoT (−0.05 rad/s) = turning left when southbound = turning eastward,
+        // away from the own ship's track → CPA must be larger than the straight-line case.
+        let linear = cpa_core(
+            0.0,
+            0.0,
+            0.0,
+            5.0,
+            50.0 / M_PER_DEG_LAT,
+            500.0 / M_PER_DEG_LAT,
+            std::f64::consts::PI,
+            5.0,
+            0.0,
+        );
+        let curved = cpa_core(
+            0.0,
+            0.0,
+            0.0,
+            5.0,
+            50.0 / M_PER_DEG_LAT,
+            500.0 / M_PER_DEG_LAT,
+            std::f64::consts::PI,
+            5.0,
+            -0.05,
+        );
+        assert!(
+            curved.cpa_nm > linear.cpa_nm,
+            "RoT turning away should increase CPA: linear={} curved={}",
+            linear.cpa_nm,
+            curved.cpa_nm
+        );
+    }
+
+    #[test]
+    fn test_cpa_nan_inputs() {
+        let r = gc_compute_cpa(f64::NAN, 0.0, 0.0, 5.0, 0.0, 0.0, 0.0, 5.0, 0.0);
+        assert!(r.cpa_nm.is_nan(), "NaN input should propagate to cpa_nm");
     }
 }

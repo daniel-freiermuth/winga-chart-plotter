@@ -157,12 +157,12 @@ impl SignalKClient {
             //   • no context field (rare; some servers omit it for self)
             //   • literal alias "vessels.self"
             //   • matches the actual UUID learned from the Hello message
-            let forward = delta_ctx.as_deref().map_or(true, |ctx| {
+            let forward = delta_ctx.as_deref().is_none_or(|ctx| {
                 let storage = storage_clone.borrow();
                 ctx == "vessels.self"
                     || storage
                         .self_id()
-                        .map_or(false, |sid| ctx == format!("vessels.{sid}"))
+                        .is_some_and(|sid| ctx == format!("vessels.{sid}"))
             });
             if forward {
                 let _ = on_delta.call1(&JsValue::NULL, &JsValue::from_str(&text));
