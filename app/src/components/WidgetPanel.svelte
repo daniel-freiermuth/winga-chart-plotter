@@ -60,7 +60,7 @@
 
   function resetIdleTimer(): void {
     if (idleTimer !== null) clearTimeout(idleTimer);
-    idleTimer = setTimeout(() => { idleTimer = null; arrangeMode = false; }, 8000);
+    idleTimer = setTimeout(() => { idleTimer = null; if (rActive || gActive) { resetIdleTimer(); return; } arrangeMode = false; }, 8000);
   }
 
   function enterArrange(): void {
