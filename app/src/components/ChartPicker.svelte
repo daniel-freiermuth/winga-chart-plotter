@@ -348,7 +348,7 @@
               class="card"
               class:selected={baseLayers.enabled.has(item.id)}
               aria-pressed={baseLayers.enabled.has(item.id)}
-              onclick={() => { charts.deselectAll(); baseLayers.toggle(item.id); }}
+              onclick={() => { charts.deselectAll(); baseLayers.toggle(item.id); close(); }}
             >
               <div class="card-preview">
                 <LazyMapThumb style={rasterStyle(item.layer.tileUrl)} />
@@ -365,7 +365,7 @@
                 class="card"
                 class:selected={charts.selected.has(item.id)}
                 aria-pressed={charts.selected.has(item.id)}
-                onclick={() => { baseLayers.deselectAll(); charts.toggle(item.id); }}
+                onclick={() => { baseLayers.deselectAll(); charts.toggle(item.id); close(); }}
               >
                 <div class="card-preview">
                   <LazyMapThumb style={styleUrl} bounds={item.chart.bounds} />
@@ -378,7 +378,7 @@
                 class="card"
                 class:selected={charts.selected.has(item.id)}
                 aria-pressed={charts.selected.has(item.id)}
-                onclick={() => { baseLayers.deselectAll(); charts.toggle(item.id); }}
+                onclick={() => { baseLayers.deselectAll(); charts.toggle(item.id); close(); }}
               >
                 <div class="card-preview">
                   {#if tileUrl}
@@ -395,7 +395,7 @@
               class="card"
               class:selected={isActive}
               aria-pressed={isActive}
-              onclick={() => { clickWmts(item.chartId, item.wmtsLayer.id, item.wmtsLayer.tileUrl); }}
+              onclick={() => { clickWmts(item.chartId, item.wmtsLayer.id, item.wmtsLayer.tileUrl); close(); }}
             >
               <div class="card-preview">
                 {#if item.wmtsLayer.tileUrl}
