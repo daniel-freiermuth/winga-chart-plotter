@@ -3,14 +3,14 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "packageManager": "pnpm@11.3.0",
   "scripts": {
     "dev": "vite --host",
     "build": "vite build",
     "preview": "vite preview",
     "lint": "eslint src",
     "check": "svelte-check --tsconfig tsconfig.json",
-    "build:wasm": "$HOME/.cargo/bin/wasm-pack build ../crates/core --target web --out-dir ../../app/src/wasm",
-    "postinstall": "patch-package"
+    "build:wasm": "$HOME/.cargo/bin/wasm-pack build ../crates/core --target web --out-dir ../../app/src/wasm"
   },
   "dependencies": {
     "@deck.gl/core": "^9.1.0",
@@ -32,7 +32,6 @@
     "eslint-plugin-import-x": "^4.17.1",
     "eslint-plugin-svelte": "^3.17.1",
     "globals": "^17.6.0",
-    "patch-package": "^8.0.1",
     "svelte-check": "^4.0.0",
     "typescript": "^6.0.0",
     "typescript-eslint": "^8.59.4",

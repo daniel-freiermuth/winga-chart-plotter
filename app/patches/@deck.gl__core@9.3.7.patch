@@ -1,7 +1,7 @@
-diff --git a/node_modules/@deck.gl/core/dist/dist.dev.js b/node_modules/@deck.gl/core/dist/dist.dev.js
-index e9a4882..5072555 100644
---- a/node_modules/@deck.gl/core/dist/dist.dev.js
-+++ b/node_modules/@deck.gl/core/dist/dist.dev.js
+diff --git a/dist/dist.dev.js b/dist/dist.dev.js
+index b0fa2cc1c79a3b56d638127fb01a0547308c98bb..750b04cea4877891b9372cd513137c2a20e33725 100644
+--- a/dist/dist.dev.js
++++ b/dist/dist.dev.js
 @@ -25887,7 +25887,7 @@ var<uniform> layer: LayerUniforms;
  `
    );
@@ -11,10 +11,10 @@ index e9a4882..5072555 100644
  } layer;
  `;
    var layerUniforms = {
-diff --git a/node_modules/@deck.gl/core/dist/index.cjs b/node_modules/@deck.gl/core/dist/index.cjs
-index 2a965c5..0d7be10 100644
---- a/node_modules/@deck.gl/core/dist/index.cjs
-+++ b/node_modules/@deck.gl/core/dist/index.cjs
+diff --git a/dist/index.cjs b/dist/index.cjs
+index b52578f7cade07dadda5eda2b06258c1b0e99cab..5ec2c58c7ca31b0a15bea187461a0f3acf9555a2 100644
+--- a/dist/index.cjs
++++ b/dist/index.cjs
 @@ -270,7 +270,7 @@ var<uniform> layer: LayerUniforms;
  `
  );
@@ -24,10 +24,10 @@ index 2a965c5..0d7be10 100644
  } layer;
  `;
  var layerUniforms = {
-diff --git a/node_modules/@deck.gl/core/dist/shaderlib/misc/layer-uniforms.js b/node_modules/@deck.gl/core/dist/shaderlib/misc/layer-uniforms.js
-index 9ad93fb..9cb176e 100644
---- a/node_modules/@deck.gl/core/dist/shaderlib/misc/layer-uniforms.js
-+++ b/node_modules/@deck.gl/core/dist/shaderlib/misc/layer-uniforms.js
+diff --git a/dist/shaderlib/misc/layer-uniforms.js b/dist/shaderlib/misc/layer-uniforms.js
+index 9ad93fba65edbb1a7017d4ce46ea393841b3b0e7..9cb176ea83277e54396d84461273d79d77c1ef30 100644
+--- a/dist/shaderlib/misc/layer-uniforms.js
++++ b/dist/shaderlib/misc/layer-uniforms.js
 @@ -11,7 +11,7 @@ var<uniform> layer: LayerUniforms;
  `;
  const uniformBlock = `\
@@ -37,10 +37,10 @@ index 9ad93fb..9cb176e 100644
  } layer;
  `;
  export const layerUniforms = {
-diff --git a/node_modules/@deck.gl/core/dist/viewports/globe-viewport.js b/node_modules/@deck.gl/core/dist/viewports/globe-viewport.js
-index 57b1e4c..99b51c3 100644
---- a/node_modules/@deck.gl/core/dist/viewports/globe-viewport.js
-+++ b/node_modules/@deck.gl/core/dist/viewports/globe-viewport.js
+diff --git a/dist/viewports/globe-viewport.js b/dist/viewports/globe-viewport.js
+index 57b1e4c7f607a8ec86a183a4981219b9e2db9ec9..99b51c3abe43c52baaa17b2c39c208ff695143e0 100644
+--- a/dist/viewports/globe-viewport.js
++++ b/dist/viewports/globe-viewport.js
 @@ -25,7 +25,7 @@ function getDistanceScales() {
  }
  class GlobeViewport extends Viewport {

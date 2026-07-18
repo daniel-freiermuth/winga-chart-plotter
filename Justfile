@@ -9,7 +9,7 @@ help:
 
 # Install frontend dependencies
 install:
-    cd {{app}} && npm install
+    cd {{app}} && pnpm install
 
 # Compile Rust core to WebAssembly
 build-wasm:
@@ -17,7 +17,7 @@ build-wasm:
 
 # Build WASM + frontend for production
 build: build-wasm
-    cd {{app}} && npm run build
+    cd {{app}} && pnpm run build
 
 # Build and assemble Signal K npm package (output: public/)
 package: build
@@ -25,7 +25,7 @@ package: build
 
 # Build WASM then start the Vite dev server
 dev: build-wasm
-    cd {{app}} && npm run dev
+    cd {{app}} && pnpm run dev
 
 # Run all Rust unit tests
 test:
@@ -39,7 +39,7 @@ test-watch:
 lint:
     cargo fmt --check
     cargo clippy --all-targets --all-features -- -D warnings
-    cd {{app}} && npm run check && npm run lint
+    cd {{app}} && pnpm run check && pnpm run lint
 
 # Run all lints and tests
 check-all: lint test

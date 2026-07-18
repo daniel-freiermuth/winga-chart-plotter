@@ -1,2 +1,4 @@
 allowBuilds:
   unrs-resolver: true
+patchedDependencies:
+  '@deck.gl/core@9.3.7': patches/@deck.gl__core@9.3.7.patch
