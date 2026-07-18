@@ -51,6 +51,9 @@ export default defineConfig(({ command }) => ({
     }),
   ],
   build: {
+    // maplibre-gl is already ~1 MB minified / 273 kB gzip and can't be split further.
+    // deck-gl chunk is similar in size. Both are well-compressed and cached by the PWA.
+    chunkSizeWarningLimit: 1100,
     rollupOptions: {
       output: {
         // MapLibre GL creates its tile workers by stringifying function bodies at
@@ -60,8 +63,15 @@ export default defineConfig(({ command }) => ({
         // worker runs in isolation, the outer-scope name is not defined.
         // Isolating MapLibre in its own chunk prevents cross-chunk inlining so the
         // worker blob remains self-contained.
+        //
+        // deck.gl is split so app-code changes don't bust the deck.gl cache entry.
         manualChunks(id) {
           if (id.includes('node_modules/maplibre-gl')) return 'maplibre-gl';
+          if (
+            id.includes('node_modules/@deck.gl/') ||
+            id.includes('node_modules/@luma.gl/') ||
+            id.includes('node_modules/@math.gl/')
+          ) return 'deck-gl';
           return undefined;
         },
       },
