@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.19.0] - 2026-07-18
+
+### Added
+- Two-tap AIS information panel showing closest point of approach (CPA) to other vessels.
+- Widgets are clickable and freely resizable.
+- Chart picker closes automatically when a chart is selected.
+
 ## [0.18.1] - 2026-07-15
 
 ### Added
