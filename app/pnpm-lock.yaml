@@ -36,8 +36,8 @@ importers:
         specifier: ^5.0.0
         version: 5.24.0
       signalk-plotterext-bus:
-        specifier: ^0.5.0
-        version: 0.5.0
+        specifier: ^0.10.0
+        version: 0.10.0
       svelte:
         specifier: ^5.0.0
         version: 5.56.6(@typescript-eslint/types@8.64.0)
@@ -1609,8 +1609,8 @@ packages:
     engines: {node: '>=0.10.0'}
     hasBin: true
 
-  electron-to-chromium@1.5.392:
-    resolution: {integrity: sha512-1yQq3VQCZRwsnYc67Oc+1fge6Lwtn0hzi6zmEVkB61Zx21kTbwJAW4dFLadl5Rc1tKhG/kSpYXnfiAhu0f0a1g==}
+  electron-to-chromium@1.5.393:
+    resolution: {integrity: sha512-kiDJdIUawuEIcp9XoICKp1iTYDEbgguIPq526N1Q7jIQDeQ3CqoMx71025PI/7E48Ddtw2HuWsVjY7afEgNxmg==}
 
   es-abstract-get@1.0.0:
     resolution: {integrity: sha512-6PMWXpdhshVvFp+FoWYs1EvG1Nj0tvk0dZM+XcK0xMEM1czRVcP6ohqPWHy6qPagSpC8j4+p89WXlT+xXJs/fg==}
@@ -2530,8 +2530,8 @@ packages:
     resolution: {integrity: sha512-bzyZ1e88w9O1iNJbKnOlvYTrWPDl46O1bG0D3XInv+9tkPrxrN8jUUTiFlDkkmKWgn1M6CfIA13SuGqOa9Korw==}
     engines: {node: '>=14'}
 
-  signalk-plotterext-bus@0.5.0:
-    resolution: {integrity: sha512-i3OsOScXsoE/r9zrqCoYc3bXmN9TtSHGPnEe1/wDW4mQz4awrPZBr3EcF3fTO00ntTZPi96O7PiSprjTGNNSxw==}
+  signalk-plotterext-bus@0.10.0:
+    resolution: {integrity: sha512-KhUICGdTRJVQcRFR62phxUfUg2qeQpUg9HdcNqLmiSjVF1QKakYWcxwjYGPuHZileovnJV9h0+e4VxUzCklGDg==}
 
   smob@1.6.2:
     resolution: {integrity: sha512-RQsvleCbF8cVHEv+xuDGaA4pOizFqJ0GgjtMSRo6oP8pnN7WsigHgVGey6aILRBKv4W2YOMHLqbKdnB6hpB9fw==}
@@ -4407,7 +4407,7 @@ snapshots:
     dependencies:
       baseline-browser-mapping: 2.10.43
       caniuse-lite: 1.0.30001806
-      electron-to-chromium: 1.5.392
+      electron-to-chromium: 1.5.393
       node-releases: 2.0.51
       update-browserslist-db: 1.2.3(browserslist@4.28.6)
 
@@ -4545,7 +4545,7 @@ snapshots:
     dependencies:
       jake: 10.9.4
 
-  electron-to-chromium@1.5.392: {}
+  electron-to-chromium@1.5.393: {}
 
   es-abstract-get@1.0.0:
     dependencies:
@@ -5543,7 +5543,7 @@ snapshots:
 
   signal-exit@4.1.0: {}
 
-  signalk-plotterext-bus@0.5.0: {}
+  signalk-plotterext-bus@0.10.0: {}
 
   smob@1.6.2: {}
 
