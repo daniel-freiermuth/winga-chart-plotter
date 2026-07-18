@@ -2,6 +2,11 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.19.1] - 2026-07-18
+
+### Fixed
+- Widget arrange mode no longer exits while a drag is still in progress.
+
 ## [0.19.0] - 2026-07-18
 
 ### Added
