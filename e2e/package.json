@@ -1,0 +1,17 @@
+{
+  "name": "winga-chart-plotter-e2e",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "End-to-end tests: real app against a scripted mock Signal K server",
+  "scripts": {
+    "test": "playwright test",
+    "test:headed": "playwright test --headed"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.54.0",
+    "@types/node": "^25.0.0",
+    "@types/ws": "^8.18.1",
+    "ws": "^8.18.0"
+  }
+}
