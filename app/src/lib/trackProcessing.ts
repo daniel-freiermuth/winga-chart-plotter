@@ -66,18 +66,28 @@ export function gcDensifySegment(
 }
 
 // Recursively split unwrapped+anchored coordinates into segments that each fit within
-// MapLibre's ±540° rendering range. Points outside the range are shifted eastward by
-// 720° (two world copies) so they appear in an adjacent but renderable world copy.
-// Returns segments ordered oldest-first; each is guaranteed to have pts[0][0] >= -540.
-// NOTE: only handles western overflow (pts[0] < −540). Tracks always accumulate westward
-// so this is sufficient for own-vessel/AIS tracks.
+// MapLibre's ±540° rendering range. Overflow points are shifted by ∓720° (two world
+// copies) so they appear in an adjacent but renderable world copy.
+// Returns segments ordered oldest-first; each is guaranteed to lie within ±540°.
+// Handles both western overflow (pts[0] < −540, from eastward accumulation) and
+// eastern overflow (pts[0] > +540, from westward accumulation).
 export function splitToFit(pts: [number, number][]): [number, number][][] {
-  if (pts.length === 0 || pts[0]![0] >= -540) return pts.length > 0 ? [pts] : [];
-  let si = 0;
-  while (si < pts.length - 1 && pts[si]![0] < -540) si++;
-  const recent = pts.slice(si);
-  const overflow = pts.slice(0, si + 1).map(pt => [pt[0] + 720, pt[1]] as [number, number]);
-  return [...splitToFit(overflow), recent];
+  if (pts.length === 0) return [];
+  if (pts[0]![0] < -540) {
+    let si = 0;
+    while (si < pts.length - 1 && pts[si]![0] < -540) si++;
+    const recent = pts.slice(si);
+    const overflow = pts.slice(0, si + 1).map(pt => [pt[0] + 720, pt[1]] as [number, number]);
+    return [...splitToFit(overflow), recent];
+  }
+  if (pts[0]![0] > 540) {
+    let si = 0;
+    while (si < pts.length - 1 && pts[si]![0] > 540) si++;
+    const recent = pts.slice(si);
+    const overflow = pts.slice(0, si + 1).map(pt => [pt[0] - 720, pt[1]] as [number, number]);
+    return [...splitToFit(overflow), recent];
+  }
+  return [pts];
 }
 
 /**
