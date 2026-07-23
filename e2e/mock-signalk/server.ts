@@ -43,6 +43,11 @@ const iso = (): string => new Date().toISOString();
 export class MockSignalK {
   port = 0;
   readonly requests: RecordedRequest[] = [];
+  /**
+   * Scripted GET responses, keyed by URL path (query string ignored).
+   * Unrouted requests keep answering 404 so tests can still observe them.
+   */
+  readonly restRoutes = new Map<string, unknown>();
   private http!: Server;
   private wss!: WebSocketServer;
   private readonly sockets = new Set<WebSocket>();
@@ -50,10 +55,17 @@ export class MockSignalK {
 
   async start(): Promise<number> {
     this.http = createServer((req, res) => {
-      this.requests.push({ method: req.method ?? 'GET', url: req.url ?? '', at: Date.now() });
-      res.statusCode = 404;
+      const url = req.url ?? '';
+      this.requests.push({ method: req.method ?? 'GET', url, at: Date.now() });
       res.setHeader('content-type', 'application/json');
       res.setHeader('access-control-allow-origin', '*');
+      const routed = req.method === 'GET' ? this.restRoutes.get(url.split('?')[0] ?? url) : undefined;
+      if (routed !== undefined) {
+        res.statusCode = 200;
+        res.end(JSON.stringify(routed));
+        return;
+      }
+      res.statusCode = 404;
       res.end('{"error":"mock: not found"}');
     });
     this.wss = new WebSocketServer({ noServer: true });
