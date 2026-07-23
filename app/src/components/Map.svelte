@@ -28,6 +28,7 @@
   import { auth } from '../stores/auth.svelte';
   import { fetchAisVesselTrack, navigateToPoint, clearCourse, activateRoute, setActiveRoutePointIndex, deleteRoute, saveWaypoint, updateWaypoint, deleteWaypoint } from '../lib/wasmRest';
   import { extrapolatePos } from '../lib/deadReckoning';
+  import { resolveDisambigEntry } from '../lib/disambig';
   import { SvelteMap } from 'svelte/reactivity';
   import { mapView, loadSavedView } from '../stores/mapView.svelte';
   import { visibility } from '../stores/visibility.svelte';
@@ -1593,17 +1594,22 @@
   }
 
   function openDisambigPopup(coordinate: [number, number], indices: number[]) {
-    const targets = indices.map(i => ({ idx: i, target: ais.getTarget(i) }))
-      .filter((e): e is { idx: number; target: AisTarget } => e.target?.position != null);
+    const targets = indices.map(i => ais.getTarget(i))
+      .filter((t): t is AisTarget => t?.position != null);
 
     if (targets.length === 0) return;
     if (targets.length === 1) {
-      handleAisClick(targets[0]!.target);
+      handleAisClick(targets[0]!);
       return;
     }
 
-    const items = targets.map(({ idx, target: t }) =>
-      `<li class="ais-disambig-item" data-idx="${String(idx)}">${t.name ?? t.mmsi ?? 'Unknown vessel'}</li>`
+    // Capture stable vessel ids at build time. deck.gl pick indices are
+    // positions in the per-batch arrays, which are rebuilt (in arbitrary
+    // order) on every AIS batch — by click time an index can denote a
+    // different vessel. data-entry indexes into this frozen list instead.
+    const entryIds = targets.map(t => t.id);
+    const items = targets.map((t, pos) =>
+      `<li class="ais-disambig-item" data-entry="${String(pos)}">${t.name ?? t.mmsi ?? 'Unknown vessel'}</li>`
     ).join('');
 
     const html = `
@@ -1621,12 +1627,15 @@
     // Attach click handler after the popup is in the DOM.
     const el = popup.getElement();
     el.addEventListener('click', (ev) => {
-      const li = (ev.target as HTMLElement).closest<HTMLElement>('[data-idx]');
+      const li = (ev.target as HTMLElement).closest<HTMLElement>('[data-entry]');
       if (!li) return;
-      const idx = Number(li.dataset['idx']);
-      const t = ais.getTarget(idx);
-      if (!t?.position) return;
       popup.remove();
+      // Resolve entry → id → current index at click time; the vessel may have
+      // expired since the popup was built — never select a different one.
+      const curIdx = resolveDisambigEntry(entryIds, Number(li.dataset['entry']), ais.ids);
+      if (curIdx === null) return;
+      const t = ais.getTarget(curIdx);
+      if (!t?.position) return;
       handleAisClick(t);
     });
   }
