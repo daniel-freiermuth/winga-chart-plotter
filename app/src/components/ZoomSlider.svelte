@@ -22,7 +22,7 @@
 
   const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 
-  // Fraction: 0 = track top = min zoom, 1 = track bottom = max zoom
+  // Fraction [0..1] of total track length: 0 = track top = min zoom, 1 = bottom = max zoom.
   const thumbFrac = $derived(clamp((zoom - minZoom) / range, 0, 1));
 
   function applyZoomAt(clientY: number): void {
@@ -73,10 +73,10 @@
     onpointercancel={onPointerUp}
     onkeydown={onKeyDown}
   >
-    <!-- Chevrons centred in the visible left semicircle (x ≤ 22). -->
-    <svg class="zoom-hints" viewBox="0 0 44 44" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-      <polyline points="5,20 11,14 17,20" fill="none" stroke="rgba(255,255,255,0.55)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-      <polyline points="5,24 11,30 17,24" fill="none" stroke="rgba(255,255,255,0.55)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    <!-- Chevrons centred in the visible left half of the 56 px circle (x ≤ 28). -->
+    <svg class="zoom-hints" viewBox="0 0 56 56" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <polyline points="5,26 14,17 23,26" fill="none" stroke="rgba(255,255,255,0.55)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+      <polyline points="5,30 14,39 23,30" fill="none" stroke="rgba(255,255,255,0.55)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
     </svg>
   </div>
 </div>
@@ -86,7 +86,7 @@
     position: absolute;
     right: 0;
     top: 20px;
-    bottom: 104px;  /* MOB button: bottom 20px + height 52px = top at 72px; +22px thumb radius +10px gap */
+    bottom: 104px; /* MOB button: bottom 20px + height 52px = top at 72px; +28px thumb radius +4px gap */
     width: 0;          /* track has no width; thumb overhangs left */
     pointer-events: none;
     z-index: 10;
@@ -94,12 +94,12 @@
 
   .zoom-thumb {
     position: absolute;
-    /* right: -22px centres the 44 px circle on the viewport right edge.
+    /* right: -28px centres the 56 px circle on the viewport right edge.
        The viewport clips the right semicircle; only the left half is visible.
-       This value must equal half the element width (44 / 2 = 22). */
-    right: -22px;
-    width: 44px;
-    height: 44px;
+       This value must equal half the element width (56 / 2 = 28). */
+    right: -28px;
+    width: 56px;
+    height: 56px;
     border-radius: 50%;
     transform: translateY(-50%);
     background: rgba(0, 0, 0, 0.70);
@@ -134,5 +134,4 @@
   .zoom-thumb:active .zoom-hints {
     opacity: 0.35;
   }
-
 </style>

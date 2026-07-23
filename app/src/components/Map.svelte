@@ -388,7 +388,7 @@
   const plannerHandleInteractable: Interactable = {
     pick(x, y) {
       if (!overlay || !routePlanner.active) return null;
-      const p = overlay.pickObject({ x, y, radius: 12, layerIds: ['planner-handles'] });
+      const p = overlay.pickObject({ x, y, radius: 18, layerIds: ['planner-handles'] });
       if (p?.object == null) return null;
       const { idx } = p.object as { idx: number };
       return {
@@ -408,7 +408,7 @@
   const plannerSegmentInteractable: Interactable = {
     pick(x, y) {
       if (!overlay || !routePlanner.active) return null;
-      const p = overlay.pickObject({ x, y, radius: 8, layerIds: ['planner-line'] });
+      const p = overlay.pickObject({ x, y, radius: 16, layerIds: ['planner-line'] });
       if (p?.object == null) return null;
       const { segIdx } = p.object as { segIdx: number };
       return {
@@ -423,7 +423,7 @@
     pick(x, y) {
       if (!overlay) return null;
       if (routePlanner.active) return null;
-      const p = overlay.pickObject({ x, y, radius: 14, layerIds: ['ruler-labels'] });
+      const p = overlay.pickObject({ x, y, radius: 20, layerIds: ['ruler-labels'] });
       if (!p?.object) return null;
       const rulerId = (p.object as { ruler: { id: string } }).ruler.id;
       return {
@@ -438,7 +438,7 @@
     pick(x, y) {
       if (!overlay) return null;
       if (routePlanner.active) return null;
-      const p = overlay.pickObject({ x, y, radius: 10, layerIds: ['ruler-handles'] });
+      const p = overlay.pickObject({ x, y, radius: 16, layerIds: ['ruler-handles'] });
       if (!p?.object) return null;
       const { rulerId, endpoint } = p.object as { rulerId: string; endpoint: 'a' | 'b' };
       return {
@@ -510,7 +510,7 @@
     pick(x, y) {
       if (!map) return null;
       if (routePlanner.active) return null;
-      const feats = map.queryRenderedFeatures([x, y], { layers: ['all-waypoints-circle'] });
+      const feats = map.queryRenderedFeatures([[x-12, y-12], [x+12, y+12]] as [[number,number],[number,number]], { layers: ['all-waypoints-circle'] });
       if (feats.length === 0) return null;
       const feature = feats[0]!;
       return {
@@ -525,8 +525,8 @@
     pick(x, y) {
       if (!overlay || !map) return null;
       if (routePlanner.active) return null;
-      const routeLine = overlay.pickObject({ x, y, radius: 6, layerIds: ['route-full', 'route-leg', 'route-bearing'] });
-      const routeWpts = map.queryRenderedFeatures([x, y], { layers: ['route-waypoints'] });
+      const routeLine = overlay.pickObject({ x, y, radius: 16, layerIds: ['route-full', 'route-leg', 'route-bearing'] });
+      const routeWpts = map.queryRenderedFeatures([[x-12, y-12], [x+12, y+12]] as [[number,number],[number,number]], { layers: ['route-waypoints'] });
       if (!routeLine?.object && routeWpts.length === 0) return null;
       const wptFeat = routeWpts[0];
       return {
@@ -541,7 +541,7 @@
     pick(x, y) {
       if (!map) return null;
       if (routePlanner.active) return null;
-      const feats = map.queryRenderedFeatures([x, y], { layers: ['all-routes-line'] });
+      const feats = map.queryRenderedFeatures([[x-16, y-16], [x+16, y+16]] as [[number,number],[number,number]], { layers: ['all-routes-line'] });
       if (feats.length === 0) return null;
       const feature = feats[0]!;
       return {
@@ -1183,7 +1183,7 @@
       let longPressTimer: ReturnType<typeof setTimeout> | null = null;
       let longPressLngLat: maplibregl.LngLat | null = null;
       let startX = 0, startY = 0;
-      const LONG_PRESS_MOVE_PX = 10;
+      const LONG_PRESS_MOVE_PX = 20;
 
       map.on('touchstart', (e) => {
         _touchActive = true;  // finger is down — suppress vessel easeTo until lifted
@@ -1250,7 +1250,7 @@
       const { x, y } = e.point;
       try {
         const layers = routePlanner.active ? ['planner-handles'] : ['ruler-handles'];
-        setHandleHover(!!overlay.pickObject({ x, y, radius: 10, layerIds: layers })?.object);
+        setHandleHover(!!overlay.pickObject({ x, y, radius: 16, layerIds: layers })?.object);
       } catch { /* transient overlay state during style reload */ }
     });
 
@@ -1350,7 +1350,7 @@
       if (!m.getLayer('route-waypoints')) m.addLayer({
         id: 'route-waypoints', type: 'circle', source: ROUTE_WPT_SRC,
         paint: {
-          'circle-radius':       ['match', ['get', 'wtype'], 'next', 7, 5],
+          'circle-radius':       ['match', ['get', 'wtype'], 'next', 10, 8],
           'circle-color':        ['match', ['get', 'wtype'], 'next', '#e040fb', '#9c27b0'],
           'circle-opacity':      0.9,
           'circle-stroke-color': '#fff',
@@ -1362,7 +1362,7 @@
       if (!m.getLayer('all-waypoints-circle')) m.addLayer({
         id: 'all-waypoints-circle', type: 'circle', source: ALL_WAYPOINTS_SRC,
         paint: {
-          'circle-radius':       6,
+          'circle-radius':       8,
           'circle-color':        '#f59e0b',
           'circle-opacity':      0.9,
           'circle-stroke-color': '#fff',

@@ -703,12 +703,12 @@
     border: none;
     border-bottom: 2px solid transparent;
     color: white;
-    padding: 6px 10px;
+    padding: 10px 12px;
     border-radius: 6px;
     cursor: pointer;
     font-size: 16px;
     transition: background 0.15s, color 0.15s;
-    min-width: 36px;
+    min-width: 44px;
     text-align: center;
   }
   @media (hover: hover) and (pointer: fine) {
