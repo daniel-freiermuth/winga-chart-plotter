@@ -1,4 +1,6 @@
 import type { VesselInfo } from '../lib/wasmRest';
+import { mergeSkCpa } from '../lib/skCpaMerge';
+import type { SkClosestApproach } from '../lib/skCpaMerge';
 import { SvelteMap } from 'svelte/reactivity';
 
 // ---------------------------------------------------------------------------
@@ -19,14 +21,6 @@ export const AIS_F_AGE = 6; // seconds elapsed since last position update at upl
 // ---------------------------------------------------------------------------
 // Cold data — strings and REST-enriched vessel metadata
 // ---------------------------------------------------------------------------
-
-/** CPA data published by a Signal K plugin under `navigation.closestApproach`. */
-export interface SkClosestApproach {
-  /** Closest point of approach distance, metres. */
-  distanceM: number;
-  /** Time to closest point of approach, seconds. */
-  timeToS: number;
-}
 
 /** Persistent cold metadata for an AIS vessel, keyed by vessel id in `coldMap`. */
 export interface AisColdData {
@@ -135,7 +129,7 @@ function createAisStore() {
           mmsi:  c.mmsi  ?? existing?.mmsi,
           // `null` is an explicit retraction from the server — clear it. Only a
           // genuinely absent field (undefined) retains the previous value.
-          skCpa: c.skCpa === null ? undefined : (c.skCpa ?? existing?.skCpa),
+          skCpa: mergeSkCpa(c.skCpa, existing?.skCpa),
         });
       }
     },
