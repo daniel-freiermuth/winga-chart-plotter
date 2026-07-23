@@ -28,6 +28,7 @@
   import { auth } from '../stores/auth.svelte';
   import { fetchAisVesselTrack, navigateToPoint, clearCourse, activateRoute, setActiveRoutePointIndex, deleteRoute, saveWaypoint, updateWaypoint, deleteWaypoint } from '../lib/wasmRest';
   import { extrapolatePos } from '../lib/deadReckoning';
+  import { resolveDisambigEntry } from '../lib/disambig';
   import { SvelteMap } from 'svelte/reactivity';
   import { mapView, loadSavedView } from '../stores/mapView.svelte';
   import { visibility } from '../stores/visibility.svelte';
@@ -1629,12 +1630,10 @@
       const li = (ev.target as HTMLElement).closest<HTMLElement>('[data-entry]');
       if (!li) return;
       popup.remove();
-      const id = entryIds[Number(li.dataset['entry'])];
-      if (id == null) return;
-      // Resolve id → current index at click time; the vessel may have
+      // Resolve entry → id → current index at click time; the vessel may have
       // expired since the popup was built — never select a different one.
-      const curIdx = ais.ids.indexOf(id);
-      if (curIdx < 0) return;
+      const curIdx = resolveDisambigEntry(entryIds, Number(li.dataset['entry']), ais.ids);
+      if (curIdx === null) return;
       const t = ais.getTarget(curIdx);
       if (!t?.position) return;
       handleAisClick(t);
