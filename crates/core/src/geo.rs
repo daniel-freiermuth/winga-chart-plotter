@@ -136,7 +136,11 @@ fn cpa_core(
     tgt_rot: f64,
 ) -> CpaResult {
     let cos_lat = (own_lat * std::f64::consts::PI / 180.0).cos();
-    let tgt_x0 = (tgt_lon - own_lon) * M_PER_DEG_LAT * cos_lat;
+    // Shortest signed longitude difference, wrapped into [-180, 180], so a
+    // target just across the antimeridian projects a few km away rather
+    // than ~40 000 km (a raw delta of ±359.9°).
+    let d_lon = (tgt_lon - own_lon + 540.0).rem_euclid(360.0) - 180.0;
+    let tgt_x0 = d_lon * M_PER_DEG_LAT * cos_lat;
     let tgt_y0 = (tgt_lat - own_lat) * M_PER_DEG_LAT;
 
     let own_vx = own_sog * own_cog.sin();
