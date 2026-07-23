@@ -157,21 +157,46 @@ fn cpa_core(
         }
     }
 
-    let cpa_nm = best_d_sq.sqrt() / 1852.0;
-    let is_opening = best_step == 0;
-    // When best_step == CPA_STEPS the true TCPA exceeds the 2-hour horizon;
-    // tcpa_min will naturally evaluate to 120.0 and callers use that sentinel.
-    let tcpa_min = if is_opening {
-        -1.0
+    // Sign of the initial range rate: d/dt |rel_pos|² at t=0 equals
+    // 2·dot(rel_pos, rel_vel).  A negative dot product means the target is
+    // closing *right now*, even when the true CPA lies inside the first
+    // CPA_STEP_S sampling step (where d(0) < d(CPA_STEP_S) would otherwise
+    // misclassify the contact as opening).  The target's RoT does not change
+    // its velocity direction at t=0, so straight-line velocities suffice.
+    let rel_vx = tgt_sog * tgt_cog.sin() - own_vx;
+    let rel_vy = tgt_sog * tgt_cog.cos() - own_vy;
+    let range_rate_dot = tgt_x0 * rel_vx + tgt_y0 * rel_vy;
+
+    // Convention: a zero range rate (parallel movers at constant range) is
+    // treated as opening — the range is not decreasing, so the CPA is "now"
+    // and the -1.0 sentinel applies.
+    let is_opening = best_step == 0 && range_rate_dot >= 0.0;
+
+    let (best_d_sq, ghost_t) = if best_step == 0 && !is_opening {
+        // Closing, but the true CPA falls inside the first sampling step.
+        // Analytic linear CPA time t* = −dot(p,v)/|v|², clamped to the first
+        // step (a realistic RoT barely bends the track within 10 s; the
+        // ghost/range below still use the exact arc).  |v|² > 0 is implied
+        // by range_rate_dot < 0.  Guard with the sampled minimum so a
+        // pathological hard turn can never worsen the reported CPA.
+        let rel_v_sq = rel_vx * rel_vx + rel_vy * rel_vy;
+        let t_star = (-range_rate_dot / rel_v_sq).min(CPA_STEP_S);
+        let (tx, ty) = target_pos_at(tgt_x0, tgt_y0, tgt_cog, tgt_sog, tgt_rot, t_star);
+        let d_star_sq = (tx - own_vx * t_star).powi(2) + (ty - own_vy * t_star).powi(2);
+        if d_star_sq < best_d_sq {
+            (d_star_sq, t_star)
+        } else {
+            (best_d_sq, 0.0)
+        }
     } else {
-        best_step as f64 * CPA_STEP_S / 60.0
+        (best_d_sq, best_step as f64 * CPA_STEP_S)
     };
 
-    let ghost_t = if is_opening {
-        0.0
-    } else {
-        best_step as f64 * CPA_STEP_S
-    };
+    let cpa_nm = best_d_sq.sqrt() / 1852.0;
+    // When best_step == CPA_STEPS the true TCPA exceeds the 2-hour horizon;
+    // tcpa_min will naturally evaluate to 120.0 and callers use that sentinel.
+    let tcpa_min = if is_opening { -1.0 } else { ghost_t / 60.0 };
+
     let own_gx = own_vx * ghost_t;
     let own_gy = own_vy * ghost_t;
     let (tgt_gx, tgt_gy) = target_pos_at(tgt_x0, tgt_y0, tgt_cog, tgt_sog, tgt_rot, ghost_t);
