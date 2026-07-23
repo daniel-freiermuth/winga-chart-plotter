@@ -7,6 +7,7 @@ use crate::skdata::{
     VesselState,
 };
 use js_sys::Function;
+use serde::Serialize;
 use std::{cell::RefCell, rc::Rc};
 use wasm_bindgen::{prelude::*, JsCast};
 use web_sys::{CloseEvent, ErrorEvent, MessageEvent, WebSocket, WorkerGlobalScope};
@@ -127,7 +128,13 @@ impl SignalKClient {
                     for (i, id) in ids.iter().enumerate() {
                         js_ids.set(i as u32, JsValue::from_str(id));
                     }
-                    let cold_js = serde_wasm_bindgen::to_value(&cold).unwrap_or(JsValue::NULL);
+                    // `serialize_missing_as_null`: cold entries are full per-vessel
+                    // snapshots, and a retracted `sk_cpa` must arrive as an explicit
+                    // `null` (the default serializer would emit `undefined`, which the
+                    // JS coldMap merge cannot tell apart from "field absent → retain").
+                    let cold_js = cold
+                        .serialize(&serde_wasm_bindgen::Serializer::new().serialize_missing_as_null(true))
+                        .unwrap_or(JsValue::NULL);
                     let payload = js_sys::Object::new();
                     let _ = js_sys::Reflect::set(
                         &payload,

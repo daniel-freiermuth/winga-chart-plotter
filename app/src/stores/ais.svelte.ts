@@ -34,7 +34,7 @@ export interface AisColdData {
   // From AIS stream (SignalK):
   name?: string | undefined;
   mmsi?: string | undefined;
-  /** CPA/TCPA published by a SK plugin (e.g. signalk-derived-data). Optional — absent when no plugin is running. */
+  /** CPA/TCPA published by a SK plugin (e.g. signalk-derived-data). Absent when no plugin is running or the server retracted it. */
   skCpa?: SkClosestApproach | undefined;
   // From REST API (fetchVesselInfo):
   shipType?: string | undefined;
@@ -122,7 +122,7 @@ function createAisStore() {
     updateBinary(
       hot: ArrayBuffer,
       newIds: string[],
-      cold: { id: string; name?: string; mmsi?: string; skCpa?: SkClosestApproach }[],
+      cold: { id: string; name?: string; mmsi?: string; skCpa?: SkClosestApproach | null }[],
     ) {
       hotData = new Float64Array(hot);
       ids = newIds;
@@ -133,7 +133,9 @@ function createAisStore() {
           id: c.id,
           name:  c.name  ?? existing?.name,
           mmsi:  c.mmsi  ?? existing?.mmsi,
-          skCpa: c.skCpa ?? existing?.skCpa,
+          // `null` is an explicit retraction from the server — clear it. Only a
+          // genuinely absent field (undefined) retains the previous value.
+          skCpa: c.skCpa === null ? undefined : (c.skCpa ?? existing?.skCpa),
         });
       }
     },

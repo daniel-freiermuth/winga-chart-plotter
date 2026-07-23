@@ -157,7 +157,9 @@ pub struct AisColdData {
     pub name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mmsi: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// Serialized unconditionally: `None` becomes an explicit `null` so the JS
+    /// side can distinguish "server retracted the CPA" from "field not present"
+    /// (its coldMap merge retains previous values for absent fields).
     pub sk_cpa: Option<SkClosestApproach>,
 }
 
