@@ -531,6 +531,61 @@ mod tests {
     }
 
     #[test]
+    fn test_cpa_across_antimeridian() {
+        // Own: 179.95°E on the equator, heading east (cog=π/2) at 5 m/s.
+        // Target: 179.95°W (= -179.95), stationary — a true separation of
+        // 0.1° of longitude ≈ 11.1 km, directly ahead.  Own ship covers
+        // 36 km in the 2 h horizon, so CPA must be ~0.
+        // A raw lon delta of -359.9° would instead place the target
+        // ~40 000 km away and report a garbage CPA.
+        let r = cpa_core(
+            179.95,
+            0.0,
+            std::f64::consts::FRAC_PI_2,
+            5.0,
+            -179.95,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+        );
+        assert!(
+            r.cpa_nm < 0.1,
+            "CPA across the antimeridian should be ~0 nm, got {} nm",
+            r.cpa_nm
+        );
+        assert!(
+            r.tcpa_min > 0.0,
+            "dead-ahead stationary target must be converging, got tcpa_min={}",
+            r.tcpa_min
+        );
+        // Control: the identical geometry centred on lon 0 must agree.
+        let control = cpa_core(
+            -0.05,
+            0.0,
+            std::f64::consts::FRAC_PI_2,
+            5.0,
+            0.05,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+        );
+        assert!(
+            (r.cpa_nm - control.cpa_nm).abs() < 0.01,
+            "antimeridian CPA ({} nm) should match lon-0 control ({} nm)",
+            r.cpa_nm,
+            control.cpa_nm
+        );
+        assert!(
+            (r.tcpa_min - control.tcpa_min).abs() < 0.2,
+            "antimeridian TCPA ({}) should match lon-0 control ({})",
+            r.tcpa_min,
+            control.tcpa_min
+        );
+    }
+
+    #[test]
     fn test_cpa_nan_inputs() {
         let r = gc_compute_cpa(f64::NAN, 0.0, 0.0, 5.0, 0.0, 0.0, 0.0, 5.0, 0.0);
         assert!(r.cpa_nm.is_nan(), "NaN input should propagate to cpa_nm");
