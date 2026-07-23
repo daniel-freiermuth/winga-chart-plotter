@@ -13,17 +13,22 @@
   let container = $state<HTMLDivElement | undefined>();
   let visible   = $state(false);
 
-  // Mount MapThumb only once the card enters the viewport.  A 200 px root margin
-  // pre-initialises tiles one card-height before the user scrolls there, hiding
-  // the load latency.  Once revealed, we never re-hide (prevents flicker on
-  // scroll-back and keeps logic simple; the picker's {#if isOpen} destroys
-  // everything on close anyway).
+  // Mount MapThumb only while the card is near the viewport.  A 200 px root
+  // margin pre-initialises tiles one card-height before the user scrolls
+  // there, hiding the load latency.  Cards that scroll away again are
+  // UN-mounted: every mounted MapThumb holds a live WebGL context, browsers
+  // cap those at ~16 per page and evict the OLDEST live context when the cap
+  // is exceeded — which is the main chart map created at startup.  Keeping
+  // only near-viewport thumbs alive bounds the context count; the picker's
+  // {#if isOpen} still destroys everything on close.
   $effect(() => {
     const el = container;
     if (!el) return;
     const observer = new IntersectionObserver(
       (entries) => {
-        if (entries[0]?.isIntersecting) visible = true;
+        // Entries are ordered oldest → newest; only the latest state counts.
+        const last = entries.at(-1);
+        if (last) visible = last.isIntersecting;
       },
       { rootMargin: '200px' },
     );
