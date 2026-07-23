@@ -1,4 +1,5 @@
 import { SvelteSet } from 'svelte/reactivity';
+import { resolveEnabledIds } from '../lib/baseLayerPrefs';
 
 export interface BaseLayer {
   id: string;
@@ -26,15 +27,11 @@ export const BASE_LAYERS: BaseLayer[] = [
 const LS_BASE_LAYERS_KEY = 'base-layers-enabled';
 
 function loadEnabledIds(): string[] {
+  let raw: string | null = null;
   try {
-    const raw = localStorage.getItem(LS_BASE_LAYERS_KEY);
-    if (raw) {
-      // Filter to known IDs — handles migration from the old two-entry format.
-      const known = new Set(BASE_LAYERS.map(l => l.id));
-      return (JSON.parse(raw) as string[]).filter(id => known.has(id));
-    }
-  } catch { /* ignore corrupt storage */ }
-  return BASE_LAYERS.map(l => l.id);
+    raw = localStorage.getItem(LS_BASE_LAYERS_KEY);
+  } catch { /* storage unavailable */ }
+  return resolveEnabledIds(raw, BASE_LAYERS.map(l => l.id));
 }
 
 function createBaseLayersStore() {
