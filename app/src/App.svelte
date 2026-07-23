@@ -69,7 +69,7 @@
     cog?: number; sog?: number; heading?: number;
     course?: { nextPoint?: { longitude: number; latitude: number }; previousPoint?: { longitude: number; latitude: number }; activeRoute?: { href: string; name?: string; pointIndex: number; reverse: boolean } };
   }
-  interface AisColdData { id: string; name?: string; mmsi?: string; }
+  interface AisColdData { id: string; name?: string; mmsi?: string; skCpa?: { distanceM: number; timeToS: number } | null; }
   type WorkerMsg =
     | { type: 'state';  state: WsState }
     | { type: 'status'; status: number }

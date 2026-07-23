@@ -157,7 +157,9 @@ pub struct AisColdData {
     pub name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mmsi: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// Serialized unconditionally: `None` becomes an explicit `null` so the JS
+    /// side can distinguish "server retracted the CPA" from "field not present"
+    /// (its coldMap merge retains previous values for absent fields).
     pub sk_cpa: Option<SkClosestApproach>,
 }
 
@@ -1225,6 +1227,36 @@ mod tests {
         assert!(
             targets[0].sk_cpa.is_none(),
             "null delta should clear sk_cpa"
+        );
+    }
+
+    #[test]
+    fn test_cleared_sk_cpa_serializes_as_explicit_null() {
+        // A CPA that the server retracted (null delta) must be observable by the
+        // JS side: the cold-data entry must carry an explicit `"skCpa": null`,
+        // not an absent field — absence is treated as "retain previous value"
+        // by the app's coldMap merge.
+        let mut storage = Storage::default();
+        storage.set_self("vessels.urn:mrn:signalk:uuid:self");
+        let delta1 = r#"{"context":"vessels.urn:mrn:imo:mmsi:111111111","updates":[{"$source":"x","values":[{"path":"navigation.position","value":{"latitude":60.0,"longitude":25.0}},{"path":"navigation.datetime","value":"2024-01-01T12:00:00.000Z"},{"path":"navigation.closestApproach","value":{"distance":800.0,"timeTo":120.0}}]}]}"#;
+        apply_message(&mut storage, delta1).unwrap();
+        let delta2 = r#"{"context":"vessels.urn:mrn:imo:mmsi:111111111","updates":[{"$source":"x","values":[{"path":"navigation.closestApproach","value":null}]}]}"#;
+        apply_message(&mut storage, delta2).unwrap();
+        let targets = extract_ais_targets(&storage, 1704110400000.0 + 1000.0, 600_000.0);
+        assert_eq!(targets.len(), 1);
+        let t = &targets[0];
+        // Mirror how `extract_ais_binary` builds the cold entry for this vessel.
+        let cold = AisColdData {
+            id: t.id.clone(),
+            name: t.name.clone(),
+            mmsi: t.mmsi.clone(),
+            sk_cpa: t.sk_cpa.clone(),
+        };
+        let json = serde_json::to_string(&cold).unwrap();
+        assert!(
+            json.contains("\"skCpa\":null"),
+            "cleared sk_cpa must serialize as an explicit null so the app can \
+             distinguish retraction from absence, got: {json}"
         );
     }
 }
