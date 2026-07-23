@@ -396,6 +396,64 @@ mod tests {
     }
 
     #[test]
+    fn test_cpa_converging_within_first_step_is_not_opening() {
+        // Own: origin, stationary.  Target: 40 m north, heading south (cog=π), 10 m/s.
+        // True CPA ≈ 0 m at t = 4 s — inside the first 10 s sampling step.
+        // d(0) = 40 m < d(10 s) = 60 m, so the step of minimum sampled range is 0,
+        // but the target is closing hard: this must NOT be reported as opening.
+        let r = cpa_core(
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            40.0 / M_PER_DEG_LAT,
+            std::f64::consts::PI,
+            10.0,
+            0.0,
+        );
+        assert!(
+            r.tcpa_min >= 0.0,
+            "converging target with TCPA < 10 s must not get the opening sentinel, got tcpa_min={}",
+            r.tcpa_min
+        );
+        assert!(
+            (r.tcpa_min - 4.0 / 60.0).abs() < 0.05,
+            "TCPA should be ~4 s (0.067 min), got {} min",
+            r.tcpa_min
+        );
+        assert!(
+            r.cpa_nm < 5.0 / 1852.0,
+            "CPA should be ~0 m, not the t=0 range of 40 m, got {} nm",
+            r.cpa_nm
+        );
+    }
+
+    #[test]
+    fn test_cpa_parallel_same_velocity_is_opening() {
+        // Both vessels heading north at 5 m/s, target 100 m east: constant range,
+        // zero range rate.  Convention: range not decreasing → opening sentinel,
+        // CPA equals the current distance.
+        let r = cpa_core(
+            0.0,
+            0.0,
+            0.0,
+            5.0,
+            100.0 / M_PER_DEG_LAT,
+            0.0,
+            0.0,
+            5.0,
+            0.0,
+        );
+        assert_eq!(r.tcpa_min, -1.0, "constant-range parallel movers should be opening");
+        assert!(
+            (r.cpa_nm - 100.0 / 1852.0).abs() < 0.001,
+            "CPA should equal current distance, got {} nm",
+            r.cpa_nm
+        );
+    }
+
+    #[test]
     fn test_cpa_beyond_2h() {
         // Slow closing — target 10 km away, combined closing speed 0.5 m/s → ETA ≈ 20 000 s >> 7 200 s.
         let r = cpa_core(
