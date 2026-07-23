@@ -2189,12 +2189,31 @@
     if (aisAgeTimer !== null) { clearInterval(aisAgeTimer); aisAgeTimer = null; }
   });
 
+  // Bounded-staleness refresh for the CPA effect below: own vessel state is read
+  // untracked there (to avoid 60 Hz reruns on heading ticks), so its only recompute
+  // triggers would otherwise be AIS batches and selection changes. Class-B targets
+  // legitimately report every 30 s–3 min; at 6 kn own ship moves ~550 m in 3 min, so
+  // the displayed CPA/TCPA would lag own-ship motion by the *remote* target's report
+  // interval. This tick re-runs the effect at most every CPA_OWN_REFRESH_MS while a
+  // target is selected, so it re-reads the current vesselState with staleness bounded
+  // by the interval instead. Timer runs only while a selection is live; the effect
+  // teardown clears it on deselection and component destroy.
+  const CPA_OWN_REFRESH_MS = 5000;
+  let cpaOwnTick = $state(0);
+  $effect(() => {
+    if (ais.selectedId === null) return; // no CPA display → no timer
+    const timer = setInterval(() => { cpaOwnTick++; }, CPA_OWN_REFRESH_MS);
+    return () => { clearInterval(timer); };
+  });
+
   // Recompute Rust CPA and rebuild CPA visualization whenever selection or AIS data changes.
-  // Own vessel state is read untracked to avoid rerunning at 60 Hz on heading ticks.
+  // Own vessel state is read untracked to avoid rerunning at 60 Hz on heading ticks;
+  // cpaOwnTick bounds the resulting staleness (see above).
   $effect(() => {
     const selId  = ais.selectedId;
     const selIdx = ais.selectedIndex;
     const hotData = ais.hotData;
+    void cpaOwnTick; // register bounded-staleness own-state refresh (see above)
 
     if (!selId || selIdx === null || !hotData || !map || !mapLoaded) {
       cpaLayerGroup = [];
