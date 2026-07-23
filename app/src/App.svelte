@@ -648,6 +648,7 @@
       onpointerdown={onCompassPointerDown}
       onpointerup={onCompassPointerEnd}
       onpointercancel={onCompassPointerEnd}
+      onpointerleave={onCompassPointerEnd}
       onclick={onCompassClick}
     >
       <svg width="52" height="52" viewBox="0 0 44 44" aria-hidden="true">
