@@ -64,7 +64,7 @@ export default ts.config(
     plugins: { 'import-x': importX },
     rules: {
       'import-x/no-extraneous-dependencies': ['error', {
-        devDependencies: ['**/*.config.js', '**/*.config.ts'],
+        devDependencies: ['**/*.config.js', '**/*.config.ts', '**/*.test.ts'],
       }],
     },
   },
