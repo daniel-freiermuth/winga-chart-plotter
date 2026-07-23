@@ -2197,6 +2197,8 @@
     const hotData = ais.hotData;
 
     if (!selId || selIdx === null || !hotData || !map || !mapLoaded) {
+      cpaLabelPopup?.remove();
+      cpaLabelPopup = null;
       cpaLayerGroup = [];
       flushLayers();
       return;
@@ -2216,6 +2218,8 @@
     const ownSog = vs.sog;
 
     if (!ownPos || ownCog === null || ownSog === null) {
+      cpaLabelPopup?.remove();
+      cpaLabelPopup = null;
       cpaLayerGroup = [];
       flushLayers();
       return;
@@ -2228,7 +2232,13 @@
       isNaN(tgtRot) ? 0 : tgtRot,
     );
 
-    if (!rustCpa) { cpaLayerGroup = []; flushLayers(); return; }
+    if (!rustCpa) {
+      cpaLabelPopup?.remove();
+      cpaLabelPopup = null;
+      cpaLayerGroup = [];
+      flushLayers();
+      return;
+    }
 
     // SK CPA from delta stream (present only when a compatible SK plugin is running).
     const skCpaRaw = ais.coldMap.get(selId)?.skCpa ?? null;
