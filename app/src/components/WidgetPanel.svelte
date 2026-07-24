@@ -84,6 +84,15 @@
     return () => { document.removeEventListener('pointerdown', onDocDown, { capture: true }); };
   });
 
+  // Clean up the idle timer if the component is destroyed while arrange mode
+  // is active (e.g. widget removed mid-drag/resize). Without this the 8 s
+  // re-arm chain in resetIdleTimer keeps firing indefinitely.
+  $effect(() => {
+    return () => {
+      if (idleTimer !== null) { clearTimeout(idleTimer); idleTimer = null; }
+    };
+  });
+
   // ── Actions ───────────────────────────────────────────────────────────────
 
   function openConfig(): void {
