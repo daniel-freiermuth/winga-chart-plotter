@@ -587,6 +587,67 @@ mod tests {
             r.tcpa_min,
             control.tcpa_min
         );
+
+        // ── Ghost-coordinate sanity ──
+        // Both vessels should meet near the target's physical location
+        // (−179.95° ≡ 180.05° unwrapped), equator.  Use wrapped longitude
+        // difference so equivalent antimeridian positions are accepted.
+        let wrap = |d: f64| (d + 540.0).rem_euclid(360.0) - 180.0;
+
+        // Latitudes stay on the equator (east-heading, no north/south component).
+        assert!(
+            r.own_lat.abs() < 0.01,
+            "own ghost lat should be near equator, got {}",
+            r.own_lat
+        );
+        assert!(
+            r.tgt_lat.abs() < 0.01,
+            "tgt ghost lat should be near equator, got {}",
+            r.tgt_lat
+        );
+
+        // Own ship should reach the target's physical position (≈ -179.95°).
+        assert!(
+            wrap(r.own_lon - (-179.95)).abs() < 0.02,
+            "own ghost lon should be near ±180°, wrapped Δ={} from -179.95°",
+            wrap(r.own_lon - (-179.95))
+        );
+        // Stationary target ghost must stay at its start position.
+        assert!(
+            wrap(r.tgt_lon - (-179.95)).abs() < 0.02,
+            "tgt ghost lon should be near -179.95°, wrapped Δ={}",
+            wrap(r.tgt_lon - (-179.95))
+        );
+
+        // Ghost latitudes and lon-offsets-from-start must match the control
+        // (same geometry shifted 180° in longitude).
+        assert!(
+            (r.own_lat - control.own_lat).abs() < 0.01,
+            "own ghost lat mismatch: antimeridian={} control={}",
+            r.own_lat, control.own_lat
+        );
+        assert!(
+            (r.tgt_lat - control.tgt_lat).abs() < 0.01,
+            "tgt ghost lat mismatch: antimeridian={} control={}",
+            r.tgt_lat, control.tgt_lat
+        );
+        // Own-ship lon displacement from start: should be identical in both
+        // geometries (≈ 0.1° eastward).
+        let own_dlon_am = r.own_lon - 179.95;
+        let own_dlon_ctrl = control.own_lon - (-0.05);
+        assert!(
+            (own_dlon_am - own_dlon_ctrl).abs() < 0.001,
+            "own ghost Δlon mismatch: antimeridian={} control={}",
+            own_dlon_am, own_dlon_ctrl
+        );
+        // Target lon displacement from own start: identical.
+        let tgt_dlon_am = r.tgt_lon - 179.95;
+        let tgt_dlon_ctrl = control.tgt_lon - (-0.05);
+        assert!(
+            (tgt_dlon_am - tgt_dlon_ctrl).abs() < 0.001,
+            "tgt ghost Δlon mismatch: antimeridian={} control={}",
+            tgt_dlon_am, tgt_dlon_ctrl
+        );
     }
 
     #[test]
