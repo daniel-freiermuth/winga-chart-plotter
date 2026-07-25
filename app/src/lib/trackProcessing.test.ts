@@ -48,11 +48,11 @@ describe('splitToFit', () => {
 });
 
 describe('processTrack antimeridian overflow', () => {
-  it('keeps every segment within ±540° for a track circling westward ~1.7 worlds', () => {
-    // 200 points drifting 3° west each step → 597° of westward accumulation.
-    // After anchor, oldest lon ≈ 720 — must be split, not returned unsplit.
+  it('keeps every segment within ±540° for a track circling westward ~4.2 worlds', () => {
+    // 500 points drifting 3° west each step → 1497° of westward accumulation.
+    // After anchor, oldest lon ≈ 1497 — requires multiple recursive splits.
     const raw: [number, number][] = [];
-    for (let i = 0; i < 200; i++) raw.push([wrap(-3 * i), 10]);
+    for (let i = 0; i < 500; i++) raw.push([wrap(-3 * i), 10]);
     const { coords, overflowSegments } = processTrack(raw);
     for (const seg of [coords, ...overflowSegments]) {
       for (const [lon] of seg) {
@@ -60,13 +60,15 @@ describe('processTrack antimeridian overflow', () => {
         expect(lon).toBeLessThanOrEqual(MAPLIBRE_RANGE);
       }
     }
-    // The old portion of the track must have been split off, not dropped.
-    expect(overflowSegments.length).toBeGreaterThan(0);
+    // Multi-world path must produce more than one overflow segment (recursive split).
+    expect(overflowSegments.length).toBeGreaterThan(1);
   });
 
-  it('keeps every segment within ±540° for a track circling eastward ~1.7 worlds', () => {
+  it('keeps every segment within ±540° for a track circling eastward ~4.2 worlds', () => {
+    // 500 points drifting 3° east each step → 1497° of eastward accumulation.
+    // After anchor, oldest lon ≈ -1497 — requires multiple recursive splits.
     const raw: [number, number][] = [];
-    for (let i = 0; i < 200; i++) raw.push([wrap(3 * i), 10]);
+    for (let i = 0; i < 500; i++) raw.push([wrap(3 * i), 10]);
     const { coords, overflowSegments } = processTrack(raw);
     for (const seg of [coords, ...overflowSegments]) {
       for (const [lon] of seg) {
@@ -74,6 +76,7 @@ describe('processTrack antimeridian overflow', () => {
         expect(lon).toBeLessThanOrEqual(MAPLIBRE_RANGE);
       }
     }
-    expect(overflowSegments.length).toBeGreaterThan(0);
+    // Multi-world path must produce more than one overflow segment (recursive split).
+    expect(overflowSegments.length).toBeGreaterThan(1);
   });
 });
