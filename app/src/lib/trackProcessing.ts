@@ -92,8 +92,10 @@ export function splitToFit(pts: [number, number][]): [number, number][][] {
 
 /**
  * Bidirectional split for routes (and any arbitrary line that may circle the globe).
- * Handles both western overflow (< −540°) and eastern overflow (> +540°) by recursively
- * shifting overflow segments by ∓720° into the nearest renderable world copy.
+ * Checks both endpoints for overflow in both directions: the first point can exceed
+ * +540° (westward route after midpoint anchoring) and the last point can drop below
+ * −540° (westward route ending in overflow), or vice-versa for eastward routes.
+ * Recursively shifts overflow segments by ∓720° into the nearest renderable world copy.
  * Returns an array of segments all within ±540° longitude.
  */
 export function splitRouteSegments(pts: [number, number][]): [number, number][][] {
@@ -104,11 +106,23 @@ export function splitRouteSegments(pts: [number, number][]): [number, number][][
     const west = pts.slice(0, si + 1).map(p => [p[0] + 720, p[1]] as [number, number]);
     return [...splitRouteSegments(west), ...splitRouteSegments(pts.slice(si))];
   }
+  if (pts[0]![0] > 540) {
+    let si = 0;
+    while (si < pts.length - 1 && pts[si]![0] > 540) si++;
+    const east = pts.slice(0, si + 1).map(p => [p[0] - 720, p[1]] as [number, number]);
+    return [...splitRouteSegments(east), ...splitRouteSegments(pts.slice(si))];
+  }
   if (pts[pts.length - 1]![0] > 540) {
     let si = pts.length - 1;
     while (si > 0 && pts[si]![0] > 540) si--;
     const east = pts.slice(si).map(p => [p[0] - 720, p[1]] as [number, number]);
     return [...splitRouteSegments(pts.slice(0, si + 1)), ...splitRouteSegments(east)];
+  }
+  if (pts[pts.length - 1]![0] < -540) {
+    let si = pts.length - 1;
+    while (si > 0 && pts[si]![0] < -540) si--;
+    const west = pts.slice(si).map(p => [p[0] + 720, p[1]] as [number, number]);
+    return [...splitRouteSegments(pts.slice(0, si + 1)), ...splitRouteSegments(west)];
   }
   return [pts];
 }
