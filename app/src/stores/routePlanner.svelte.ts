@@ -10,6 +10,7 @@ function createRoutePlannerStore() {
   let waypoints        = $state<PlannerWaypoint[]>([]);
   let editingRouteUuid = $state<string | null>(null);
   let name             = $state('');
+  let anchorPoint      = $state<PlannerWaypoint | null>(null);
 
   const totalDistanceNm = $derived.by(() => {
     let total = 0;
@@ -24,6 +25,7 @@ function createRoutePlannerStore() {
     waypoints = [];
     editingRouteUuid = null;
     name = '';
+    anchorPoint = null;
   }
 
   return {
@@ -31,6 +33,7 @@ function createRoutePlannerStore() {
     get waypoints(): PlannerWaypoint[] { return waypoints; },
     get totalDistanceNm(): number      { return totalDistanceNm; },
     get editingRouteUuid(): string | null { return editingRouteUuid; },
+    get anchorPoint(): PlannerWaypoint | null { return anchorPoint; },
     get name(): string                 { return name; },
     set name(v: string)                { name = v; },
 
@@ -38,11 +41,14 @@ function createRoutePlannerStore() {
     enterAt(lon: number, lat: number): void { active = true; name = ''; waypoints = [{ lon, lat }]; },
     exit(): void   { reset(); },
 
-    /** Enter planner pre-loaded with an existing route's waypoints for editing. */
-    loadRoute(uuid: string, routeName: string, wpts: PlannerWaypoint[]): void {
+    /** Enter planner pre-loaded with an existing route's waypoints for editing.
+     *  `anchor` is the coordinates of the waypoint currently being navigated to,
+     *  used after save to restore navigation to the nearest equivalent point. */
+    loadRoute(uuid: string, routeName: string, wpts: PlannerWaypoint[], anchor: PlannerWaypoint | null = null): void {
       waypoints = [...wpts];
       editingRouteUuid = uuid;
       name = routeName;
+      anchorPoint = anchor;
       active = true;
     },
 

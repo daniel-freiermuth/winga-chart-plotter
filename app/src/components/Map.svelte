@@ -1759,6 +1759,7 @@
     const idx = typeof idxRaw === 'number' ? idxRaw : null;
     const isCurrentNext = idx !== null && idx === route.pointIndex;
     const canSetNext = idx !== null && !isCurrentNext && auth.isLoggedIn;
+    const canEdit    = auth.isLoggedIn && route.activeUuid !== null && route.geometry !== null;
     const pointLabel = idx !== null ? `Point ${String(idx + 1)}` : null;
     const popup = openPopup(new maplibregl.Popup({ closeButton: false, offset: 10, maxWidth: 'none' })
       .setLngLat(lngLat)
@@ -1768,6 +1769,8 @@
           <div class="ais-links" style="margin-top:0">
             ${idx !== null ? `<button class="popup-settings-btn set-next-wpt-btn" data-idx="${String(idx)}"
               ${canSetNext ? '' : isCurrentNext ? 'disabled title="Already the next waypoint"' : 'disabled title="Login required"'}>Set as next waypoint</button>` : ''}
+            <button class="popup-settings-btn edit-active-route-btn"
+              ${canEdit ? '' : `disabled title="${auth.isLoggedIn ? 'Route geometry not yet loaded' : 'Login required'}"`}>Edit route</button>
             <button class="popup-settings-btn stop-nav-btn"
               ${canStop ? '' : 'disabled title="Login required"'}>Stop navigation</button>
             <button class="popup-settings-btn" data-settings="routes">Route settings</button>
@@ -1783,6 +1786,19 @@
         popup.remove();
         setActiveRoutePointIndex(settings.signalkHttpUrl, Number(setNextBtn.dataset['idx']), auth.authHeaders)
           .catch((err: unknown) => { console.error('[route] Failed to set next waypoint:', err); });
+        return;
+      }
+      const editRouteBtn = el.closest<HTMLButtonElement>('.edit-active-route-btn');
+      if (editRouteBtn && !editRouteBtn.disabled) {
+        popup.remove();
+        const uuid = route.activeUuid;
+        const geo  = route.geometry;
+        if (uuid && geo) {
+          const coords = geo.geometry.coordinates as [number, number][];
+          const anchorCoord = coords[route.pointIndex] as [number, number] | undefined;
+          const anchor = anchorCoord ? { lon: anchorCoord[0], lat: anchorCoord[1] } : null;
+          routePlanner.loadRoute(uuid, route.routeName ?? '', coords.map(([lon, lat]) => ({ lon, lat })), anchor);
+        }
         return;
       }
       const stopBtn = el.closest<HTMLButtonElement>('.stop-nav-btn');

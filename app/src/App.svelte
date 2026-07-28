@@ -8,7 +8,8 @@
   } from '@fortawesome/free-solid-svg-icons';
   import { routePlanner } from './stores/routePlanner.svelte';
   import { waypoints } from './stores/waypoints.svelte';
-  import { saveRoute, updateRoute, raiseMob } from './lib/wasmRest';
+  import { saveRoute, updateRoute, raiseMob, activateRoute, setActiveRoutePointIndex } from './lib/wasmRest';
+  import { gcDistanceNm } from './lib/wasmGeo';
 
   let plannerSaving = $state(false);
   let plannerDiscardConfirm = $state(false);
@@ -26,14 +27,36 @@
     if (!routePlanner.name.trim()) return;
     plannerSaving = true;
     plannerError = null;
+    // Capture before any async call — state is cleared by routePlanner.exit().
+    const editingUuid           = routePlanner.editingRouteUuid;
+    const wasEditingActiveRoute = editingUuid !== null && editingUuid === route.activeUuid;
+    const anchorPoint           = wasEditingActiveRoute ? routePlanner.anchorPoint : null;
     try {
-      if (routePlanner.editingRouteUuid) {
-        await updateRoute(settings.signalkHttpUrl, routePlanner.editingRouteUuid, routePlanner.name.trim(), routePlanner.waypoints, auth.authHeaders);
+      if (editingUuid) {
+        await updateRoute(settings.signalkHttpUrl, editingUuid, routePlanner.name.trim(), routePlanner.waypoints, auth.authHeaders);
       } else {
         await saveRoute(settings.signalkHttpUrl, routePlanner.name.trim(), routePlanner.waypoints, auth.authHeaders);
       }
+      // Capture new waypoints before exit() wipes them.
+      const newWaypoints = [...routePlanner.waypoints];
       routePlanner.exit();
       await routes.load(settings.signalkHttpUrl);
+      // Re-anchor navigation to the closest waypoint in the updated route.
+      if (wasEditingActiveRoute && editingUuid) {
+        await activateRoute(settings.signalkHttpUrl, editingUuid, auth.authHeaders);
+        if (anchorPoint && newWaypoints.length > 0) {
+          let closestIdx  = 0;
+          let closestDist = Infinity;
+          for (let i = 0; i < newWaypoints.length; i++) {
+            const wpt = newWaypoints[i]!;
+            const d   = gcDistanceNm(anchorPoint.lon, anchorPoint.lat, wpt.lon, wpt.lat);
+            if (d < closestDist) { closestDist = d; closestIdx = i; }
+          }
+          if (closestIdx > 0) {
+            await setActiveRoutePointIndex(settings.signalkHttpUrl, closestIdx, auth.authHeaders);
+          }
+        }
+      }
     } catch (e) {
       console.error('[planner] Failed to save route:', e);
       plannerError = String(e);
