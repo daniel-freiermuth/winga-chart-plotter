@@ -2,6 +2,23 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.20.0] - 2026-07-28
+
+### Added
+- Active route can now be edited while navigating.
+
+### Fixed
+- CPA calculations correct for vessels near the antimeridian.
+- CPA approach/opening direction classified by initial range rate instead of the first sample, improving accuracy.
+- CPA label popup no longer left stranded when CPA computation is bailed out.
+- (browser-gps): CPA readout bounded to a 5 s staleness limit via an own-state refresh tick.
+- Cleared Signal K CPA values now properly clear the UI.
+- AIS target disambiguation keyed by stable vessel ID to prevent misidentification.
+- Fresh installs default to a single base layer; migrated settings clamped to remove conflicts.
+- Chart-picker previews unmount when scrolled out of view, preventing WebGL context exhaustion.
+- Compass long-press timer cancelled when the pointer leaves the button.
+- Widget arrange-mode idle timer released on component destroy.
+
 ## [0.19.1] - 2026-07-18
 
 ### Fixed
