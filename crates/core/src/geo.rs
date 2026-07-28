@@ -136,7 +136,11 @@ fn cpa_core(
     tgt_rot: f64,
 ) -> CpaResult {
     let cos_lat = (own_lat * std::f64::consts::PI / 180.0).cos();
-    let tgt_x0 = (tgt_lon - own_lon) * M_PER_DEG_LAT * cos_lat;
+    // Shortest signed longitude difference, wrapped into [-180, 180], so a
+    // target just across the antimeridian projects a few km away rather
+    // than ~40 000 km (a raw delta of ±359.9°).
+    let d_lon = (tgt_lon - own_lon + 540.0).rem_euclid(360.0) - 180.0;
+    let tgt_x0 = d_lon * M_PER_DEG_LAT * cos_lat;
     let tgt_y0 = (tgt_lat - own_lat) * M_PER_DEG_LAT;
 
     let own_vx = own_sog * own_cog.sin();
@@ -527,6 +531,122 @@ mod tests {
             "RoT turning away should increase CPA: linear={} curved={}",
             linear.cpa_nm,
             curved.cpa_nm
+        );
+    }
+
+    #[test]
+    fn test_cpa_across_antimeridian() {
+        // Own: 179.95°E on the equator, heading east (cog=π/2) at 5 m/s.
+        // Target: 179.95°W (= -179.95), stationary — a true separation of
+        // 0.1° of longitude ≈ 11.1 km, directly ahead.  Own ship covers
+        // 36 km in the 2 h horizon, so CPA must be ~0.
+        // A raw lon delta of -359.9° would instead place the target
+        // ~40 000 km away and report a garbage CPA.
+        let r = cpa_core(
+            179.95,
+            0.0,
+            std::f64::consts::FRAC_PI_2,
+            5.0,
+            -179.95,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+        );
+        assert!(
+            r.cpa_nm < 0.1,
+            "CPA across the antimeridian should be ~0 nm, got {} nm",
+            r.cpa_nm
+        );
+        assert!(
+            r.tcpa_min > 0.0,
+            "dead-ahead stationary target must be converging, got tcpa_min={}",
+            r.tcpa_min
+        );
+        // Control: the identical geometry centred on lon 0 must agree.
+        let control = cpa_core(
+            -0.05,
+            0.0,
+            std::f64::consts::FRAC_PI_2,
+            5.0,
+            0.05,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+        );
+        assert!(
+            (r.cpa_nm - control.cpa_nm).abs() < 0.01,
+            "antimeridian CPA ({} nm) should match lon-0 control ({} nm)",
+            r.cpa_nm,
+            control.cpa_nm
+        );
+        assert!(
+            (r.tcpa_min - control.tcpa_min).abs() < 0.2,
+            "antimeridian TCPA ({}) should match lon-0 control ({})",
+            r.tcpa_min,
+            control.tcpa_min
+        );
+
+        // ── Ghost-coordinate sanity ──
+        // Both vessels should meet near the target's physical location
+        // (−179.95° ≡ 180.05° unwrapped), equator.  Use wrapped longitude
+        // difference so equivalent antimeridian positions are accepted.
+        let wrap = |d: f64| (d + 540.0).rem_euclid(360.0) - 180.0;
+
+        // Latitudes stay on the equator (east-heading, no north/south component).
+        assert!(
+            r.own_lat.abs() < 0.01,
+            "own ghost lat should be near equator, got {}",
+            r.own_lat
+        );
+        assert!(
+            r.tgt_lat.abs() < 0.01,
+            "tgt ghost lat should be near equator, got {}",
+            r.tgt_lat
+        );
+
+        // Own ship should reach the target's physical position (≈ -179.95°).
+        assert!(
+            wrap(r.own_lon - (-179.95)).abs() < 0.02,
+            "own ghost lon should be near ±180°, wrapped Δ={} from -179.95°",
+            wrap(r.own_lon - (-179.95))
+        );
+        // Stationary target ghost must stay at its start position.
+        assert!(
+            wrap(r.tgt_lon - (-179.95)).abs() < 0.02,
+            "tgt ghost lon should be near -179.95°, wrapped Δ={}",
+            wrap(r.tgt_lon - (-179.95))
+        );
+
+        // Ghost latitudes and lon-offsets-from-start must match the control
+        // (same geometry shifted 180° in longitude).
+        assert!(
+            (r.own_lat - control.own_lat).abs() < 0.01,
+            "own ghost lat mismatch: antimeridian={} control={}",
+            r.own_lat, control.own_lat
+        );
+        assert!(
+            (r.tgt_lat - control.tgt_lat).abs() < 0.01,
+            "tgt ghost lat mismatch: antimeridian={} control={}",
+            r.tgt_lat, control.tgt_lat
+        );
+        // Own-ship lon displacement from start: should be identical in both
+        // geometries (≈ 0.1° eastward).
+        let own_dlon_am = r.own_lon - 179.95;
+        let own_dlon_ctrl = control.own_lon - (-0.05);
+        assert!(
+            (own_dlon_am - own_dlon_ctrl).abs() < 0.001,
+            "own ghost Δlon mismatch: antimeridian={} control={}",
+            own_dlon_am, own_dlon_ctrl
+        );
+        // Target lon displacement from own start: identical.
+        let tgt_dlon_am = r.tgt_lon - 179.95;
+        let tgt_dlon_ctrl = control.tgt_lon - (-0.05);
+        assert!(
+            (tgt_dlon_am - tgt_dlon_ctrl).abs() < 0.001,
+            "tgt ghost Δlon mismatch: antimeridian={} control={}",
+            tgt_dlon_am, tgt_dlon_ctrl
         );
     }
 
