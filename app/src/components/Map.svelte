@@ -460,7 +460,7 @@
     pick(x, y) {
       if (!overlay) return null;
       if (routePlanner.active) return null;
-      if (overlay.pickMultipleObjects({ x, y, radius: 5, layerIds: ['own-vessel-icon'] }).length === 0) return null;
+      if (overlay.pickMultipleObjects({ x, y, radius: 16, layerIds: ['own-vessel-icon'] }).length === 0) return null;
       return {
         kind: 'own-vessel',
         onTap:         (lngLat) => { showOwnVesselPopup(lngLat); },
@@ -473,7 +473,7 @@
     pick(x, y) {
       if (!overlay) return null;
       if (routePlanner.active) return null;
-      const hits = overlay.pickMultipleObjects({ x, y, radius: 5, layerIds: ['ais-confirmed-main', 'ais-ghost-main', 'ais-mob-icon'] });
+      const hits = overlay.pickMultipleObjects({ x, y, radius: 16, layerIds: ['ais-confirmed-main', 'ais-ghost-main', 'ais-mob-icon'] });
       // eslint-disable-next-line svelte/prefer-svelte-reactivity
       const seen = new Set<number>();
       const uniq: { idx: number; coord: [number, number]; anchorPos: { longitude: number; latitude: number } | undefined }[] = [];
