@@ -28,7 +28,6 @@
   import { auth } from '../stores/auth.svelte';
   import { fetchAisVesselTrack, navigateToPoint, clearCourse, activateRoute, setActiveRoutePointIndex, deleteRoute, saveWaypoint, updateWaypoint, deleteWaypoint } from '../lib/wasmRest';
   import { extrapolatePos } from '../lib/deadReckoning';
-  import { resolveDisambigEntry } from '../lib/disambig';
   import { SvelteMap } from 'svelte/reactivity';
   import { mapView, loadSavedView } from '../stores/mapView.svelte';
   import { visibility } from '../stores/visibility.svelte';
@@ -383,8 +382,9 @@
   // ─── Gesture Recognizer ────────────────────────────────────────────────────
   //
   // Each Interactable owns its pick logic and its HitTarget behavior.
-  // INTERACTIONS defines priority order — first match wins.
-  // hit() iterates them; handleGesture() dispatches to the matched target.
+  // Priority interactables: first match wins (drag handles, mode-specific labels).
+  // Candidate interactables: all hits are collected; 2+ triggers the unified picker.
+  // hit() handles drag detection (priority-first). hits() handles taps (two-tier).
 
   const plannerHandleInteractable: Interactable = {
     pick(x, y) {
@@ -394,6 +394,7 @@
       const { idx } = p.object as { idx: number };
       return {
         kind: 'planner-handle',
+        label: '',
         drag: {
           snapsToTargets: false,
           onMove:    (lngLat) => { routePlanner.moveWaypoint(idx, lngLat.lng, lngLat.lat); },
@@ -414,6 +415,7 @@
       const { segIdx } = p.object as { segIdx: number };
       return {
         kind: 'planner-segment',
+        label: '',
         onTap:         (lngLat) => { routePlanner.insertWaypoint(segIdx + 1, lngLat.lng, lngLat.lat); },
         onContextMenu: () => { /* noop */ },
       };
@@ -429,6 +431,7 @@
       const rulerId = (p.object as { ruler: { id: string } }).ruler.id;
       return {
         kind: 'ruler-label',
+        label: '',
         onTap:         (_, clientX, clientY) => { rulerPopup = { rulerId, x: clientX, y: clientY }; },
         onContextMenu: () => { /* noop */ },
       };
@@ -444,6 +447,7 @@
       const { rulerId, endpoint } = p.object as { rulerId: string; endpoint: 'a' | 'b' };
       return {
         kind: 'ruler-handle',
+        label: '',
         drag: {
           snapsToTargets: true,
           onMove:    (lngLat) => { rulers.moveEndpoint(rulerId, endpoint, lngLat.lng, lngLat.lat); },
@@ -463,47 +467,45 @@
       if (overlay.pickMultipleObjects({ x, y, radius: 16, layerIds: ['own-vessel-icon'] }).length === 0) return null;
       return {
         kind: 'own-vessel',
+        label: '',
         onTap:         (lngLat) => { showOwnVesselPopup(lngLat); },
         onContextMenu: () => { /* noop */ },
       };
     },
   };
 
+  // AIS vessels — returns one HitTarget per vessel in pick radius. Each target captures a
+  // stable vessel ID (not a batch index) so the closure is safe if a batch update arrives
+  // between the disambig popup appearing and the user selecting an entry.
   const aisVesselInteractable: Interactable = {
     pick(x, y) {
       if (!overlay) return null;
       if (routePlanner.active) return null;
-      const hits = overlay.pickMultipleObjects({ x, y, radius: 16, layerIds: ['ais-confirmed-main', 'ais-ghost-main', 'ais-mob-icon'] });
+      const rawHits = overlay.pickMultipleObjects({ x, y, radius: 16, layerIds: ['ais-confirmed-main', 'ais-ghost-main', 'ais-mob-icon'] });
       // eslint-disable-next-line svelte/prefer-svelte-reactivity
       const seen = new Set<number>();
-      const uniq: { idx: number; coord: [number, number]; anchorPos: { longitude: number; latitude: number } | undefined }[] = [];
-      for (const p of hits) {
+      const targets: HitTarget[] = [];
+      for (const p of rawHits) {
         const idx = p.object as number | null | undefined;
         if (idx == null || seen.has(idx)) continue;
         seen.add(idx);
-        if (p.coordinate) uniq.push({ idx, coord: p.coordinate as [number, number], anchorPos: computeDrAnchor(idx) });
-      }
-      if (uniq.length === 1) {
-        const { idx, anchorPos } = uniq[0]!;
-        return {
+        if (!p.coordinate) continue;
+        const cold = ais.coldMap.get(ais.ids[idx]!);
+        const vesselId = ais.ids[idx]!; // stable ID — batch may rebuild between pick and tap
+        targets.push({
           kind: 'ais-vessel',
+          label: cold?.name ?? cold?.mmsi?.toString() ?? 'Unknown vessel',
           onTap: () => {
-            const t = ais.getTarget(idx);
-            if (t?.position) handleAisClick(t, anchorPos);
+            // Re-resolve by stable ID at tap time; batch index may have shifted.
+            const curIdx = ais.ids.indexOf(vesselId);
+            if (curIdx === -1) return;
+            const t = ais.getTarget(curIdx);
+            if (t?.position) handleAisClick(t, computeDrAnchor(curIdx));
           },
           onContextMenu: () => { /* noop */ },
-        };
+        });
       }
-      if (uniq.length > 1) {
-        const coord = uniq[0]!.coord;
-        const indices = uniq.map(h => h.idx);
-        return {
-          kind: 'ais-vessels-ambig',
-          onTap:         () => { openDisambigPopup(coord, indices); },
-          onContextMenu: () => { /* noop */ },
-        };
-      }
-      return null;
+      return targets.length > 0 ? targets : null;
     },
   };
 
@@ -516,6 +518,7 @@
       const feature = feats[0]!;
       return {
         kind: 'waypoint',
+        label: (feature.properties?.['name'] as string | undefined) ?? 'Unnamed waypoint',
         onTap:         (lngLat) => { showWaypointPopup(lngLat, feature); },
         onContextMenu: () => { /* noop */ },
       };
@@ -532,6 +535,7 @@
       const wptFeat = routeWpts[0];
       return {
         kind: 'active-route',
+        label: '',
         onTap:         (lngLat) => { showActiveRoutePopup(lngLat, wptFeat); },
         onContextMenu: () => { /* noop */ },
       };
@@ -547,36 +551,62 @@
       const feature = feats[0]!;
       return {
         kind: 'route',
+        label: (feature.properties?.['name'] as string | undefined) ?? '',
         onTap:         (lngLat) => { showAllRoutesPopup(lngLat, feature); },
         onContextMenu: () => { /* noop */ },
       };
     },
   };
 
-  /** Priority-ordered registry of all interactive elements on the map canvas.
-   *  To add a new element: write one Interactable and insert it at the right position. */
-  const INTERACTIONS: Interactable[] = [
+  // Priority tier: drag handles and mode-specific labels — first match wins, no pool mixing.
+  const PRIORITY_INTERACTIONS: Interactable[] = [
     plannerHandleInteractable,
     plannerSegmentInteractable,
     rulerLabelInteractable,
     rulerHandleInteractable,
+  ];
+  // Candidate tier: own vessel, AIS, waypoints, routes — all hits collected, disambiguated when 2+.
+  const CANDIDATE_INTERACTIONS: Interactable[] = [
     ownVesselInteractable,
     aisVesselInteractable,
     waypointInteractable,
     activeRouteInteractable,
     routeInteractable,
   ];
+  // Combined list used by hit() for drag detection and context-menu (priority-first across all).
+  const INTERACTIONS: Interactable[] = [...PRIORITY_INTERACTIONS, ...CANDIDATE_INTERACTIONS];
 
-  /** Iterates INTERACTIONS in priority order; returns the first match or null. */
+  /** Priority-first lookup for drag detection and context-menu. Returns the first hit. */
   function hit(x: number, y: number): HitTarget | null {
     if (!overlay || !map) return null;
     try {
       for (const i of INTERACTIONS) {
         const t = i.pick(x, y);
-        if (t) return t;
+        if (!t) continue;
+        return Array.isArray(t) ? (t[0] ?? null) : t;
       }
     } catch { /* transient overlay state during style reload */ }
     return null;
+  }
+
+  /** Collects all tap candidates. Priority tier: first match wins. Candidate tier: all collected. */
+  function hits(x: number, y: number): HitTarget[] {
+    if (!overlay || !map) return [];
+    try {
+      for (const i of PRIORITY_INTERACTIONS) {
+        const t = i.pick(x, y);
+        if (!t) continue;
+        return Array.isArray(t) ? t : [t];
+      }
+      const result: HitTarget[] = [];
+      for (const i of CANDIDATE_INTERACTIONS) {
+        const t = i.pick(x, y);
+        if (!t) continue;
+        if (Array.isArray(t)) result.push(...t);
+        else result.push(t);
+      }
+      return result;
+    } catch { return []; }
   }
 
   /** Single dispatcher — the only place application actions are triggered.
@@ -589,7 +619,7 @@
         plannerHandlePopup = null;
         activePopup?.remove();
         // Clear AIS selection whenever the user taps anything that isn't an AIS vessel.
-        if (g.target.kind !== 'ais-vessel' && g.target.kind !== 'ais-vessels-ambig') ais.clear();
+        if (g.target.kind !== 'ais-vessel') ais.clear();
         g.target.onTap(g.lngLat, g.clientX, g.clientY);
         return;
       case 'long-press':
@@ -1285,14 +1315,21 @@
           .catch((err: unknown) => { console.error('[waypoint] Failed to move:', err); });
         return;
       }
-      const target = hit(x, y);
-      if (!target) {
+      const candidates = hits(x, y);
+      if (candidates.length === 0) {
         activePopup?.remove();
         ais.clear();
         if (routePlanner.active) routePlanner.addWaypoint(e.lngLat.lng, e.lngLat.lat);
         return;
       }
-      handleGesture({ type: 'tap', target, lngLat: e.lngLat, clientX: rect.left + x, clientY: rect.top + y });
+      if (candidates.length === 1) {
+        handleGesture({ type: 'tap', target: candidates[0]!, lngLat: e.lngLat, clientX: rect.left + x, clientY: rect.top + y });
+        return;
+      }
+      // Multiple candidates from different layers — unified disambiguation picker.
+      rulerPopup = null;
+      plannerHandlePopup = null;
+      openUnifiedDisambigPopup(e.lngLat, candidates);
     });
 
     // Hover: update cursor and proactively disable dragPan over drag handles so the user
@@ -1665,52 +1702,38 @@
     });
   }
 
-  function openDisambigPopup(coordinate: [number, number], indices: number[]) {
-    // Keep index paired with target so we can compute DR anchors below.
-    const pairs = indices
-      .map(i => ({ idx: i, t: ais.getTarget(i) }))
-      .filter((x): x is { idx: number; t: AisTarget } => x.t?.position != null);
-
-    if (pairs.length === 0) return;
-    if (pairs.length === 1) {
-      handleAisClick(pairs[0]!.t, computeDrAnchor(pairs[0]!.idx));
-      return;
-    }
-
-    // Capture stable vessel ids at build time. deck.gl pick indices are
-    // positions in the per-batch arrays, which are rebuilt (in arbitrary
-    // order) on every AIS batch — by click time an index can denote a
-    // different vessel. data-entry indexes into this frozen list instead.
-    const entryIds = pairs.map(x => x.t.id);
-    const items = pairs.map((x, pos) =>
-      `<li class="ais-disambig-item" data-entry="${String(pos)}">${x.t.name ?? x.t.mmsi ?? 'Unknown vessel'}</li>`
-    ).join('');
-
-    const html = `
-      <div class="ais-disambig">
-        <div class="ais-popup-title">Multiple vessels</div>
-        <ul class="ais-disambig-list">${items}</ul>
-      </div>`;
-
+  /** Display a unified picker when a tap lands on multiple overlapping elements
+   *  (e.g. an AIS vessel on top of a waypoint, or own vessel next to an AIS target). */
+  function openUnifiedDisambigPopup(lngLat: maplibregl.LngLat, targets: HitTarget[]): void {
     if (!map) return;
+    const typeLabel: Record<string, string> = {
+      'own-vessel':   'Own vessel',
+      'ais-vessel':   'Vessel',
+      'waypoint':     'Waypoint',
+      'active-route': 'Active route',
+      'route':        'Route',
+    };
+    const items = targets.map((t, pos) => {
+      const type = typeLabel[t.kind] ?? t.kind;
+      const name = t.label ? ` \u2014 ${t.label}` : '';
+      return `<li class="map-disambig-item" data-entry="${String(pos)}">${type}${name}</li>`;
+    }).join('');
+    const html = `
+      <div class="map-disambig">
+        <div class="ais-popup-title">Select item</div>
+        <ul class="map-disambig-list">${items}</ul>
+      </div>`;
     const popup = openPopup(new maplibregl.Popup({ closeButton: true, maxWidth: 'none' })
-      .setLngLat(coordinate)
+      .setLngLat(lngLat)
       .setHTML(html)
-      ).addTo(map);
-
-    // Attach click handler after the popup is in the DOM.
-    const el = popup.getElement();
-    el.addEventListener('click', (ev) => {
+    ).addTo(map);
+    popup.getElement().addEventListener('click', (ev) => {
       const li = (ev.target as HTMLElement).closest<HTMLElement>('[data-entry]');
       if (!li) return;
       popup.remove();
-      // Resolve entry → id → current index at click time; the vessel may have
-      // expired since the popup was built — never select a different one.
-      const curIdx = resolveDisambigEntry(entryIds, Number(li.dataset['entry']), ais.ids);
-      if (curIdx === null) return;
-      const t = ais.getTarget(curIdx);
-      if (!t?.position) return;
-      handleAisClick(t, computeDrAnchor(curIdx));
+      const t = targets[Number(li.dataset['entry'])];
+      if (!t) return;
+      handleGesture({ type: 'tap', target: t, lngLat, clientX: 0, clientY: 0 });
     });
   }
 
@@ -3278,12 +3301,12 @@
     box-shadow: 0 4px 20px rgba(0,0,0,0.6);
     padding: 12px 14px;
   }
-  :global(.ais-disambig-list) {
+  :global(.map-disambig-list) {
     list-style: none;
     margin: 0;
     padding: 0;
   }
-  :global(.ais-disambig-item) {
+  :global(.map-disambig-item) {
     padding: 6px 8px;
     border-radius: 4px;
     cursor: pointer;
@@ -3293,7 +3316,7 @@
     white-space: nowrap;
   }
   @media (hover: hover) and (pointer: fine) {
-    :global(.ais-disambig-item:hover) {
+    :global(.map-disambig-item:hover) {
       background: rgba(96, 165, 250, 0.18);
       color: #93c5fd;
     }
