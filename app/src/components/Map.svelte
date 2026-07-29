@@ -476,20 +476,20 @@
       const hits = overlay.pickMultipleObjects({ x, y, radius: 5, layerIds: ['ais-confirmed-main', 'ais-ghost-main', 'ais-mob-icon'] });
       // eslint-disable-next-line svelte/prefer-svelte-reactivity
       const seen = new Set<number>();
-      const uniq: { idx: number; coord: [number, number] }[] = [];
+      const uniq: { idx: number; coord: [number, number]; anchorPos: { longitude: number; latitude: number } | undefined }[] = [];
       for (const p of hits) {
         const idx = p.object as number | null | undefined;
         if (idx == null || seen.has(idx)) continue;
         seen.add(idx);
-        if (p.coordinate) uniq.push({ idx, coord: p.coordinate as [number, number] });
+        if (p.coordinate) uniq.push({ idx, coord: p.coordinate as [number, number], anchorPos: computeDrAnchor(idx) });
       }
       if (uniq.length === 1) {
-        const { idx } = uniq[0]!;
+        const { idx, anchorPos } = uniq[0]!;
         return {
           kind: 'ais-vessel',
           onTap: () => {
             const t = ais.getTarget(idx);
-            if (t?.position) handleAisClick(t);
+            if (t?.position) handleAisClick(t, anchorPos);
           },
           onContextMenu: () => { /* noop */ },
         };
@@ -732,9 +732,12 @@
   // aisUploadTimestamp when hotData actually changes — otherwise dead-reckoned
   // vessel positions snap backwards each time vessel info is refreshed.
   let _lastAisHotData: Float64Array | null = null;
-  // Layer groups composed into overlay.setProps() — AIS layers set on data tick,
-  // ruler layers rebuilt in rafTick (need map.project() for pixel distance checks).
+  // Layer groups composed into overlay.setProps():
+  //   aisLayerGroup     — rebuilt on each AIS data batch
+  //   aisRingLayerGroup — highlight ring rebuilt every rAF tick (tracks DR position at frame rate)
+  //   rulerLayerGroup   — rebuilt every rAF tick (needs map.project())
   let aisLayerGroup: Layer[] = [];
+  let aisRingLayerGroup: Layer[] = [];
   let rulerLayerGroup: Layer[] = [];
   let plannerLayerGroup: Layer[] = [];
   // Active route lines (full polyline, active leg, bearing) — deck.gl, not MapLibre.
@@ -751,7 +754,7 @@
     const aisFiltered = (showVessels && showPredictors)
       ? aisLayerGroup
       : aisLayerGroup.filter(l => (l instanceof PathLayer ? (showVessels && showPredictors) : showVessels));
-    overlay?.setProps({ layers: [...aisFiltered, ...cpaLayerGroup, ...courseLayerGroup, ...plannerLayerGroup, ...ownVesselLayerGroup, ...rulerLayerGroup] });
+    overlay?.setProps({ layers: [...aisFiltered, ...cpaLayerGroup, ...courseLayerGroup, ...plannerLayerGroup, ...ownVesselLayerGroup, ...rulerLayerGroup, ...aisRingLayerGroup] });
   }
 
   let rafId = 0;
@@ -1093,6 +1096,54 @@
             flushLayers();
           } else if (plannerLayerGroup.length > 0) {
             plannerLayerGroup = [];
+            flushLayers();
+          }
+        }
+
+        // Highlight ring — rebuilt every frame when a ghost vessel is selected so the ring
+        // tracks the GPU-animated position continuously, regardless of AIS batch rate.
+        // For non-ghost vessels (no SOG/COG) the DR degrades to last-known; the ring still
+        // gets a frame-rate rebuild but the position is stable, so no visual difference.
+        {
+          const selIdx = ais.selectedIndex;
+          if (selIdx !== null && aisHotSnapshot && aisUploadTimestamp) {
+            const S = AIS_HOT_STRIDE;
+            const hd = aisHotSnapshot;
+            const slon = hd[selIdx * S + AIS_F_LON]!;
+            const slat = hd[selIdx * S + AIS_F_LAT]!;
+            const scog = hd[selIdx * S + AIS_F_COG]!;
+            const ssog = hd[selIdx * S + AIS_F_SOG]!;
+            const srot = hd[selIdx * S + AIS_F_ROT]!;
+            const sage = hd[selIdx * S + AIS_F_AGE]!;
+            const capMs = settings.appearance.ais.cog.lengthMinutes * 60 * 1000;
+            const dtMs = Math.min(sage * 1000 + (nowMs - aisUploadTimestamp), capMs);
+            let ringPos: [number, number, number];
+            if (!isNaN(scog) && !isNaN(ssog)) {
+              const [drLon, drLat] = extrapolatePos(slon, slat, scog, ssog, isNaN(srot) ? 0 : srot, 0, dtMs);
+              ringPos = [drLon, drLat, 0];
+            } else {
+              ringPos = [slon, slat, 0];
+            }
+            const coldEntry = ais.coldMap.get(ais.ids[selIdx]!);
+            const vesselLen = coldEntry?.lengthM ?? 80;
+            aisRingLayerGroup = [new ScatterplotLayer<0>({
+              id: 'ais-highlight-ring',
+              data: [0],
+              getPosition: () => ringPos,
+              getRadius: Math.max(vesselLen * 0.7, 50),
+              getLineColor: [255, 200, 50, 220] as [number, number, number, number],
+              getFillColor: [0, 0, 0, 0] as [number, number, number, number],
+              stroked: true,
+              filled:  true,
+              getLineWidth: 2,
+              lineWidthUnits: 'pixels',
+              radiusUnits: 'meters',
+              radiusMinPixels: 16,
+              pickable: false,
+            })];
+            flushLayers();
+          } else if (aisRingLayerGroup.length > 0) {
+            aisRingLayerGroup = [];
             flushLayers();
           }
         }
@@ -1524,12 +1575,33 @@
         : `${String(Math.floor(ageSec / 3600))}h ${String(Math.floor((ageSec % 3600) / 60))}m ago`;
   }
 
-  function handleAisClick(t: AisTarget): void {
+  /**
+   * Compute the dead-reckoned anchor position for a vessel index at the current instant.
+   * Returns undefined for stationary/non-reporting vessels (no valid SOG/COG), which
+   * fall back to the last-known position in callers.
+   */
+  function computeDrAnchor(idx: number): { longitude: number; latitude: number } | undefined {
+    if (!aisHotSnapshot || !aisUploadTimestamp) return undefined;
+    const S = AIS_HOT_STRIDE;
+    const scog = aisHotSnapshot[idx * S + AIS_F_COG]!;
+    const ssog = aisHotSnapshot[idx * S + AIS_F_SOG]!;
+    if (isNaN(scog) || isNaN(ssog)) return undefined;
+    const slon = aisHotSnapshot[idx * S + AIS_F_LON]!;
+    const slat = aisHotSnapshot[idx * S + AIS_F_LAT]!;
+    const srot = aisHotSnapshot[idx * S + AIS_F_ROT]!;
+    const sage = aisHotSnapshot[idx * S + AIS_F_AGE]!;
+    const capMs = settings.appearance.ais.cog.lengthMinutes * 60 * 1000;
+    const dtMs = Math.min(sage * 1000 + (Date.now() - aisUploadTimestamp), capMs);
+    const [drLon, drLat] = extrapolatePos(slon, slat, scog, ssog, isNaN(srot) ? 0 : srot, 0, dtMs);
+    return { longitude: drLon, latitude: drLat };
+  }
+
+  function handleAisClick(t: AisTarget, anchorPos?: { longitude: number; latitude: number }): void {
     if (!map) return;
     if (ais.selectedId === t.id && ais.selectionPhase === 'highlighted') {
       // Second click on the same vessel → elevate to popup.
       ais.elevateToPopup();
-      openAisPopup(t);
+      openAisPopup(t, anchorPos);
       return;
     }
     // First click (new vessel or re-clicking a popup vessel) → highlight only.
@@ -1554,11 +1626,11 @@
   }
 
   /** Open the detail popup for an already-selected (highlighted) vessel. */
-  function openAisPopup(t: AisTarget): void {
+  function openAisPopup(t: AisTarget, anchorPos?: { longitude: number; latitude: number }): void {
     if (!map) return;
     if (aisAgeTimer !== null) { clearInterval(aisAgeTimer); aisAgeTimer = null; }
     const popup = openPopup(new maplibregl.Popup({ closeButton: true, maxWidth: 'none' })
-      .setLngLat([t.position.longitude, t.position.latitude])
+      .setLngLat([anchorPos?.longitude ?? t.position.longitude, anchorPos?.latitude ?? t.position.latitude])
       .setHTML(buildAisPopupHtml(t))
     ).addTo(map);
     const timerId = setInterval(() => {
@@ -1594,12 +1666,14 @@
   }
 
   function openDisambigPopup(coordinate: [number, number], indices: number[]) {
-    const targets = indices.map(i => ais.getTarget(i))
-      .filter((t): t is AisTarget => t?.position != null);
+    // Keep index paired with target so we can compute DR anchors below.
+    const pairs = indices
+      .map(i => ({ idx: i, t: ais.getTarget(i) }))
+      .filter((x): x is { idx: number; t: AisTarget } => x.t?.position != null);
 
-    if (targets.length === 0) return;
-    if (targets.length === 1) {
-      handleAisClick(targets[0]!);
+    if (pairs.length === 0) return;
+    if (pairs.length === 1) {
+      handleAisClick(pairs[0]!.t, computeDrAnchor(pairs[0]!.idx));
       return;
     }
 
@@ -1607,9 +1681,9 @@
     // positions in the per-batch arrays, which are rebuilt (in arbitrary
     // order) on every AIS batch — by click time an index can denote a
     // different vessel. data-entry indexes into this frozen list instead.
-    const entryIds = targets.map(t => t.id);
-    const items = targets.map((t, pos) =>
-      `<li class="ais-disambig-item" data-entry="${String(pos)}">${t.name ?? t.mmsi ?? 'Unknown vessel'}</li>`
+    const entryIds = pairs.map(x => x.t.id);
+    const items = pairs.map((x, pos) =>
+      `<li class="ais-disambig-item" data-entry="${String(pos)}">${x.t.name ?? x.t.mmsi ?? 'Unknown vessel'}</li>`
     ).join('');
 
     const html = `
@@ -1636,7 +1710,7 @@
       if (curIdx === null) return;
       const t = ais.getTarget(curIdx);
       if (!t?.position) return;
-      handleAisClick(t);
+      handleAisClick(t, computeDrAnchor(curIdx));
     });
   }
 

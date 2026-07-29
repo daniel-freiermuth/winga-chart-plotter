@@ -294,24 +294,6 @@ export function buildAisLayers(
         getDashArray: [cogStyle, cogWidth],
       },
     }),
-    // Selected vessel highlight ring — drawn last so it sits on top of all vessel layers.
-    // Positioned at the last-known (confirmed) position; ~70% of vessel length radius,
-    // min 16 px so it remains visible at all zoom levels.
-    ...(selectedIndex !== null ? [new ScatterplotLayer<number>({
-      id: 'ais-highlight-ring',
-      data: [selectedIndex],
-      getPosition: getPos,
-      getRadius:   (i: number) => Math.max(getLen(i, 80) * 0.7, 50),
-      getLineColor: [255, 200, 50, 220] as [number, number, number, number],
-      getFillColor: [0, 0, 0, 0] as [number, number, number, number],
-      stroked: true,
-      filled:  true,
-      getLineWidth: 2,
-      lineWidthUnits: 'pixels',
-      radiusUnits: 'meters',
-      radiusMinPixels: 16,
-      pickable: false,
-    })] : []),
     // MOB/SART — rendered last (always on top) with its own icon replacing the arrow
     ...(mobIconLayer ? [mobIconLayer] : []),
   ];
