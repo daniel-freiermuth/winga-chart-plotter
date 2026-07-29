@@ -45,6 +45,29 @@ describe('splitToFit', () => {
       }
     }
   });
+
+  it('handles sparse two-point westward overflow without out-of-range output', () => {
+    // Regression: [[700, 10], [0, 10]] previously produced -720 in output
+    const pts: [number, number][] = [[700, 10], [0, 10]];
+    const segments = splitToFit(pts);
+    for (const seg of segments) {
+      for (const [lon] of seg) {
+        expect(lon).toBeGreaterThanOrEqual(-MAPLIBRE_RANGE);
+        expect(lon).toBeLessThanOrEqual(MAPLIBRE_RANGE);
+      }
+    }
+  });
+
+  it('handles sparse two-point eastward overflow without out-of-range output', () => {
+    const pts: [number, number][] = [[-700, 10], [0, 10]];
+    const segments = splitToFit(pts);
+    for (const seg of segments) {
+      for (const [lon] of seg) {
+        expect(lon).toBeGreaterThanOrEqual(-MAPLIBRE_RANGE);
+        expect(lon).toBeLessThanOrEqual(MAPLIBRE_RANGE);
+      }
+    }
+  });
 });
 
 describe('processTrack antimeridian overflow', () => {
@@ -109,6 +132,31 @@ describe('splitRouteSegments', () => {
     const pts: [number, number][] = [[0, 10], [-100, 10], [-300, 10], [-500, 10], [-700, 10]];
     const segments = splitRouteSegments(pts);
     expect(segments.length).toBeGreaterThan(1);
+    for (const seg of segments) {
+      for (const [lon] of seg) {
+        expect(lon).toBeGreaterThanOrEqual(-MAPLIBRE_RANGE);
+        expect(lon).toBeLessThanOrEqual(MAPLIBRE_RANGE);
+      }
+    }
+  });
+
+  it('terminates and stays bounded for sparse [[700, 10], [0, 10]]', () => {
+    // Regression: previously oscillated infinitely between +720 and -720 shifts
+    const pts: [number, number][] = [[700, 10], [0, 10]];
+    const segments = splitRouteSegments(pts);
+    expect(segments.length).toBeGreaterThan(0);
+    for (const seg of segments) {
+      for (const [lon] of seg) {
+        expect(lon).toBeGreaterThanOrEqual(-MAPLIBRE_RANGE);
+        expect(lon).toBeLessThanOrEqual(MAPLIBRE_RANGE);
+      }
+    }
+  });
+
+  it('terminates and stays bounded for sparse [[0, 10], [-700, 10]]', () => {
+    const pts: [number, number][] = [[0, 10], [-700, 10]];
+    const segments = splitRouteSegments(pts);
+    expect(segments.length).toBeGreaterThan(0);
     for (const seg of segments) {
       for (const [lon] of seg) {
         expect(lon).toBeGreaterThanOrEqual(-MAPLIBRE_RANGE);

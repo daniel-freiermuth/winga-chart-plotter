@@ -71,20 +71,25 @@ export function gcDensifySegment(
 // Returns segments ordered oldest-first; each is guaranteed to lie within ±540°.
 // Handles both western overflow (pts[0] < −540, from eastward accumulation) and
 // eastern overflow (pts[0] > +540, from westward accumulation).
+// The handoff point (first in-range point after overflow) is included in the shifted
+// overflow only when shifting it stays within ±540°, preventing oscillation on sparse
+// inputs where the handoff is far from the boundary (e.g. [[700, 10], [0, 10]]).
 export function splitToFit(pts: [number, number][]): [number, number][][] {
   if (pts.length === 0) return [];
   if (pts[0]![0] < -540) {
     let si = 0;
     while (si < pts.length - 1 && pts[si]![0] < -540) si++;
     const recent = pts.slice(si);
-    const overflow = pts.slice(0, si + 1).map(pt => [pt[0] + 720, pt[1]] as [number, number]);
+    const end = pts[si]![0] + 720 <= 540 ? si + 1 : si;
+    const overflow = pts.slice(0, end).map(pt => [pt[0] + 720, pt[1]] as [number, number]);
     return [...splitToFit(overflow), recent];
   }
   if (pts[0]![0] > 540) {
     let si = 0;
     while (si < pts.length - 1 && pts[si]![0] > 540) si++;
     const recent = pts.slice(si);
-    const overflow = pts.slice(0, si + 1).map(pt => [pt[0] - 720, pt[1]] as [number, number]);
+    const end = pts[si]![0] - 720 >= -540 ? si + 1 : si;
+    const overflow = pts.slice(0, end).map(pt => [pt[0] - 720, pt[1]] as [number, number]);
     return [...splitToFit(overflow), recent];
   }
   return [pts];
@@ -96,6 +101,8 @@ export function splitToFit(pts: [number, number][]): [number, number][][] {
  * +540° (westward route after midpoint anchoring) and the last point can drop below
  * −540° (westward route ending in overflow), or vice-versa for eastward routes.
  * Recursively shifts overflow segments by ∓720° into the nearest renderable world copy.
+ * The handoff point is included in the shifted set only when it stays within ±540°,
+ * preventing recursive oscillation on sparse world transitions.
  * Returns an array of segments all within ±540° longitude.
  */
 export function splitRouteSegments(pts: [number, number][]): [number, number][][] {
@@ -103,25 +110,29 @@ export function splitRouteSegments(pts: [number, number][]): [number, number][][
   if (pts[0]![0] < -540) {
     let si = 0;
     while (si < pts.length - 1 && pts[si]![0] < -540) si++;
-    const west = pts.slice(0, si + 1).map(p => [p[0] + 720, p[1]] as [number, number]);
+    const end = pts[si]![0] + 720 <= 540 ? si + 1 : si;
+    const west = pts.slice(0, end).map(p => [p[0] + 720, p[1]] as [number, number]);
     return [...splitRouteSegments(west), ...splitRouteSegments(pts.slice(si))];
   }
   if (pts[0]![0] > 540) {
     let si = 0;
     while (si < pts.length - 1 && pts[si]![0] > 540) si++;
-    const east = pts.slice(0, si + 1).map(p => [p[0] - 720, p[1]] as [number, number]);
+    const end = pts[si]![0] - 720 >= -540 ? si + 1 : si;
+    const east = pts.slice(0, end).map(p => [p[0] - 720, p[1]] as [number, number]);
     return [...splitRouteSegments(east), ...splitRouteSegments(pts.slice(si))];
   }
   if (pts[pts.length - 1]![0] > 540) {
     let si = pts.length - 1;
     while (si > 0 && pts[si]![0] > 540) si--;
-    const east = pts.slice(si).map(p => [p[0] - 720, p[1]] as [number, number]);
+    const start = pts[si]![0] - 720 >= -540 ? si : si + 1;
+    const east = pts.slice(start).map(p => [p[0] - 720, p[1]] as [number, number]);
     return [...splitRouteSegments(pts.slice(0, si + 1)), ...splitRouteSegments(east)];
   }
   if (pts[pts.length - 1]![0] < -540) {
     let si = pts.length - 1;
     while (si > 0 && pts[si]![0] < -540) si--;
-    const west = pts.slice(si).map(p => [p[0] + 720, p[1]] as [number, number]);
+    const start = pts[si]![0] + 720 <= 540 ? si : si + 1;
+    const west = pts.slice(start).map(p => [p[0] + 720, p[1]] as [number, number]);
     return [...splitRouteSegments(pts.slice(0, si + 1)), ...splitRouteSegments(west)];
   }
   return [pts];
