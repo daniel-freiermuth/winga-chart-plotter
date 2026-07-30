@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.20.1] - 2026-07-30
+
+### Fixed
+- AIS vessels now show their selection ring at the dead-reckoned position when tapped there.
+- AIS hitbox enlarged for easier tapping.
+- Tapping a crowded area now shows a disambiguation menu that includes own vessel and waypoints.
+- Route and AIS track antimeridian handling overhauled
+
 ## [0.20.0] - 2026-07-28
 
 ### Added
