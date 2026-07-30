@@ -469,11 +469,16 @@
   function handleFlyToVessel(): void {
     mapComp?.flyToVessel();
   }
+  const NAV_FAB_SIZE = 52; // px
   let _compassPressTimer: ReturnType<typeof setTimeout> | null = null;
   let _compassWasLongPress = false;
+  let _compassPressX = 0;
+  let _compassPressY = 0;
 
-  function onCompassPointerDown() {
+  function onCompassPointerDown(e: PointerEvent) {
     _compassWasLongPress = false;
+    _compassPressX = e.clientX;
+    _compassPressY = e.clientY;
     _compassPressTimer = setTimeout(() => {
       _compassWasLongPress = true;
       _compassPressTimer = null;
@@ -483,6 +488,12 @@
   }
   function onCompassPointerEnd() {
     if (_compassPressTimer !== null) { clearTimeout(_compassPressTimer); _compassPressTimer = null; }
+  }
+  function onCompassPointerMove(e: PointerEvent) {
+    if (_compassPressTimer === null) return;
+    const dx = e.clientX - _compassPressX;
+    const dy = e.clientY - _compassPressY;
+    if (dx * dx + dy * dy > (NAV_FAB_SIZE / 2) ** 2) onCompassPointerEnd();
   }
   function onCompassClick() {
     if (_compassWasLongPress) { _compassWasLongPress = false; return; }
@@ -659,7 +670,7 @@
   </div>
 
   <!-- Navigation stack: compass (top) → pin → layers (bottom), bottom-left corner -->
-  <div class="nav-stack">
+  <div class="nav-stack" style="--nav-fab-size: {NAV_FAB_SIZE}px">
     <!-- Compass: tap cycles auto modes, long-press toggles free rotation -->
     <button
       class="nav-fab compass-fab"
@@ -669,12 +680,13 @@
         : `Rotation: ${rotateMode.label} — tap to cycle, hold for free`}
       aria-label="Rotation mode: {rotateMode.compassLabel}"
       onpointerdown={onCompassPointerDown}
+      onpointermove={onCompassPointerMove}
       onpointerup={onCompassPointerEnd}
       onpointercancel={onCompassPointerEnd}
       onpointerleave={onCompassPointerEnd}
       onclick={onCompassClick}
     >
-      <svg width="52" height="52" viewBox="0 0 44 44" aria-hidden="true">
+      <svg width={NAV_FAB_SIZE} height={NAV_FAB_SIZE} viewBox="0 0 44 44" aria-hidden="true">
         <circle cx="22" cy="22" r="21"
           fill="rgba(0,0,0,0.72)"
           stroke={rotateMode.mode === 'manual' ? '#f59e0b' : 'rgba(255,255,255,0.18)'}
@@ -761,8 +773,8 @@
   }
 
   .nav-fab {
-    width: 52px;
-    height: 52px;
+    width: var(--nav-fab-size);
+    height: var(--nav-fab-size);
     border-radius: 50%;
     border: 1.5px solid rgba(255,255,255,0.18);
     background: rgba(0,0,0,0.72);
