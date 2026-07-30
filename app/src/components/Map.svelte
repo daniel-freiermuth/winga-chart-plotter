@@ -2767,6 +2767,10 @@
     let capturedId = -1;
     let startX = 0, startY = 0, lastX = 0, lastY = 0;
     let dragMoved = false;
+    // Lock-in: once the dominant axis is determined, the other is frozen for this drag.
+    // Mirrors MapLibre's DragRotateHandler (horizontal = bearing, vertical = pitch).
+    let lockAxis: 'none' | 'bearing' | 'pitch' = 'none';
+    let accumDx = 0, accumDy = 0;
     const canvas = map.getCanvas();
 
     const onPointerDown = (e: PointerEvent) => {
@@ -2776,6 +2780,7 @@
       startX = e.clientX; startY = e.clientY;
       lastX  = e.clientX; lastY  = e.clientY;
       dragMoved = false;
+      lockAxis = 'none'; accumDx = 0; accumDy = 0;
     };
 
     const onPointerMove = (e: PointerEvent) => {
@@ -2787,9 +2792,17 @@
       if (!dragMoved && Math.hypot(e.clientX - startX, e.clientY - startY) > 3) dragMoved = true;
 
       if (isManual) {
-        // MAN + following: rotate around vessel so it stays at its pinned screen pixel.
-        const newBearing = map.getBearing() + dx * 0.4;
-        const newPitch   = Math.max(0, Math.min(map.getMaxPitch(), map.getPitch() - dy * 0.5));
+        // MAN + following: lock-in on bearing or pitch after first significant movement.
+        // Mirrors MapLibre's DragRotateHandler: horizontal drag → bearing, vertical → pitch.
+        if (lockAxis === 'none') {
+          accumDx += Math.abs(dx);
+          accumDy += Math.abs(dy);
+          if (Math.max(accumDx, accumDy) > 10) {
+            lockAxis = accumDx > accumDy ? 'bearing' : 'pitch';
+          }
+        }
+        const newBearing = lockAxis !== 'pitch'   ? map.getBearing() + dx * 0.4                                                   : map.getBearing();
+        const newPitch   = lockAxis !== 'bearing' ? Math.max(0, Math.min(map.getMaxPitch(), map.getPitch() - dy * 0.5)) : map.getPitch();
         const pos = get(vesselState).position;
         const around: [number, number] | undefined = pos
           ? [pos.longitude, pos.latitude]
@@ -2818,6 +2831,7 @@
       if (e.pointerId !== capturedId) return;
       capturedId = -1;
       dragMoved = false;
+      lockAxis = 'none'; accumDx = 0; accumDy = 0;
     };
 
     const onContextMenu = (e: Event) => {
@@ -2852,12 +2866,18 @@
       let tp: TpEntry[] = [];
       // prevDist NaN = gesture not yet started; used as the single gate for all three.
       let prevDist = NaN, prevAngle = NaN, prevMidY = NaN;
+      // Lock-in: {zoom + rotate} bundle vs pitch; mirrors MapLibre's two-handler split
+      // (TouchZoomRotateHandler handles zoom+rotate, TouchPitchHandler handles pitch).
+      // Raw pixel signals (span change vs midpoint-Y change) determine the winner.
+      let tpLock: 'none' | 'zoom-rotate' | 'pitch' = 'none';
+      let tpAccumSpan = 0, tpAccumMidY = 0;
 
       const onTPDown = (e: PointerEvent) => {
         if (e.pointerType !== 'touch') return;
         if (!tp.some(p => p.id === e.pointerId))
           tp.push({ id: e.pointerId, x: e.clientX, y: e.clientY });
         prevDist = NaN; // reset gesture state on any finger-count change
+        tpLock = 'none'; tpAccumSpan = 0; tpAccumMidY = 0;
       };
 
       const onTPMove = (e: PointerEvent) => {
@@ -2887,13 +2907,23 @@
         if (dAngle < -180) dAngle += 360;
         const pitchDelta = midY - prevMidY;
 
+        // Lock-in: compare raw pixel span-change vs midpoint-Y-change to pick the winning
+        // group, then suppress the other for the duration of this gesture.
+        if (tpLock === 'none') {
+          tpAccumSpan += Math.abs(dist - prevDist);
+          tpAccumMidY += Math.abs(pitchDelta);
+          if (Math.max(tpAccumSpan, tpAccumMidY) > 10) {
+            tpLock = tpAccumSpan > tpAccumMidY ? 'zoom-rotate' : 'pitch';
+          }
+        }
+
         prevDist  = dist;
         prevAngle = angle;
         prevMidY  = midY;
 
-        const newZoom    = map.getZoom()    + zoomDelta;
-        const newBearing = map.getBearing() + dAngle;
-        const newPitch   = Math.max(0, Math.min(map.getMaxPitch(), map.getPitch() - pitchDelta * 0.5));
+        const newZoom    = map.getZoom()    + (tpLock !== 'pitch'        ? zoomDelta                  : 0);
+        const newBearing = map.getBearing() + (tpLock !== 'pitch'        ? dAngle                     : 0);
+        const newPitch   = Math.max(0, Math.min(map.getMaxPitch(), map.getPitch() - (tpLock !== 'zoom-rotate' ? pitchDelta * 0.5 : 0)));
         const pos        = get(vesselState).position;
 
         // Use center+offset instead of `around` to keep the vessel at its pinned
