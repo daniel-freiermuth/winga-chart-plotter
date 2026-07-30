@@ -32,7 +32,7 @@
   import { SvelteMap } from 'svelte/reactivity';
   import { mapView, loadSavedView } from '../stores/mapView.svelte';
   import { visibility } from '../stores/visibility.svelte';
-  import { buildTrackGradient, processTrack, processRouteCoords, splitRouteSegments } from '../lib/trackProcessing';
+  import { buildTrackGradient, processTrack, processRouteCoords } from '../lib/trackProcessing';
   import { hexToRgba, dashArray } from '../lib/mapStyles';
   import { buildAisLayers } from '../lib/aisLayerBuilder';
   import { buildCpaLayers, formatCpaLabel, type SkCpaInput } from '../lib/aisCpaLayer';
@@ -2564,8 +2564,7 @@
     const features: GeoJSON.Feature[] = [];
     for (const r of entries) {
       const coords = r.geometry.geometry.coordinates as [number, number][];
-      const processed = processRouteCoords(coords);
-      for (const seg of splitRouteSegments(processed)) {
+      for (const seg of processRouteCoords(coords)) {
         features.push({
           type: 'Feature',
           geometry: { type: 'LineString', coordinates: seg },
