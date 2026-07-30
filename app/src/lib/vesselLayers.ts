@@ -7,7 +7,7 @@ import type { VesselState } from '../stores/vessel';
 import type { ProjectionId } from '../stores/mapView.svelte';
 import { rhumbCoords, gcCoords } from './lineGeometry';
 import { hexToRgba, lineStyleDash } from './mapStyles';
-import { processRouteCoords, splitRouteSegments } from './trackProcessing';
+import { processRouteCoords } from './trackProcessing';
 
 interface LatLon { longitude: number; latitude: number }
 type RouteGeo = { geometry: { coordinates: number[][] } } | null | undefined;
@@ -126,11 +126,10 @@ export function buildCourseLayers(
 ): Layer[] {
   const layers: Layer[] = [];
 
-  // Full planned route polyline from the REST resource — GC-densified, antimeridian-unwrapped,
-  // and split bidirectionally so globe-circling routes render across all world copies.
+  // Full planned route polyline from the REST resource — GC-densified and split at
+  // antimeridian crossings so globe-circling routes render across all world copies.
   if (geo) {
-    const processed = processRouteCoords(geo.geometry.coordinates as [number, number][]);
-    const segments  = splitRouteSegments(processed);
+    const segments = processRouteCoords(geo.geometry.coordinates as [number, number][]);
     // getDashArray is a PathStyleExtension prop; spread from a variable to bypass the
     // excess-property check.
     const fullDashProps = { getDashArray: lineStyleDash(ra.remaining.style, ra.remaining.width) };
@@ -151,11 +150,11 @@ export function buildCourseLayers(
 
   // Active leg: previousPoint → nextPoint (the current planned segment) — GC path.
   if (nxtPt && prevPt) {
-    const path = processRouteCoords([[prevPt.longitude, prevPt.latitude], [nxtPt.longitude, nxtPt.latitude]]);
+    const segments = processRouteCoords([[prevPt.longitude, prevPt.latitude], [nxtPt.longitude, nxtPt.latitude]]);
     const legDashProps = { getDashArray: lineStyleDash(ra.segment.style, ra.segment.width) };
     layers.push(new PathLayer<[number, number][]>({
       id: 'route-leg',
-      data: [path],
+      data: segments,
       getPath: d => d,
       getColor: hexToRgba(ra.segment.color, 255),
       getWidth: ra.segment.width,
@@ -169,11 +168,11 @@ export function buildCourseLayers(
 
   // Bearing line: own vessel → nextPoint (where I need to actually steer) — GC path.
   if (nxtPt && ownPos) {
-    const path = processRouteCoords([[ownPos.longitude, ownPos.latitude], [nxtPt.longitude, nxtPt.latitude]]);
+    const segments = processRouteCoords([[ownPos.longitude, ownPos.latitude], [nxtPt.longitude, nxtPt.latitude]]);
     const bearingDashProps = { getDashArray: lineStyleDash(ra.bearing.style, ra.bearing.width) };
     layers.push(new PathLayer<[number, number][]>({
       id: 'route-bearing',
-      data: [path],
+      data: segments,
       getPath: d => d,
       getColor: hexToRgba(ra.bearing.color, 255),
       getWidth: ra.bearing.width,

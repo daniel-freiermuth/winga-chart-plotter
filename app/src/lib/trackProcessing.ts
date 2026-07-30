@@ -2,13 +2,15 @@
  * Track and route coordinate processing utilities.
  *
  * All functions are pure — no side effects, no MapLibre/deck.gl imports.
+ *
+ * Pipeline (tracks and routes):
+ *   SK raw coords [-180, 180]
+ *   → splitAtAntimeridian  — split at crossings, insert handover points
+ *   → densifySegment       — GC-densify each segment independently
+ *
+ * No unwrapping or re-wrapping step. Coordinates stay in [-360, 360] throughout,
+ * within MapLibre's ±540° rendering range.
  */
-
-/** Shortest-path longitude delta from `prev` to `lon`, result in (-180, 180]. */
-export function unwrapLon(lon: number, prev: number): number {
-  const d = ((lon - prev + 180) % 360 + 360) % 360 - 180;
-  return prev + d;
-}
 
 /** Haversine distance in metres between two [lon, lat] points. */
 export function haversineMeters(a: [number, number], b: [number, number]): number {
@@ -22,11 +24,14 @@ export function haversineMeters(a: [number, number], b: [number, number]): numbe
 }
 
 /**
- * Densify a GC segment between two already-unwrapped [lon, lat] positions.
+ * Densify a GC segment between two [lon, lat] positions.
  * Returns intermediate points (excluding start) plus the exact endpoint.
  * Inserts one intermediate point per ~50 km of arc; for short segments (< 50 km)
  * this is a cheap no-op that just returns [[lon2, lat2]].
  * Longitude continuity is maintained via progressive unwrapping from lon1.
+ *
+ * Accepts longitude values outside [-180, 180] provided |lon2 - lon1| ≤ 180°
+ * (i.e. the two endpoints are on the same side of any antimeridian crossing).
  *
  * Uses spherical SLERP so intermediate points are exactly on the GC.
  * The exact endpoint is pushed last to prevent floating-point drift accumulation.
@@ -65,72 +70,71 @@ export function gcDensifySegment(
   return out;
 }
 
-// Recursively split unwrapped+anchored coordinates into segments that each fit within
-// MapLibre's ±540° rendering range. Points outside the range are shifted eastward by
-// 720° (two world copies) so they appear in an adjacent but renderable world copy.
-// Returns segments ordered oldest-first; each is guaranteed to have pts[0][0] >= -540.
-// NOTE: only handles western overflow (pts[0] < −540). Tracks always accumulate westward
-// so this is sufficient for own-vessel/AIS tracks.
-export function splitToFit(pts: [number, number][]): [number, number][][] {
-  if (pts.length === 0 || pts[0]![0] >= -540) return pts.length > 0 ? [pts] : [];
-  let si = 0;
-  while (si < pts.length - 1 && pts[si]![0] < -540) si++;
-  const recent = pts.slice(si);
-  const overflow = pts.slice(0, si + 1).map(pt => [pt[0] + 720, pt[1]] as [number, number]);
-  return [...splitToFit(overflow), recent];
-}
-
 /**
- * Bidirectional split for routes (and any arbitrary line that may circle the globe).
- * Handles both western overflow (< −540°) and eastern overflow (> +540°) by recursively
- * shifting overflow segments by ∓720° into the nearest renderable world copy.
- * Returns an array of segments all within ±540° longitude.
- */
-export function splitRouteSegments(pts: [number, number][]): [number, number][][] {
-  if (pts.length === 0) return [];
-  if (pts[0]![0] < -540) {
-    let si = 0;
-    while (si < pts.length - 1 && pts[si]![0] < -540) si++;
-    const west = pts.slice(0, si + 1).map(p => [p[0] + 720, p[1]] as [number, number]);
-    return [...splitRouteSegments(west), ...splitRouteSegments(pts.slice(si))];
-  }
-  if (pts[pts.length - 1]![0] > 540) {
-    let si = pts.length - 1;
-    while (si > 0 && pts[si]![0] > 540) si--;
-    const east = pts.slice(si).map(p => [p[0] - 720, p[1]] as [number, number]);
-    return [...splitRouteSegments(pts.slice(0, si + 1)), ...splitRouteSegments(east)];
-  }
-  return [pts];
-}
-
-/**
- * Unwrap raw [-180, 180] track coordinates into a continuous longitude sequence,
- * densify each segment along a GC path, and compute the fade stop fraction.
+ * Split raw [-180, 180] coordinates at antimeridian crossings.
  *
- * Storing raw coords in the track store and unwrapping here avoids unbounded
- * accumulation of out-of-range longitudes (e.g. 208°, 388°…) that would break
- * MapLibre's line-metrics computation across multiple antimeridian crossings.
+ * A crossing is detected when |lon[i] - lon[i-1]| > 180°. At each crossing the
+ * pre-crossing point is duplicated into the new segment, shifted ±360° to place it
+ * on the far side of the antimeridian. This handover keeps adjacent segments visually
+ * connected at the crossing.
+ *
+ * Precondition: input coordinates are in [-180, 180] (as Signal K provides them).
+ * Postcondition: all output coordinates lie within [-360, 360]. Consecutive points
+ * within each segment differ by ≤ 180°, so gcDensifySegment follows the correct
+ * short great-circle path without crossing the antimeridian.
+ *
+ * Returns segments ordered oldest-first.
+ */
+export function splitAtAntimeridian(pts: [number, number][]): [number, number][][] {
+  if (pts.length === 0) return [];
+  const segs: [number, number][][] = [];
+  let seg: [number, number][] = [pts[0]!];
+  for (let i = 1; i < pts.length; i++) {
+    const [prevLon, prevLat] = seg[seg.length - 1]!;
+    const [lon, lat] = pts[i]!;
+    if (Math.abs(lon - prevLon) > 180) {
+      // Antimeridian crossing: close the current segment and open a new one.
+      // The handover is prevLon shifted to the far side, giving the new segment
+      // a starting point geographically adjacent to the first point after the crossing.
+      segs.push(seg);
+      seg = [[prevLon + (lon < prevLon ? -360 : 360), prevLat]];
+    }
+    seg.push([lon, lat]);
+  }
+  segs.push(seg);
+  // Drop segments with fewer than 2 points — they occur when a crossing happens
+  // at the very first pair and leave behind a single pre-crossing point that
+  // cannot form a valid LineString.
+  return segs.filter(s => s.length >= 2);
+}
+
+/** GC-densify a segment whose consecutive pairs have |Δlon| ≤ 180°. */
+function densifySegment(pts: [number, number][]): [number, number][] {
+  if (pts.length < 2) return pts;
+  const out: [number, number][] = [pts[0]!];
+  for (let i = 1; i < pts.length; i++) {
+    const prev = out[out.length - 1]!;
+    for (const pt of gcDensifySegment(prev[0], prev[1], pts[i]![0], pts[i]![1])) {
+      out.push(pt);
+    }
+  }
+  return out;
+}
+
+/**
+ * Split raw track at antimeridian crossings, GC-densify each segment, and compute
+ * the fade stop fraction.
+ *
+ * `coords` — most recent segment, carries the line-gradient.
+ * `overflowSegments` — older segments, rendered as solid lines.
  *
  * Fade distance = min(0.5 nm, 10 % of total track length).
  */
 export function processTrack(raw: [number, number][]): { coords: [number, number][]; overflowSegments: [number, number][][]; fadeStop: number } {
   if (raw.length < 2) return { coords: raw, overflowSegments: [], fadeStop: 0 };
-  const out: [number, number][] = [[raw[0]![0], raw[0]![1]]];
-  for (let i = 1; i < raw.length; i++) {
-    const prev = out[out.length - 1]!;
-    const lon = unwrapLon(raw[i]![0], prev[0]);
-    // Densify along the great-circle path. For short segments (< 50 km, the common
-    // case for live tracks) gcDensifySegment is a cheap no-op returning just the endpoint.
-    for (const pt of gcDensifySegment(prev[0], prev[1], lon, raw[i]![1])) out.push(pt);
-  }
-  // Anchor the most-recent point to [-180, 180]. Without this, multiple antimeridian
-  // crossings accumulate unbounded longitude values which MapLibre cannot render.
-  const shift = Math.round(out[out.length - 1]![0] / 360) * 360;
-  if (shift !== 0) for (const pt of out) pt[0] -= shift;
-  // Split into segments each within ±540°; the last segment is the most recent.
-  const segments = splitToFit(out);
-  const coords = segments[segments.length - 1] ?? out;
-  const overflowSegments = segments.slice(0, -1);
+  const segs = splitAtAntimeridian(raw).map(densifySegment);
+  const coords = segs[segs.length - 1] ?? raw;
+  const overflowSegments = segs.slice(0, -1);
   // Fade stop is computed over the most-recent segment only (where the gradient applies).
   let total = 0;
   for (let i = 1; i < coords.length; i++) total += haversineMeters(coords[i - 1]!, coords[i]!);
@@ -139,22 +143,13 @@ export function processTrack(raw: [number, number][]): { coords: [number, number
 }
 
 /**
- * Unwraps longitudes, GC-densifies, and anchors a route or two-point line for
- * antimeridian-safe rendering. Anchors by the midpoint of first and last point so
- * both ends of the route stay near [-180, 180].
+ * Split raw route or two-point line at antimeridian crossings and GC-densify each
+ * segment. Returns one densified segment per antimeridian-bounded piece, all within
+ * [-360, 360].
  */
-export function processRouteCoords(raw: [number, number][]): [number, number][] {
-  if (raw.length < 2) return raw;
-  const out: [number, number][] = [[raw[0]![0], raw[0]![1]]];
-  for (let i = 1; i < raw.length; i++) {
-    const prev = out[out.length - 1]!;
-    const lon = unwrapLon(raw[i]![0], prev[0]);
-    for (const pt of gcDensifySegment(prev[0], prev[1], lon, raw[i]![1])) out.push(pt);
-  }
-  const mid = (out[0]![0] + out[out.length - 1]![0]) / 2;
-  const shift = Math.round(mid / 360) * 360;
-  if (shift !== 0) for (const pt of out) pt[0] -= shift;
-  return out;
+export function processRouteCoords(raw: [number, number][]): [number, number][][] {
+  if (raw.length < 2) return [];
+  return splitAtAntimeridian(raw).map(densifySegment);
 }
 
 /**

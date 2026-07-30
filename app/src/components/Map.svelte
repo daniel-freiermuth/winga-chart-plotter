@@ -32,7 +32,7 @@
   import { SvelteMap } from 'svelte/reactivity';
   import { mapView, loadSavedView } from '../stores/mapView.svelte';
   import { visibility } from '../stores/visibility.svelte';
-  import { buildTrackGradient, processTrack, processRouteCoords, splitRouteSegments } from '../lib/trackProcessing';
+  import { buildTrackGradient, processTrack, processRouteCoords } from '../lib/trackProcessing';
   import { hexToRgba, dashArray } from '../lib/mapStyles';
   import { buildAisLayers } from '../lib/aisLayerBuilder';
   import { buildCpaLayers, formatCpaLabel, type SkCpaInput } from '../lib/aisCpaLayer';
@@ -2447,8 +2447,10 @@
       const features: GeoJSON.Feature[] = [];
       for (const [, coords] of aisAllTracksMap) {
         if (coords.length >= 2) {
-          const { coords: processed } = processTrack(coords);
-          features.push({ type: 'Feature', geometry: { type: 'LineString', coordinates: processed }, properties: {} });
+          const { coords: processed, overflowSegments } = processTrack(coords);
+          for (const seg of [...overflowSegments, processed]) {
+            features.push({ type: 'Feature', geometry: { type: 'LineString', coordinates: seg }, properties: {} });
+          }
         }
       }
       src.setData({ type: 'FeatureCollection', features });
@@ -2564,8 +2566,7 @@
     const features: GeoJSON.Feature[] = [];
     for (const r of entries) {
       const coords = r.geometry.geometry.coordinates as [number, number][];
-      const processed = processRouteCoords(coords);
-      for (const seg of splitRouteSegments(processed)) {
+      for (const seg of processRouteCoords(coords)) {
         features.push({
           type: 'Feature',
           geometry: { type: 'LineString', coordinates: seg },
