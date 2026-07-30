@@ -102,7 +102,10 @@ export function splitAtAntimeridian(pts: [number, number][]): [number, number][]
     seg.push([lon, lat]);
   }
   segs.push(seg);
-  return segs;
+  // Drop segments with fewer than 2 points — they occur when a crossing happens
+  // at the very first pair and leave behind a single pre-crossing point that
+  // cannot form a valid LineString.
+  return segs.filter(s => s.length >= 2);
 }
 
 /** GC-densify a segment whose consecutive pairs have |Δlon| ≤ 180°. */

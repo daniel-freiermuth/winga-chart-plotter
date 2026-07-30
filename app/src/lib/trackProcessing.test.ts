@@ -19,28 +19,26 @@ describe('splitAtAntimeridian', () => {
     expect(splitAtAntimeridian(pts)).toEqual([pts]);
   });
 
-  it('splits on an eastward crossing and inserts a handover', () => {
-    // 170°E → -170°W: short path is eastward 20°, crosses the antimeridian.
+  it('returns one valid segment for a two-point eastward crossing', () => {
+    // 170°E → -170°W: crosses the antimeridian. The pre-crossing side has only
+    // one point, so it is dropped (not a valid LineString). The output is a single
+    // segment starting at the handover point.
     const pts: [number, number][] = [[170, 10], [-170, 10]];
     const segs = splitAtAntimeridian(pts);
-    expect(segs.length).toBe(2);
-    // Segment 1 ends at the pre-crossing point.
-    expect(segs[0]!.at(-1)![0]).toBe(170);
-    // Segment 2 starts with prevLon shifted to the far side (170 - 360 = -190).
-    expect(segs[1]![0]![0]).toBe(-190);
-    // Segment 2 continues with the raw post-crossing point.
-    expect(segs[1]![1]![0]).toBe(-170);
+    expect(segs.length).toBe(1);
+    // Handover: 170 - 360 = -190, followed by the raw post-crossing point.
+    expect(segs[0]![0]![0]).toBe(-190);
+    expect(segs[0]![1]![0]).toBe(-170);
   });
 
-  it('splits on a westward crossing and inserts a handover', () => {
-    // -170°W → 170°E: short path is westward 20°.
+  it('returns one valid segment for a two-point westward crossing', () => {
+    // -170°W → 170°E: crosses the antimeridian.
     const pts: [number, number][] = [[-170, 10], [170, 10]];
     const segs = splitAtAntimeridian(pts);
-    expect(segs.length).toBe(2);
-    expect(segs[0]!.at(-1)![0]).toBe(-170);
-    // Handover: -170 + 360 = 190.
-    expect(segs[1]![0]![0]).toBe(190);
-    expect(segs[1]![1]![0]).toBe(170);
+    expect(segs.length).toBe(1);
+    // Handover: -170 + 360 = 190, followed by the raw post-crossing point.
+    expect(segs[0]![0]![0]).toBe(190);
+    expect(segs[0]![1]![0]).toBe(170);
   });
 
   it('all output coordinates are within [-360, 360]', () => {
@@ -64,11 +62,12 @@ describe('splitAtAntimeridian', () => {
   });
 
   it('step within new segment is the short path (≤ 180°) after handover', () => {
-    // Eastward crossing: handover at -190°, next raw at -170°. Step = +20°.
-    const pts: [number, number][] = [[170, 10], [-170, 10], [-160, 10]];
+    // Eastward crossing with 3+ points so both segments are valid.
+    const pts: [number, number][] = [[160, 10], [170, 10], [-170, 10], [-160, 10]];
     const segs = splitAtAntimeridian(pts);
+    expect(segs.length).toBe(2);
     const seg2 = segs[1]!;
-    // Step from handover (-190) to first raw point (-170).
+    // Step from handover (170 - 360 = -190) to first raw point (-170).
     expect(Math.abs(seg2[1]![0] - seg2[0]![0])).toBeLessThanOrEqual(180);
   });
 });
@@ -144,8 +143,21 @@ describe('processRouteCoords', () => {
     expect(segs).toHaveLength(1);
   });
 
-  it('returns two segments for a route crossing the antimeridian', () => {
+  it('returns one valid segment for a two-point route crossing the antimeridian', () => {
+    // Two-point crossing: pre-crossing side has 1 point → filtered out.
     const raw: [number, number][] = [[170, 10], [-170, 10]];
+    const segs = processRouteCoords(raw);
+    expect(segs).toHaveLength(1);
+    for (const seg of segs) {
+      for (const [lon] of seg) {
+        expect(lon).toBeGreaterThanOrEqual(-SEGMENT_RANGE);
+        expect(lon).toBeLessThanOrEqual(SEGMENT_RANGE);
+      }
+    }
+  });
+
+  it('returns two segments for a multi-point route crossing the antimeridian', () => {
+    const raw: [number, number][] = [[160, 10], [170, 10], [-170, 10], [-160, 10]];
     const segs = processRouteCoords(raw);
     expect(segs).toHaveLength(2);
     for (const seg of segs) {
