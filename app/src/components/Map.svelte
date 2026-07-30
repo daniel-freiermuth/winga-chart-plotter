@@ -2447,8 +2447,10 @@
       const features: GeoJSON.Feature[] = [];
       for (const [, coords] of aisAllTracksMap) {
         if (coords.length >= 2) {
-          const { coords: processed } = processTrack(coords);
-          features.push({ type: 'Feature', geometry: { type: 'LineString', coordinates: processed }, properties: {} });
+          const { coords: processed, overflowSegments } = processTrack(coords);
+          for (const seg of [...overflowSegments, processed]) {
+            features.push({ type: 'Feature', geometry: { type: 'LineString', coordinates: seg }, properties: {} });
+          }
         }
       }
       src.setData({ type: 'FeatureCollection', features });

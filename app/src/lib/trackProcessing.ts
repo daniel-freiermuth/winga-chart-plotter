@@ -148,7 +148,7 @@ export function processTrack(raw: [number, number][]): { coords: [number, number
  * [-360, 360].
  */
 export function processRouteCoords(raw: [number, number][]): [number, number][][] {
-  if (raw.length < 2) return [raw];
+  if (raw.length < 2) return [];
   return splitAtAntimeridian(raw).map(densifySegment);
 }
 

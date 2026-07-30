@@ -137,6 +137,11 @@ describe('processTrack', () => {
 });
 
 describe('processRouteCoords', () => {
+  it('returns no segments for empty or single-point input', () => {
+    expect(processRouteCoords([])).toEqual([]);
+    expect(processRouteCoords([[0, 10]])).toEqual([]);
+  });
+
   it('returns one segment for a route with no antimeridian crossing', () => {
     const raw: [number, number][] = [[-100, 10], [0, 10], [100, 10]];
     const segs = processRouteCoords(raw);
@@ -149,6 +154,7 @@ describe('processRouteCoords', () => {
     const segs = processRouteCoords(raw);
     expect(segs).toHaveLength(1);
     for (const seg of segs) {
+      expect(seg.length).toBeGreaterThanOrEqual(2);
       for (const [lon] of seg) {
         expect(lon).toBeGreaterThanOrEqual(-SEGMENT_RANGE);
         expect(lon).toBeLessThanOrEqual(SEGMENT_RANGE);
@@ -161,6 +167,7 @@ describe('processRouteCoords', () => {
     const segs = processRouteCoords(raw);
     expect(segs).toHaveLength(2);
     for (const seg of segs) {
+      expect(seg.length).toBeGreaterThanOrEqual(2);
       for (const [lon] of seg) {
         expect(lon).toBeGreaterThanOrEqual(-SEGMENT_RANGE);
         expect(lon).toBeLessThanOrEqual(SEGMENT_RANGE);
