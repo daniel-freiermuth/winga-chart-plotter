@@ -542,19 +542,29 @@
     },
   };
 
+  // Antimeridian splitting means one route can produce several GeoJSON features with the
+  // same uuid. Deduplicate by uuid so each route produces exactly one HitTarget.
   const routeInteractable: Interactable = {
     pick(x, y) {
       if (!map) return null;
       if (routePlanner.active) return null;
       const feats = map.queryRenderedFeatures([[x-16, y-16], [x+16, y+16]] as [[number,number],[number,number]], { layers: ['all-routes-line'] });
       if (feats.length === 0) return null;
-      const feature = feats[0]!;
-      return {
-        kind: 'route',
-        label: (feature.properties?.['name'] as string | undefined) ?? '',
-        onTap:         (lngLat) => { showAllRoutesPopup(lngLat, feature); },
-        onContextMenu: () => { /* noop */ },
-      };
+      const seen = new Set<string>();
+      const targets: HitTarget[] = [];
+      for (const feat of feats) {
+        const uuid = (feat.properties?.['uuid'] as string | undefined) ?? '';
+        if (seen.has(uuid)) continue;
+        seen.add(uuid);
+        const f = feat; // capture for closure
+        targets.push({
+          kind: 'route',
+          label: (feat.properties?.['name'] as string | undefined) ?? '',
+          onTap:         (lngLat) => { showAllRoutesPopup(lngLat, f); },
+          onContextMenu: () => { /* noop */ },
+        });
+      }
+      return targets.length > 0 ? targets : null;
     },
   };
 
