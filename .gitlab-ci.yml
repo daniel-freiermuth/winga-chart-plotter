@@ -179,6 +179,6 @@ pages-mr-preview:
     expire_in: 1 week
   environment:
     name: "preview/mr-$CI_MERGE_REQUEST_IID"
-    url: $CI_PAGES_URL
+    url: "$CI_PAGES_URL/mr-$CI_MERGE_REQUEST_IID/"
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
