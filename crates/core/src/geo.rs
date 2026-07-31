@@ -474,7 +474,10 @@ mod tests {
             5.0,
             0.0,
         );
-        assert_eq!(r.tcpa_min, -1.0, "constant-range parallel movers should be opening");
+        assert_eq!(
+            r.tcpa_min, -1.0,
+            "constant-range parallel movers should be opening"
+        );
         assert!(
             (r.cpa_nm - 100.0 / 1852.0).abs() < 0.001,
             "CPA should equal current distance, got {} nm",
@@ -624,12 +627,14 @@ mod tests {
         assert!(
             (r.own_lat - control.own_lat).abs() < 0.01,
             "own ghost lat mismatch: antimeridian={} control={}",
-            r.own_lat, control.own_lat
+            r.own_lat,
+            control.own_lat
         );
         assert!(
             (r.tgt_lat - control.tgt_lat).abs() < 0.01,
             "tgt ghost lat mismatch: antimeridian={} control={}",
-            r.tgt_lat, control.tgt_lat
+            r.tgt_lat,
+            control.tgt_lat
         );
         // Own-ship lon displacement from start: should be identical in both
         // geometries (≈ 0.1° eastward).
@@ -638,7 +643,8 @@ mod tests {
         assert!(
             (own_dlon_am - own_dlon_ctrl).abs() < 0.001,
             "own ghost Δlon mismatch: antimeridian={} control={}",
-            own_dlon_am, own_dlon_ctrl
+            own_dlon_am,
+            own_dlon_ctrl
         );
         // Target lon displacement from own start: identical.
         let tgt_dlon_am = r.tgt_lon - 179.95;
@@ -646,7 +652,8 @@ mod tests {
         assert!(
             (tgt_dlon_am - tgt_dlon_ctrl).abs() < 0.001,
             "tgt ghost Δlon mismatch: antimeridian={} control={}",
-            tgt_dlon_am, tgt_dlon_ctrl
+            tgt_dlon_am,
+            tgt_dlon_ctrl
         );
     }
 

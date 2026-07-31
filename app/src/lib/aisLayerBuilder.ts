@@ -1,5 +1,5 @@
 import type { Layer } from '@deck.gl/core';
-import { PathLayer, ScatterplotLayer } from '@deck.gl/layers';
+import { PathLayer } from '@deck.gl/layers';
 import { PathStyleExtension } from '@deck.gl/extensions';
 import type { AisColdData } from '../stores/ais.svelte';
 import {
@@ -30,7 +30,7 @@ export function buildAisLayers(
   ap: AppearanceSettings['ais'],
   uploadTimestamp: number,
   targetFps: number,
-  selectedIndex: number | null,
+  _selectedIndex: number | null,
 ): Layer[] {
   const S = AIS_HOT_STRIDE;
   const n = ids.length;

@@ -28,7 +28,7 @@
   import { auth } from '../stores/auth.svelte';
   import { fetchAisVesselTrack, navigateToPoint, clearCourse, activateRoute, setActiveRoutePointIndex, deleteRoute, saveWaypoint, updateWaypoint, deleteWaypoint } from '../lib/wasmRest';
   import { extrapolatePos } from '../lib/deadReckoning';
-  import { SvelteMap } from 'svelte/reactivity';
+  import { SvelteMap, SvelteSet } from 'svelte/reactivity';
   import { mapView, loadSavedView } from '../stores/mapView.svelte';
   import { visibility } from '../stores/visibility.svelte';
   import { buildTrackGradient, processTrack, processRouteCoords } from '../lib/trackProcessing';
@@ -518,7 +518,7 @@
       const feature = feats[0]!;
       return {
         kind: 'waypoint',
-        label: (feature.properties?.['name'] as string | undefined) ?? 'Unnamed waypoint',
+        label: (feature.properties['name'] as string | undefined) ?? 'Unnamed waypoint',
         onTap:         (lngLat) => { showWaypointPopup(lngLat, feature); },
         onContextMenu: () => { /* noop */ },
       };
@@ -550,16 +550,16 @@
       if (routePlanner.active) return null;
       const feats = map.queryRenderedFeatures([[x-16, y-16], [x+16, y+16]] as [[number,number],[number,number]], { layers: ['all-routes-line'] });
       if (feats.length === 0) return null;
-      const seen = new Set<string>();
+      const seen = new SvelteSet<string>();
       const targets: HitTarget[] = [];
       for (const feat of feats) {
-        const uuid = (feat.properties?.['uuid'] as string | undefined) ?? '';
+        const uuid = (feat.properties['uuid'] as string | undefined) ?? '';
         if (seen.has(uuid)) continue;
         seen.add(uuid);
         const f = feat; // capture for closure
         targets.push({
           kind: 'route',
-          label: (feat.properties?.['name'] as string | undefined) ?? '',
+          label: (feat.properties['name'] as string | undefined) ?? '',
           onTap:         (lngLat) => { showAllRoutesPopup(lngLat, f); },
           onContextMenu: () => { /* noop */ },
         });
@@ -1902,7 +1902,7 @@
         const geo  = route.geometry;
         if (uuid && geo) {
           const coords = geo.geometry.coordinates as [number, number][];
-          const anchorCoord = coords[route.pointIndex] as [number, number] | undefined;
+          const anchorCoord = coords[route.pointIndex];
           const anchor = anchorCoord ? { lon: anchorCoord[0], lat: anchorCoord[1] } : null;
           routePlanner.loadRoute(uuid, route.routeName ?? '', coords.map(([lon, lat]) => ({ lon, lat })), anchor);
         }

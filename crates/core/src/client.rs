@@ -133,7 +133,9 @@ impl SignalKClient {
                     // `null` (the default serializer would emit `undefined`, which the
                     // JS coldMap merge cannot tell apart from "field absent → retain").
                     let cold_js = cold
-                        .serialize(&serde_wasm_bindgen::Serializer::new().serialize_missing_as_null(true))
+                        .serialize(
+                            &serde_wasm_bindgen::Serializer::new().serialize_missing_as_null(true),
+                        )
                         .unwrap_or(JsValue::NULL);
                     let payload = js_sys::Object::new();
                     let _ = js_sys::Reflect::set(
