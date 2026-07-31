@@ -1,5 +1,6 @@
 export type AutoRotateMode = 'north' | 'cog' | 'heading' | 'bearing';
 export type RotateMode = AutoRotateMode | 'manual';
+import { resolveResumeMode } from './rotateModeLogic';
 
 const AUTO_MODES: AutoRotateMode[] = ['north', 'cog', 'heading', 'bearing'];
 const ALL_MODES: RotateMode[] = [...AUTO_MODES, 'manual'];
@@ -86,9 +87,9 @@ function createRotateModeStore() {
      * Toggles between free rotation (manual) and the last remembered auto mode.
      * Orthogonal to position pinning — does not affect followMode.
      */
-    toggleLock() {
+    toggleLock(hasCog: boolean, hasHeading: boolean, hasCourse: boolean) {
       if (mode === 'manual') {
-        mode = resumeMode;
+        mode = resolveResumeMode(resumeMode, hasCog, hasHeading, hasCourse);
       } else {
         resumeMode = mode;
         mode = 'manual';

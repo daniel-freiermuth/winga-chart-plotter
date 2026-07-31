@@ -482,7 +482,7 @@
     _compassPressTimer = setTimeout(() => {
       _compassWasLongPress = true;
       _compassPressTimer = null;
-      rotateMode.toggleLock();
+      rotateMode.toggleLock($vesselState.cog !== null, $vesselState.heading !== null, route.nextPoint !== null);
       if ('vibrate' in navigator) navigator.vibrate(30);
     }, 500);
   }
