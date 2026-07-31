@@ -1,6 +1,7 @@
 /** Pure logic for rotate-mode availability — no Svelte runes, testable in Node. */
 
 export type AutoRotateMode = 'north' | 'cog' | 'heading' | 'bearing';
+export type RotateMode = AutoRotateMode | 'manual';
 
 export const AUTO_MODES: AutoRotateMode[] = ['north', 'cog', 'heading', 'bearing'];
 

@@ -70,7 +70,7 @@ function createRotateModeStore() {
     toggle(hasCog: boolean, hasHeading: boolean, hasCourse: boolean) {
       if (mode === 'manual') {
         // Tap while free → snap back to last auto mode.
-        mode = resumeMode;
+        mode = resolveResumeMode(resumeMode, hasCog, hasHeading, hasCourse);
         save(mode, resumeMode);
         return;
       }
