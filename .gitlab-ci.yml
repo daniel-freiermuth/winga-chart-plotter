@@ -73,8 +73,17 @@ variables:
 # Stage: check — runs lint and tests in parallel
 # ---------------------------------------------------------------------------
 
+# Default rules applied to check/build jobs: run on branch pushes and MR
+# pipelines.  Without explicit rules, these jobs are excluded from MR
+# pipelines once any deploy job uses rules — breaking `needs: [build]` in
+# pages-mr-preview.
+.default-rules:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH
+
 lint:
-  extends: .rust-node-wasm-setup
+  extends: [.rust-node-wasm-setup, .default-rules]
   stage: check
   cache:
     - key:
@@ -94,7 +103,7 @@ lint:
     - (cd app && pnpm exec eslint src)
 
 test:
-  extends: .rust-setup
+  extends: [.rust-setup, .default-rules]
   stage: check
   cache:
     key:
@@ -108,7 +117,7 @@ test:
 # ---------------------------------------------------------------------------
 
 build:
-  extends: .rust-node-wasm-setup
+  extends: [.rust-node-wasm-setup, .default-rules]
   stage: build
   cache:
     - key:
