@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { resolveResumeMode } from './rotateModeLogic';
 
 /**
- * Regression: toggle() must not restore an unavailable resumeMode.
+ * Regression: toggle() and toggleLock() must not restore an unavailable
+ * resumeMode.
  *
  * If the sensor backing resumeMode was lost while the user was in manual
  * mode (e.g. heading sensor disconnected while resumeMode='heading'),
@@ -23,6 +24,13 @@ describe('resolveResumeMode', () => {
     const result = resolveResumeMode('heading', true, false, false);
     expect(result).not.toBe('heading');
     // 'north' is first in AUTO_MODES and always available
+    expect(result).toBe('north');
+  });
+
+  it('does not return bearing when route is unavailable', () => {
+    // toggleLock regression: resumeMode='bearing' but hasCourse=false
+    const result = resolveResumeMode('bearing', true, false, false);
+    expect(result).not.toBe('bearing');
     expect(result).toBe('north');
   });
 

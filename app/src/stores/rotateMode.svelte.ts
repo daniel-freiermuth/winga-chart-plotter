@@ -87,9 +87,9 @@ function createRotateModeStore() {
      * Toggles between free rotation (manual) and the last remembered auto mode.
      * Orthogonal to position pinning — does not affect followMode.
      */
-    toggleLock() {
+    toggleLock(hasCog: boolean, hasHeading: boolean, hasCourse: boolean) {
       if (mode === 'manual') {
-        mode = resumeMode;
+        mode = resolveResumeMode(resumeMode, hasCog, hasHeading, hasCourse);
       } else {
         resumeMode = mode;
         mode = 'manual';
