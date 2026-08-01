@@ -112,6 +112,7 @@ Chrome on Android doesn't seem to like the shaders of deck.gl. After closing the
 - WebGL rendering
 - Pin vessel position on screen (now also adapted by Freeboard)
 - Multiple, permanent and sticky rulers. Like the one in Navionics, but multiples.
+- Split screen
 
 ### Quality of life
 - 3D mode
@@ -129,5 +130,4 @@ Chrome on Android doesn't seem to like the shaders of deck.gl. After closing the
 
 ## Roadmap
 
-- [ ] Tauri packaging (Android)
-- [ ] Split screen
+- Tauri packaging (Android)

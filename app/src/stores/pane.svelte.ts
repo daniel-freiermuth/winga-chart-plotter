@@ -4,6 +4,7 @@ import { createRotateModeStore, type RotateModeStore } from './rotateMode.svelte
 import { createVisibilityStore, type VisibilityStore } from './visibility.svelte';
 import { createBaseLayersStore, type BaseLayersStore } from './baseLayers.svelte';
 import { createChartSelStore, type ChartSelStore } from './chartSel.svelte';
+import { settings } from './settings.svelte';
 
 /**
  * Pane state — everything that is *a way of looking at the world*, replicated
@@ -45,7 +46,33 @@ export function createPaneState(id: number): PaneState {
   };
 }
 
-/** Pane 0 always exists; enabling split view (later) appends pane 1. */
-export const panes: PaneState[] = [createPaneState(0)];
+/**
+ * Both panes exist eagerly (cheap: a handful of runes + localStorage reads);
+ * pane 1 is only *rendered* while split view is enabled, so no reactive pane
+ * list is needed.
+ */
+export const panes: readonly [PaneState, PaneState] = [createPaneState(0), createPaneState(1)];
 
-export const primaryPane: PaneState = panes[0] as PaneState;
+export const primaryPane: PaneState = panes[0];
+
+/**
+ * First split enable: pane 1 has no persisted camera yet — clone pane 0's live
+ * camera and projection so the split starts as "same view, then diverge".
+ * syncView() persists, so this runs at most once per fresh pane 1.
+ */
+function ensureSecondPaneSeeded(): void {
+  const [p0, p1] = panes;
+  if (p1.view.hasSavedView) return;
+  p1.view.projection = p0.view.projection;
+  p1.view.syncView([p0.view.center[0], p0.view.center[1]], p0.view.zoom, p0.view.bearing);
+}
+
+/** Toggle split view. Seeds pane 1 synchronously BEFORE it mounts. */
+export function setSplitViewEnabled(on: boolean): void {
+  if (on) ensureSecondPaneSeeded();
+  settings.setSplitView(on);
+}
+
+// Booting with split already enabled but pane 1 never persisted (keys cleared
+// out-of-band): seed at module init, before any component renders.
+if (settings.splitView) ensureSecondPaneSeeded();

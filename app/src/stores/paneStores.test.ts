@@ -34,30 +34,35 @@ beforeEach(() => {
 });
 
 describe('createMapViewStore', () => {
-  it('falls back to the default view on first run', () => {
+  it('falls back to the default view on first run, hasSavedView false', () => {
     const v = createMapViewStore();
     expect(v.center).toEqual([10.75, 59.91]);
+    expect(v.hasSavedView).toBe(false);
   });
 
   it('persists via syncView and restores in a fresh instance', () => {
     const v = createMapViewStore();
     v.syncView([5.5, 60.25], 12, 45);
+    expect(v.hasSavedView).toBe(true);
 
     const restored = createMapViewStore();
     expect(restored.center).toEqual([5.5, 60.25]);
     expect(restored.zoom).toBe(12);
     expect(restored.bearing).toBe(45);
+    expect(restored.hasSavedView).toBe(true);
   });
 
   it('treats corrupt storage as first run', () => {
     localStorage.setItem('map-view-coords', '{not json');
     const v = createMapViewStore();
     expect(v.center).toEqual([10.75, 59.91]);
+    expect(v.hasSavedView).toBe(false);
   });
 
   it('namespaces keys by lsSuffix — panes do not share cameras', () => {
     createMapViewStore().syncView([1, 2], 8, 0);
     const pane1 = createMapViewStore(':1');
+    expect(pane1.hasSavedView).toBe(false);
     pane1.syncView([3, 4], 9, 10);
     expect(createMapViewStore().center).toEqual([1, 2]);
     expect(createMapViewStore(':1').center).toEqual([3, 4]);

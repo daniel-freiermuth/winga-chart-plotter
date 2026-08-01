@@ -78,14 +78,24 @@ export interface SettingsData {
   signalkHost: string;
   signalkPort: number;
   useGeoLocation: boolean;
+  /** Dual-pane split view (split along the longer viewport edge). */
+  splitView: boolean;
+  /** Primary pane's share of the split axis, clamped to 0.2–0.8. */
+  splitRatio: number;
   appearance: AppearanceSettings;
   targetFps: number;
   resourcePollIntervalSeconds: number;
 }
 
+/** Split-divider ratio bounds — shared by the store clamp, the divider drag
+ *  clamp and the divider's ARIA value range (App.svelte). */
+export const SPLIT_RATIO_MIN = 0.2;
+export const SPLIT_RATIO_MAX = 0.8;
 const DEFAULTS: SettingsData = {
   ...detectSignalkOrigin(),
   useGeoLocation: false,
+  splitView: false,
+  splitRatio: 0.5,
   targetFps: 60,
   resourcePollIntervalSeconds: 5,
   appearance: {
@@ -184,6 +194,8 @@ function load(): SettingsData {
           ...DEFAULTS, ...p,
           ...normalizedConn,
           useGeoLocation: typeof p.useGeoLocation === 'boolean' ? p.useGeoLocation : DEFAULTS.useGeoLocation,
+          splitView: typeof p.splitView === 'boolean' ? p.splitView : DEFAULTS.splitView,
+          splitRatio: typeof p.splitRatio === 'number' && p.splitRatio >= SPLIT_RATIO_MIN && p.splitRatio <= SPLIT_RATIO_MAX ? p.splitRatio : DEFAULTS.splitRatio,
           targetFps: typeof p.targetFps === 'number' && p.targetFps > 0 ? p.targetFps : DEFAULTS.targetFps,
           resourcePollIntervalSeconds: typeof p.resourcePollIntervalSeconds === 'number' && p.resourcePollIntervalSeconds > 0 ? p.resourcePollIntervalSeconds : DEFAULTS.resourcePollIntervalSeconds,
           appearance: {
@@ -224,6 +236,8 @@ function createSettings() {
     get host(): string            { return data.signalkHost; },
     get port(): number            { return data.signalkPort; },
     get useGeoLocation(): boolean { return data.useGeoLocation; },
+    get splitView(): boolean      { return data.splitView; },
+    get splitRatio(): number      { return data.splitRatio; },
     get geoError(): string | null { return geoError; },
     /** Current position accuracy in metres. null = no fix yet. */
     get geoAccuracy(): number | null { return geoAccuracy; },
@@ -264,6 +278,14 @@ function createSettings() {
     },
     setTargetFps(fps: number) {
       data.targetFps = fps;
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    },
+    setSplitView(on: boolean) {
+      data.splitView = on;
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    },
+    setSplitRatio(ratio: number) {
+      data.splitRatio = Math.min(SPLIT_RATIO_MAX, Math.max(SPLIT_RATIO_MIN, ratio));
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
     },
     /** Persist the current state without any reactive re-assignments. Use from appearance

@@ -4,6 +4,9 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Added
+- Split view (enable in Settings): two independent chart panes, draggable divider, second pane starts as a clone of the first.
+
 ### Removed
 - The "Show track" toggle in Settings → Own vessel; the same toggle lives in the chart picker's layer chips.
 - Plotter extensions can no longer move the map: `map.flyTo` and `map.fitBounds` in the extension host API are ignored (with a console warning). `map.getView` still works.

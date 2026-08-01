@@ -1,6 +1,7 @@
 <script lang="ts">
   import { settings, type AppearanceSettings, type SettingsTab } from '../stores/settings.svelte';
   import { plotterExtensions } from '../stores/plotterExtensions.svelte';
+  import { setSplitViewEnabled } from '../stores/pane.svelte';
   import { auth } from '../stores/auth.svelte';
   import { fpsStore } from '../stores/fps.svelte';
   import { connection } from '../stores/connection.svelte';
@@ -240,6 +241,18 @@
       {#if settings.geoError && !settings.useGeoLocation}
         <p class="geo-error-note">⚠ {settings.geoError}</p>
       {/if}
+
+      <p class="section-title">Display</p>
+      <div class="row">
+        <span class="field-label">Split view</span>
+        <div class="field">
+          <label class="toggle">
+            <input type="checkbox" checked={settings.splitView}
+              onchange={() => { setSplitViewEnabled(!settings.splitView); }} />
+            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          </label>
+        </div>
+      </div>
 
       <p class="section-title">Authentication</p>
       {#if auth.isLoggedIn}

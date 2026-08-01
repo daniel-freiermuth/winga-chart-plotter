@@ -6,7 +6,8 @@
   import LazyMapThumb from './LazyMapThumb.svelte';
   import type { VisibilityState } from '../stores/visibility.svelte';
   import { chartLru } from '../stores/chartLru.svelte';
-  import type { PaneState } from '../stores/pane.svelte';
+  import { panes, type PaneState } from '../stores/pane.svelte';
+  import { settings } from '../stores/settings.svelte';
 
   let {
     pane,
@@ -33,13 +34,19 @@
 
   export function open() { isOpen = true; sheetHeight = 52; }
   function close() {
-    const activeIds: string[] = [...baseLayers.enabled];
-    for (const cid of chartSel.selected) {
-      if (charts.available[cid]?.type === 'WMTS') {
-        const layerId = chartSel.getLayerSel(cid);
-        if (layerId) activeIds.push(`${cid}:${layerId}`);
-      } else {
-        activeIds.push(cid);
+    // Touch every VISIBLE pane's active charts/layers — not just the pane this
+    // picker configures — so neither pane's selection ages out of the LRU.
+    const visiblePanes = settings.splitView ? panes : [panes[0]];
+    const activeIds: string[] = [];
+    for (const p of visiblePanes) {
+      activeIds.push(...p.baseLayers.enabled);
+      for (const cid of p.chartSel.selected) {
+        if (charts.available[cid]?.type === 'WMTS') {
+          const layerId = p.chartSel.getLayerSel(cid);
+          if (layerId) activeIds.push(`${cid}:${layerId}`);
+        } else {
+          activeIds.push(cid);
+        }
       }
     }
     chartLru.touch(activeIds);

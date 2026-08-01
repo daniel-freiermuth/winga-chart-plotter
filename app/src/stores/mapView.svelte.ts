@@ -8,8 +8,8 @@ export interface SavedMapView { center: [number, number]; zoom: number; bearing:
 /** Oslo — used only on the very first run, before any view has ever been saved. */
 const DEFAULT_VIEW: SavedMapView = { center: [10.75, 59.91], zoom: 10, bearing: 0 };
 
-/** Reads the last-persisted camera view, falling back to Oslo on first run / corrupt data. */
-function loadSavedView(key: string): SavedMapView {
+/** Reads the last-persisted camera view; null on first run / corrupt data. */
+function loadSavedView(key: string): SavedMapView | null {
   try {
     const s = localStorage.getItem(key);
     if (s) {
@@ -27,7 +27,7 @@ function loadSavedView(key: string): SavedMapView {
       }
     }
   } catch { /* ignore */ }
-  return { center: [...DEFAULT_VIEW.center], zoom: DEFAULT_VIEW.zoom, bearing: DEFAULT_VIEW.bearing };
+  return null;
 }
 
 /** Per-pane camera state: live center/zoom/bearing plus projection choice. */
@@ -41,6 +41,8 @@ export interface MapViewStore {
   syncView(c: [number, number], z: number, b: number): void;
   /** Called on map `rotate` — updates reactive bearing without persisting (persist happens on moveend). */
   updateBearing(b: number): void;
+  /** True once a camera view was ever persisted for this pane (used to seed pane 1 from pane 0 on first split enable). */
+  readonly hasSavedView: boolean;
 }
 
 /**
@@ -52,9 +54,11 @@ export function createMapViewStore(lsSuffix = ''): MapViewStore {
   const projKey = PROJECTION_LS_KEY + lsSuffix;
 
   const saved     = loadSavedView(viewKey);
-  let _center     = $state<[number, number]>(saved.center);
-  let _zoom       = $state<number>(saved.zoom);
-  let _bearing    = $state<number>(saved.bearing);
+  let hasSaved    = saved !== null;
+  const init      = saved ?? { center: [...DEFAULT_VIEW.center] as [number, number], zoom: DEFAULT_VIEW.zoom, bearing: DEFAULT_VIEW.bearing };
+  let _center     = $state<[number, number]>(init.center);
+  let _zoom       = $state<number>(init.zoom);
+  let _bearing    = $state<number>(init.bearing);
 
   let projection  = $state<ProjectionId>('mercator');
   try {
@@ -77,8 +81,10 @@ export function createMapViewStore(lsSuffix = ''): MapViewStore {
       _center  = c;
       _zoom    = z;
       _bearing = b;
+      hasSaved = true;
       try { localStorage.setItem(viewKey, JSON.stringify({ center: c, zoom: z, bearing: b })); } catch { /* ignore */ }
     },
     updateBearing(b: number): void { _bearing = b; },
+    get hasSavedView(): boolean { return hasSaved; },
   };
 }

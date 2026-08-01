@@ -16,6 +16,7 @@ import {
   gcDistanceNm as wasmGcDistanceNm,
   gcLine as wasmGcLine,
   gcComputeCpa as wasmGcComputeCpa,
+  unionViewBounds as wasmUnionViewBounds,
 } from '../wasm/signalk_chart_core.js';
 import { ready as wasmReady } from './wasmInit';
 
@@ -103,4 +104,39 @@ export function computeCpa(
   };
   r.free();
   return result;
+}
+
+/** Dateline-aware union of two pane viewports, from the WASM geo module. */
+export interface UnionedView {
+  /**
+   * [west, south, east, north], expressed AROUND the canonical center:
+   * west = center − span/2, east = center + span/2 (span ≤ 360°), so either
+   * edge may lie outside ±180 (unwrapped) — the same shape a single MapLibre
+   * viewport reports.
+   */
+  bounds: [number, number, number, number];
+  /**
+   * [lon, lat]; lon is canonical, normalized to [-180, 180) — it decides on
+   * which side of the wrap the union is represented, and always satisfies
+   * west ≤ lon ≤ east.
+   */
+  center: [number, number];
+}
+
+/**
+ * Union of two viewport bounds treated as arcs on the circle: merges across
+ * the antimeridian when that gap is smaller, where a naive min/max union
+ * would span the globe through Greenwich with a center on the wrong side of
+ * the planet. Returns null when WASM is not ready.
+ */
+export function unionViewBounds(
+  b0: [number, number, number, number],
+  b1: [number, number, number, number],
+): UnionedView | null {
+  if (!ready) return null;
+  const r = wasmUnionViewBounds(b0[0], b0[1], b0[2], b0[3], b1[0], b1[1], b1[2], b1[3]);
+  return {
+    bounds: [r[0]!, r[1]!, r[2]!, r[3]!],
+    center: [r[4]!, r[5]!],
+  };
 }
