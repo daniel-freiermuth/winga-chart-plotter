@@ -20,8 +20,17 @@ const DEFAULTS: VisibilityState = {
   waypoints:     true,
 };
 
+/** Merges persisted values over the defaults, accepting only booleans for known keys. */
 function load(key: string): VisibilityState {
-  return { ...DEFAULTS, ...((loadJSON(key) ?? {}) as Partial<VisibilityState>) };
+  const p = loadJSON(key) as Partial<Record<keyof VisibilityState, unknown>> | null;
+  const out = { ...DEFAULTS };
+  if (p && typeof p === 'object') {
+    for (const k of Object.keys(DEFAULTS) as (keyof VisibilityState)[]) {
+      const v = p[k];
+      if (typeof v === 'boolean') out[k] = v;
+    }
+  }
+  return out;
 }
 
 /** Per-pane layer visibility toggles. */

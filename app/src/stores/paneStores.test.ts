@@ -180,6 +180,13 @@ describe('createVisibilityStore', () => {
     expect(partial.ownTrack).toBe(true);
   });
 
+  it('keeps defaults for non-boolean persisted values', () => {
+    localStorage.setItem('layer-visibility', '{"aisVessels":"false","routes":false,"junk":1}');
+    const v = createVisibilityStore();
+    expect(v.aisVessels).toBe(true);  // string "false" rejected — default kept
+    expect(v.routes).toBe(false);     // valid boolean honored
+  });
+
   it('namespaces by lsSuffix', () => {
     createVisibilityStore().toggle('routes');
     expect(createVisibilityStore(':1').routes).toBe(true);
