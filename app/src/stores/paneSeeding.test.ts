@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { memStorage } from './testStorage';
 
 /**
  * Boot/seeding behavior of the pane module: pane 1 is cloned from pane 0's
@@ -10,18 +11,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  * dynamic `import()` is required here: a static import would hand every
  * test the same already-initialized module instance.
  */
-
-function memStorage(): Storage {
-  const m = new Map<string, string>();
-  return {
-    getItem:    (k: string) => m.get(k) ?? null,
-    setItem:    (k: string, v: string) => { m.set(k, v); },
-    removeItem: (k: string) => { m.delete(k); },
-    clear:      () => { m.clear(); },
-    key:        (i: number) => [...m.keys()][i] ?? null,
-    get length() { return m.size; },
-  };
-}
 
 beforeEach(() => {
   vi.resetModules();

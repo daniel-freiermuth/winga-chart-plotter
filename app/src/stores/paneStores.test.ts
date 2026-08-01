@@ -5,6 +5,7 @@ import { createRotateModeStore } from './rotateMode.svelte';
 import { createVisibilityStore } from './visibility.svelte';
 import { createBaseLayersStore } from './baseLayers.svelte';
 import { createChartSelStore } from './chartSel.svelte';
+import { memStorage } from './testStorage';
 
 /**
  * Contract tests for the per-pane store factories: restore from
@@ -16,18 +17,6 @@ import { createChartSelStore } from './chartSel.svelte';
 // Node has no localStorage — install an in-memory Storage per test so the
 // factories' persistence paths are actually exercised (their try/catch would
 // otherwise silently degrade every test to the fresh-install path).
-function memStorage(): Storage {
-  const m = new Map<string, string>();
-  const storage: Storage = {
-    getItem:    (k: string) => m.get(k) ?? null,
-    setItem:    (k: string, v: string) => { m.set(k, v); },
-    removeItem: (k: string) => { m.delete(k); },
-    clear:      () => { m.clear(); },
-    key:        (i: number) => [...m.keys()][i] ?? null,
-    get length() { return m.size; },
-  };
-  return storage;
-}
 
 beforeEach(() => {
   vi.stubGlobal('localStorage', memStorage());
