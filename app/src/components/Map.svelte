@@ -116,6 +116,14 @@
     const vs = get(vesselState);
     rotateMode.toggle(vs.cog !== null, vs.heading !== null, route.nextPoint !== null);
   }
+  // Keyboard path for the long-press action — without it, free-rotation lock
+  // would be unreachable for keyboard users (a pointer-only gesture).
+  function onCompassKeyDown(e: KeyboardEvent) {
+    if (e.key !== 'Enter' || !e.shiftKey) return;
+    e.preventDefault();
+    const vs = get(vesselState);
+    rotateMode.toggleLock(vs.cog !== null, vs.heading !== null, route.nextPoint !== null);
+  }
 
   // t 0, l 0 -> center
   // t 1, l 0 -> top middle
@@ -3210,14 +3218,15 @@
       class="nav-fab compass-fab"
       class:compass-fab--free={rotateMode.mode === 'manual'}
       title={rotateMode.mode === 'manual'
-        ? 'Free rotation — tap to re-engage, hold to lock'
-        : `Rotation: ${rotateMode.label} — tap to cycle, hold for free`}
-      aria-label="Rotation mode: {rotateMode.compassLabel}"
+        ? 'Free rotation — tap to re-engage, hold or Shift+Enter to lock'
+        : `Rotation: ${rotateMode.label} — tap to cycle, hold or Shift+Enter for free`}
+      aria-label="Rotation mode: {rotateMode.compassLabel} — Shift+Enter toggles free rotation"
       onpointerdown={onCompassPointerDown}
       onpointermove={onCompassPointerMove}
       onpointerup={onCompassPointerEnd}
       onpointercancel={onCompassPointerEnd}
       onpointerleave={onCompassPointerEnd}
+      onkeydown={onCompassKeyDown}
       onclick={onCompassClick}
     >
       <svg width={NAV_FAB_SIZE} height={NAV_FAB_SIZE} viewBox="0 0 44 44" aria-hidden="true">
