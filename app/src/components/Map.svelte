@@ -302,6 +302,9 @@
   // switch, so a fetch superseded by a newer switch becomes a no-op instead of
   // setStyle()-ing stale content or contaminating injectedStyleSources.
   let styleLoadGen = 0;
+  /** Pacing for retrying a failed base-style fetch (see loadBaseStyle's catch). */
+  const STYLE_RETRY_DELAY_MS = 5000;
+  let _styleRetryTimer: ReturnType<typeof setTimeout> | undefined;
 
 
   /** Return the current map view for extension host API. */
@@ -1497,6 +1500,7 @@
   onDestroy(() => {
     cancelAnimationFrame(rafId);
     clearTimeout(rafId);
+    clearTimeout(_styleRetryTimer);
     if (_compassPressTimer !== null) { clearTimeout(_compassPressTimer); _compassPressTimer = null; }
     overlay?.finalize();
     mapContainer.removeEventListener('pointerdown',   onPointerDown,   { capture: true });
@@ -2087,10 +2091,15 @@
         if (gen !== styleLoadGen) return; // superseded — newer switch owns the flags
         console.error('[map] Failed to load style', spec.styleUrl, e);
         // setStyle() was never called, so the map's previous style is still intact.
-        // Reset both flags so the effect can retry on next trigger (e.g. chart still
-        // selected → effect re-runs because mapLoaded flipped back to true).
-        activeStyleUrl = null;
-        mapLoaded = true;
+        // Resetting the flags re-triggers the effect (mapLoaded is a dependency),
+        // which would refetch the same URL in a tight loop when the failure is
+        // fast (bad URL, CORS, DNS). Delay the reset so retries are paced.
+        _styleRetryTimer = setTimeout(() => {
+          _styleRetryTimer = undefined;
+          if (gen !== styleLoadGen) return; // a newer switch took over meanwhile
+          activeStyleUrl = null;
+          mapLoaded = true;
+        }, STYLE_RETRY_DELAY_MS);
       });
   }
 
