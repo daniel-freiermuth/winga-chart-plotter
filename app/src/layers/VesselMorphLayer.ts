@@ -678,6 +678,13 @@ export interface VesselMorphLayerProps<DataT = number> extends LayerProps {
 }
 
 const defaultProps: DefaultProps<VesselMorphLayerProps> = {
+  // deck.gl ≥9.3.3 injects `cullMode: 'back'` as a GlobeView-wide default
+  // (GLOBE_VIEW_DEFAULT_PARAMETERS) to hide far-hemisphere geometry. Our
+  // triangle-list mixes windings (the fill fan is CW, the outline strip CCW),
+  // so backface culling silently drops the fill pass under globe projection.
+  // Layer parameters override the view default; the far hemisphere is already
+  // handled by this layer's in-shader discard, so culling adds nothing here.
+  parameters:     { cullMode: 'none' },
   getPosition:    { type: 'accessor', value: [0, 0] },
   getSog:         { type: 'accessor', value: 0 },
   getCog:         { type: 'accessor', value: 0 },

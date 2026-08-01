@@ -386,6 +386,11 @@ export interface VesselIconLayerProps<DataT = number> extends LayerProps {
 }
 
 const defaultProps: DefaultProps<VesselIconLayerProps> = {
+  // deck.gl ≥9.3.3 injects `cullMode: 'back'` as a GlobeView-wide default —
+  // fatal for this layer's mixed-winding triangle list under globe projection.
+  // See VesselMorphLayer.defaultProps for the full story; the far hemisphere
+  // is handled by the in-shader discard.
+  parameters:     { cullMode: 'none' },
   getPosition:    { type: 'accessor', value: [0, 0] },
   getSog:         { type: 'accessor', value: 0 },
   getCog:         { type: 'accessor', value: 0 },

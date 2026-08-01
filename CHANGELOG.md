@@ -11,6 +11,7 @@ All notable changes to this project are documented in this file.
 - The pinned vessel could end up outside the viewport after a drastic resize (window resize, orientation flip, split divider drag) — the pin is now re-anchored on every map resize.
 - Map pitch (tilt) is now saved and restored across reloads, like center/zoom/bearing.
 - Chart-picker thumbnails for charts crossing the antimeridian pointed at the wrong side of the planet; bounds containment and center now go through the WASM geo core.
+- Vessels rendered hollow (outline only) under globe projection: deck.gl ≥9.3.3 enables backface culling for the whole globe view by default, silently dropping the custom vessel layers' fill pass. Culling is now disabled per layer (the far hemisphere is already handled in-shader).
 
 ### Removed
 - The "Show track" toggle in Settings → Own vessel; the same toggle lives in the chart picker's layer chips.
