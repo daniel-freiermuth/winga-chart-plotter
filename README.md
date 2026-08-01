@@ -53,9 +53,9 @@ cargo test
 ## Design
 Do one job, do it good.
 This means that some features might be left to other layers.
-E.g. notification and alarm management as well as instrument might be left to KIP.
+E.g. notification and alarm management are currently not planned.
 Being a tool for marine navigation, Winga Chart Plotter will prioritize correctness and stability over features.
-WingaCP supports the very young [plotter-extensions](https://github.com/SignalK/signalk-server/pull/2773) for widgets.
+WingaCP supports the very young [plotter-extensions](https://github.com/SignalK/signalk-server/pull/2773) for widgets, e.g. instruments.
 
 
 ## Tips
