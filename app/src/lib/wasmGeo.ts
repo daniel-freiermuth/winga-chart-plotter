@@ -17,6 +17,8 @@ import {
   gcLine as wasmGcLine,
   gcComputeCpa as wasmGcComputeCpa,
   unionViewBounds as wasmUnionViewBounds,
+  chartBoundsContain as wasmChartBoundsContain,
+  chartBoundsCenter as wasmChartBoundsCenter,
 } from '../wasm/signalk_chart_core.js';
 import { ready as wasmReady } from './wasmInit';
 
@@ -139,4 +141,32 @@ export function unionViewBounds(
     bounds: [r[0]!, r[1]!, r[2]!, r[3]!],
     center: [r[4]!, r[5]!],
   };
+}
+
+/**
+ * Dateline-aware chart-bounds containment. Bounds are `[west, south, east,
+ * north]`; `west > east` reads as an arc crossing the antimeridian (e.g.
+ * `[170, -170]` is the 20° Pacific strip, which a naive interval test can
+ * never satisfy). Returns null when WASM is not ready.
+ */
+export function chartBoundsContain(
+  b: [number, number, number, number],
+  lon: number,
+  lat: number,
+): boolean | null {
+  if (!ready) return null;
+  return wasmChartBoundsContain(b[0], b[1], b[2], b[3], lon, lat);
+}
+
+/**
+ * Center of chart bounds — same convention as {@link chartBoundsContain};
+ * lon is canonical, normalized to [-180, 180). Returns null when WASM is
+ * not ready.
+ */
+export function chartBoundsCenter(
+  b: [number, number, number, number],
+): [number, number] | null {
+  if (!ready) return null;
+  const r = wasmChartBoundsCenter(b[0], b[1], b[2], b[3]);
+  return [r[0]!, r[1]!];
 }

@@ -3,6 +3,7 @@
   import maplibregl from 'maplibre-gl';
   import { untrack } from 'svelte';
   import { mapStyles } from '../stores/mapStyles.svelte';
+  import { chartBoundsContain, chartBoundsCenter } from '../lib/wasmGeo';
   import type { MapViewStore } from '../stores/mapView.svelte';
 
   let {
@@ -40,9 +41,13 @@
   const cameraCenter = $derived.by((): [number, number] => {
     const [lon, lat] = view.center;
     if (bounds) {
-      const [w, s, e, n] = bounds;
-      if (lon >= w && lon <= e && lat >= s && lat <= n) return [lon, lat];
-      return [(w + e) / 2, (s + n) / 2];
+      // Dateline-aware, via the WASM geo core: a naive interval test is never
+      // true for bounds crossing the antimeridian, and the naive (w+e)/2
+      // center lands on the wrong side of the planet.
+      const inside = chartBoundsContain(bounds, lon, lat);
+      if (inside === null) return [lon, lat]; // WASM not ready yet — keep live center
+      if (inside) return [lon, lat];
+      return chartBoundsCenter(bounds) ?? [lon, lat];
     }
     return [lon, lat];
   });

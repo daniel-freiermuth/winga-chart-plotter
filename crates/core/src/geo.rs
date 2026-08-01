@@ -389,6 +389,48 @@ pub fn union_view_bounds(
 ) -> Vec<f64> {
     union_bounds(w0, s0, e0, n0, w1, s1, e1, n1).to_vec()
 }
+/// Dateline-aware containment test for chart bounds `[west, south, east, north]`.
+///
+/// The longitude extent is the arc from `west` eastward to `east`:
+/// `west <= east` reads as the plain interval, `west > east` as an arc
+/// crossing the antimeridian (chart-catalog convention — `[170, -170]` is the
+/// 20° strip across the Pacific, which a naive interval test can never
+/// satisfy). `east - west >= 360` covers the whole circle.
+pub fn bounds_contain(w: f64, s: f64, e: f64, n: f64, lon: f64, lat: f64) -> bool {
+    if lat < s || lat > n {
+        return false;
+    }
+    if e - w >= 360.0 {
+        return true;
+    }
+    (lon - w).rem_euclid(360.0) <= (e - w).rem_euclid(360.0)
+}
+
+/// Center of chart bounds `[west, south, east, north]` — see [`bounds_contain`]
+/// for the longitude convention. Returns `[center_lon, center_lat]` with
+/// `center_lon` canonical (normalized to `[-180, 180)`, matching
+/// [`union_bounds`]): the center of the Pacific strip `[170, -170]` is `-180`,
+/// not the naive `(w + e) / 2 = 0` in the Gulf of Guinea.
+pub fn bounds_center(w: f64, s: f64, e: f64, n: f64) -> [f64; 2] {
+    let span = if e - w >= 360.0 {
+        360.0
+    } else {
+        (e - w).rem_euclid(360.0)
+    };
+    [wrap180(w + span / 2.0), (s + n) / 2.0]
+}
+
+/// Dateline-aware chart-bounds containment — see [`bounds_contain`].
+#[wasm_bindgen(js_name = chartBoundsContain)]
+pub fn chart_bounds_contain(w: f64, s: f64, e: f64, n: f64, lon: f64, lat: f64) -> bool {
+    bounds_contain(w, s, e, n, lon, lat)
+}
+
+/// Center of chart bounds — see [`bounds_center`]. Returns `[lon, lat]`.
+#[wasm_bindgen(js_name = chartBoundsCenter)]
+pub fn chart_bounds_center(w: f64, s: f64, e: f64, n: f64) -> Vec<f64> {
+    bounds_center(w, s, e, n).to_vec()
+}
 
 #[cfg(test)]
 mod tests {
@@ -828,5 +870,49 @@ mod tests {
     fn test_cpa_nan_inputs() {
         let r = gc_compute_cpa(f64::NAN, 0.0, 0.0, 5.0, 0.0, 0.0, 0.0, 5.0, 0.0);
         assert!(r.cpa_nm.is_nan(), "NaN input should propagate to cpa_nm");
+    }
+    #[test]
+    fn bounds_contain_plain_interval() {
+        assert!(bounds_contain(5.0, 50.0, 15.0, 60.0, 10.0, 55.0));
+        assert!(!bounds_contain(5.0, 50.0, 15.0, 60.0, 20.0, 55.0)); // lon outside
+        assert!(!bounds_contain(5.0, 50.0, 15.0, 60.0, 10.0, 65.0)); // lat outside
+                                                                     // Edges are inclusive.
+        assert!(bounds_contain(5.0, 50.0, 15.0, 60.0, 5.0, 50.0));
+        assert!(bounds_contain(5.0, 50.0, 15.0, 60.0, 15.0, 60.0));
+    }
+
+    #[test]
+    fn bounds_contain_across_dateline() {
+        // [170, -170]: the 20° Pacific strip — a naive interval test is never true.
+        assert!(bounds_contain(170.0, -10.0, -170.0, 10.0, 175.0, 0.0));
+        assert!(bounds_contain(170.0, -10.0, -170.0, 10.0, -175.0, 0.0));
+        assert!(bounds_contain(170.0, -10.0, -170.0, 10.0, 180.0, 0.0));
+        assert!(!bounds_contain(170.0, -10.0, -170.0, 10.0, 0.0, 0.0));
+        assert!(!bounds_contain(170.0, -10.0, -170.0, 10.0, 165.0, 0.0));
+    }
+
+    #[test]
+    fn bounds_contain_full_world() {
+        assert!(bounds_contain(-180.0, -90.0, 180.0, 90.0, 123.0, 45.0));
+        assert!(bounds_contain(-180.0, -90.0, 180.0, 90.0, -180.0, 0.0));
+    }
+
+    #[test]
+    fn bounds_center_plain() {
+        assert_eq!(bounds_center(5.0, 50.0, 15.0, 60.0), [10.0, 55.0]);
+    }
+
+    #[test]
+    fn bounds_center_across_dateline() {
+        // Pacific strip centers on the antimeridian (canonical -180),
+        // not (170 + -170) / 2 = 0 in the Gulf of Guinea.
+        assert_eq!(bounds_center(170.0, -10.0, -170.0, 10.0), [-180.0, 0.0]);
+    }
+
+    #[test]
+    fn bounds_center_full_world() {
+        let c = bounds_center(-180.0, -90.0, 180.0, 90.0);
+        assert_eq!(c[1], 0.0);
+        assert!((-180.0..180.0).contains(&c[0]));
     }
 }
