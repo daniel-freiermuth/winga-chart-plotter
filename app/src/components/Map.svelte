@@ -24,7 +24,7 @@
   import { waypoints } from '../stores/waypoints.svelte';
   import { track } from '../stores/track.svelte';
   import { gcLine, gcBearingDeg, gcDistanceNm } from '../lib/wasmGeo';
-  import { fetchAndResolveStyle } from '../lib/resolveStyle';
+  import { mapStyles } from '../stores/mapStyles.svelte';
   import { auth } from '../stores/auth.svelte';
   import { fetchAisVesselTrack, navigateToPoint, clearCourse, activateRoute, setActiveRoutePointIndex, deleteRoute, saveWaypoint, updateWaypoint, deleteWaypoint } from '../lib/wasmRest';
   import { extrapolatePos } from '../lib/deadReckoning';
@@ -298,14 +298,6 @@
   // Source names injected into the current style — targets for in-place tile
   // updates when only the layer choice changes.
   let injectedStyleSources: string[] = [];
-  // Discriminates concurrent loadBaseStyle() calls: bumped on every base-style
-  // switch, so a fetch superseded by a newer switch becomes a no-op instead of
-  // setStyle()-ing stale content or contaminating injectedStyleSources.
-  let styleLoadGen = 0;
-  /** Pacing for retrying a failed base-style fetch (see loadBaseStyle's catch). */
-  const STYLE_RETRY_DELAY_MS = 5000;
-  let _styleRetryTimer: ReturnType<typeof setTimeout> | undefined;
-
 
   /** Return the current map view for extension host API. */
   export function getView(): { center: [number, number]; zoom: number; bounds: [number, number, number, number] } {
@@ -1500,7 +1492,6 @@
   onDestroy(() => {
     cancelAnimationFrame(rafId);
     clearTimeout(rafId);
-    clearTimeout(_styleRetryTimer);
     if (_compassPressTimer !== null) { clearTimeout(_compassPressTimer); _compassPressTimer = null; }
     overlay?.finalize();
     mapContainer.removeEventListener('pointerdown',   onPointerDown,   { capture: true });
@@ -2046,61 +2037,39 @@
   });
 
   /**
-   * Fetches and applies the base style for a style-based chart, injecting the
-   * pane's chart tile source into the resolved style before setStyle().
-   * Failure restores the retry flags; the map keeps its previous style.
+   * Injects the pane's chart tile source into a resolved style for any layer
+   * source the style references but doesn't define. This means:
+   *   - style has sources.enc → use it (tile URL from style.json)
+   *   - style lacks sources.enc but chart.url is set → inject from SK
+   *   - both set → both exist (style wins for enc, SK url fills gaps)
+   * Records the injected names for later in-place WMTS layer switches.
+   * Clones the input before touching it — the mapStyles cache is shared
+   * across panes and thumbnails and must stay pristine, and MapLibre mutates
+   * styles it is handed. Cloning is this function's contract so no call site
+   * can forget it.
    */
-  function loadBaseStyle(m: maplibregl.Map, spec: StyleChartSpec): void {
-    const gen = styleLoadGen;
-    const chartUrl = spec.chartUrl;
-    const injected: string[] = [];
-    fetchAndResolveStyle(spec.styleUrl)
-      .then(resolved => {
-        if (gen !== styleLoadGen) return; // superseded by a newer switch
-        // If chart.url is available, inject it as a source for any layer
-        // whose source is not already defined in the style. This means:
-        //   - style has sources.enc → use it (tile URL from style.json)
-        //   - style lacks sources.enc but chart.url is set → inject from SK
-        //   - both set → both exist (style wins for enc, SK url fills gaps)
-        if (chartUrl) {
-          const style = resolved as maplibregl.StyleSpecification;
-          const sources = style.sources;
-          const definedSources = new Set(Object.keys(sources));
-          const referencedSources = new Set(
-            style.layers
-              .map((l: maplibregl.LayerSpecification) => ('source' in l ? l.source : undefined))
-              .filter((s): s is string => typeof s === 'string')
-          );
-          for (const src of referencedSources) {
-            if (!definedSources.has(src)) {
-              sources[src] = {
-                type: 'vector',
-                tiles: [chartUrl],
-                minzoom: spec.chart.minzoom ?? 0,
-                maxzoom: spec.chart.maxzoom ?? 22,
-              };
-              injected.push(src);
-            }
-          }
-          style.sources = sources;
-        }
-        injectedStyleSources = injected;
-        m.setStyle(resolved as maplibregl.StyleSpecification, { diff: false });
-      })
-      .catch((e: unknown) => {
-        if (gen !== styleLoadGen) return; // superseded — newer switch owns the flags
-        console.error('[map] Failed to load style', spec.styleUrl, e);
-        // setStyle() was never called, so the map's previous style is still intact.
-        // Resetting the flags re-triggers the effect (mapLoaded is a dependency),
-        // which would refetch the same URL in a tight loop when the failure is
-        // fast (bad URL, CORS, DNS). Delay the reset so retries are paced.
-        _styleRetryTimer = setTimeout(() => {
-          _styleRetryTimer = undefined;
-          if (gen !== styleLoadGen) return; // a newer switch took over meanwhile
-          activeStyleUrl = null;
-          mapLoaded = true;
-        }, STYLE_RETRY_DELAY_MS);
-      });
+  function injectChartSource(style: maplibregl.StyleSpecification, spec: StyleChartSpec): maplibregl.StyleSpecification {
+    const cloned = structuredClone(style);
+    if (!spec.chartUrl) return cloned;
+    const sources = cloned.sources;
+    const definedSources = new Set(Object.keys(sources));
+    const referencedSources = new Set(
+      cloned.layers
+        .map((l: maplibregl.LayerSpecification) => ('source' in l ? l.source : undefined))
+        .filter((s): s is string => typeof s === 'string')
+    );
+    for (const src of referencedSources) {
+      if (!definedSources.has(src)) {
+        sources[src] = {
+          type: 'vector',
+          tiles: [spec.chartUrl],
+          minzoom: spec.chart.minzoom ?? 0,
+          maxzoom: spec.chart.maxzoom ?? 22,
+        };
+        injectedStyleSources.push(src);
+      }
+    }
+    return cloned;
   }
 
   $effect(() => {
@@ -2112,19 +2081,30 @@
     const spec = styleChartSpec;
     const newStyleUrl = spec?.styleUrl ?? null;
 
-    // If the base style needs to change, call setStyle() and wait for style.load to retrigger us.
+    // If the base style needs to change, apply it and wait for style.load to
+    // retrigger us. Style JSON is resolved by the app-level mapStyles store
+    // (shared and deduplicated across panes; owns loading/error state and
+    // retry pacing) — application here is synchronous, so a superseded switch
+    // simply never applies and no async race exists.
     if (newStyleUrl !== activeStyleUrl) {
-      mapLoaded = false;
-      chartSourceUrls.clear();
-      activeStyleUrl = newStyleUrl;
-      activeStyleChartUrl = spec?.chartUrl ?? null;
-      injectedStyleSources = [];
-      // Supersede any in-flight base-style fetch (also when switching to the
-      // default style, whose setStyle below is synchronous).
-      styleLoadGen++;
       if (spec) {
-        loadBaseStyle(m, spec);
+        const res = mapStyles.resolve(spec.styleUrl);
+        // loading: keep the previous style; this effect re-runs when the
+        // store updates. error: ditto — the store re-admits the URL after its
+        // retry delay, which re-triggers this effect for a paced retry.
+        if (res.status !== 'resolved') return;
+        mapLoaded = false;
+        chartSourceUrls.clear();
+        activeStyleUrl = newStyleUrl;
+        activeStyleChartUrl = spec.chartUrl;
+        injectedStyleSources = [];
+        m.setStyle(injectChartSource(res.style, spec), { diff: false });
       } else {
+        mapLoaded = false;
+        chartSourceUrls.clear();
+        activeStyleUrl = null;
+        activeStyleChartUrl = null;
+        injectedStyleSources = [];
         m.setStyle(DEFAULT_STYLE, { diff: false });
       }
       return;
@@ -2133,8 +2113,25 @@
     // Same base style, different injected-chart URL — the pane switched WMTS
     // layer. Update the injected sources' tiles in place; no style reload.
     if (spec && spec.chartUrl !== activeStyleChartUrl) {
-      activeStyleChartUrl = spec.chartUrl;
-      if (spec.chartUrl !== null) {
+      const hadUrl = activeStyleChartUrl !== null;
+      if (spec.chartUrl === null) {
+        activeStyleChartUrl = null;
+      } else if (!hadUrl) {
+        // The style was applied before the WMTS tile URL resolved (chartUrl
+        // was null), so injectChartSource had nothing to inject and setTiles
+        // has nothing to update — reapply the style with the source injected.
+        // activeStyleChartUrl is committed only on success: an unresolved
+        // style keeps the mismatch, so the store's next update retries here.
+        const res = mapStyles.resolve(spec.styleUrl);
+        if (res.status !== 'resolved') return;
+        activeStyleChartUrl = spec.chartUrl;
+        mapLoaded = false;
+        chartSourceUrls.clear();
+        injectedStyleSources = [];
+        m.setStyle(injectChartSource(res.style, spec), { diff: false });
+        return;
+      } else {
+        activeStyleChartUrl = spec.chartUrl;
         for (const name of injectedStyleSources) {
           const src = m.getSource(name);
           if (src && 'setTiles' in src) (src as maplibregl.VectorTileSource).setTiles([spec.chartUrl]);

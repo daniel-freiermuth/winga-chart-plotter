@@ -2,7 +2,7 @@
   import type { StyleSpecification } from 'maplibre-gl';
   import maplibregl from 'maplibre-gl';
   import { untrack } from 'svelte';
-  import { fetchAndResolveStyle } from '../lib/resolveStyle';
+  import { mapStyles } from '../stores/mapStyles.svelte';
   import type { MapViewStore } from '../stores/mapView.svelte';
 
   let {
@@ -62,26 +62,20 @@
       resolved = s;
       return;
     }
-    let cancelled = false;
-    resolved = null;
-    void fetchAndResolveStyle(s)
-      .then(r => {
-        if (!cancelled) {
-          // Strip style-level camera so MapLibre's style.load handler (which fires
-          // one animation frame after the Map constructor) can't override the camera
-          // we set via the constructor options and the camera-follow $effect.
-          // The inline rasterStyle() has no such fields, so only URL-based styles need this.
-          const strip = r as Record<string, unknown>;
-          delete strip['center'];
-          delete strip['zoom'];
-          delete strip['bearing'];
-          delete strip['pitch'];
-          delete strip['roll'];
-          resolved = strip as StyleSpecification;
-        }
-      })
-      .catch(() => { if (!cancelled) resolved = s; });
-    return () => { cancelled = true; };
+    // URL-based styles resolve through the app-level mapStyles store: shared
+    // and cached, so re-opening the picker (or two panes' thumbnails of the
+    // same chart) never refetches. This effect re-runs as resolution
+    // progresses.
+    const res = mapStyles.resolve(s);
+    if (res.status === 'loading') { resolved = null; return; }
+    if (res.status === 'error')   { resolved = s; return; } // last resort: let MapLibre fetch the URL itself
+    // Clone — the store's cached style is shared and must stay pristine.
+    // Strip style-level camera so MapLibre's style.load handler (which fires
+    // one animation frame after the Map constructor) can't override the camera
+    // we set via the constructor options and the camera-follow $effect.
+    // The inline rasterStyle() has no such fields, so only URL-based styles need this.
+    const { center: _c, zoom: _z, bearing: _b, pitch: _p, roll: _r, ...rest } = structuredClone(res.style);
+    resolved = rest;
   });
 
   // ── Map lifecycle ─────────────────────────────────────────────────────────
