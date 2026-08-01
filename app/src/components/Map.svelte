@@ -37,7 +37,6 @@
   import { buildCpaLayers, formatCpaLabel, type SkCpaInput } from '../lib/aisCpaLayer';
   import { computeCpa } from '../lib/wasmGeo';
   import { buildOwnVesselLayers, buildCourseLayers } from '../lib/vesselLayers';
-  import ZoomSlider from './ZoomSlider.svelte';
 
   const {
     openSettings = () => { /* noop */ },
@@ -107,36 +106,6 @@
       _easedLon = inView ? pos.longitude : NaN;
       _easedLat = inView ? pos.latitude  : NaN;
     }
-  }
-  /** Zoom in one step, keeping the vessel at its current screen pixel when following. */
-  function zoomIn() {
-    if (!map) return;
-    if (followMode.following) {
-      const pos = get(vesselState).position;
-      if (pos) {
-        // Mirror zoomIn() behaviour: snap to the next integer zoom level.
-        const snap = map.getZoomSnap() || 1;
-        const target = Math.ceil(map.getZoom() / snap) * snap + snap;
-        map.easeTo({ zoom: target, around: [pos.longitude, pos.latitude] });
-        return;
-      }
-    }
-    map.zoomIn();
-  }
-
-  /** Zoom out one step, keeping the vessel at its current screen pixel when following. */
-  function zoomOut() {
-    if (!map) return;
-    if (followMode.following) {
-      const pos = get(vesselState).position;
-      if (pos) {
-        const snap = map.getZoomSnap() || 1;
-        const target = Math.floor(map.getZoom() / snap) * snap - snap;
-        map.easeTo({ zoom: target, around: [pos.longitude, pos.latitude] });
-        return;
-      }
-    }
-    map.zoomOut();
   }
 
   let mapLoaded     = $state(false);
@@ -3069,7 +3038,6 @@
   //     Uses rAF accumulation so rapid scroll events batch into a single easeTo per frame,
   //     matching MapLibre's native speed and feel. Two-finger trackpad scroll generates
   //     wheel events too, so this path covers it automatically.
-  //   - Zoom slider and keyboard call zoomIn/Out (anchor-aware); zoomend re-anchors all others.
   //     Touch pinch and keyboard zoom are handled by a `zoomend` listener that re-anchors
   //     the vessel to its pinned screen pixel (guarded: no re-anchor during active gestures).
   //   - Rotation (right-click drag, two-finger rotate) remains active throughout.
@@ -3170,9 +3138,6 @@
     <button onclick={() => { movingWaypoint = null; mapContainer.style.cursor = ''; }}>Cancel</button>
   </div>
 {/if}
-
-
-<ZoomSlider map={map} zoom={mapZoom} onZoomIn={zoomIn} onZoomOut={zoomOut} />
 
 {#if rulerPopup}
 <div
