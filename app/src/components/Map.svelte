@@ -3123,32 +3123,40 @@
       });
     }
 
-    // After any external zoom (scroll wheel, double-click, gesture), re-anchor
-    // the vessel to its pinned screen pixel.
+    // After any external zoom (scroll wheel, double-click, gesture) OR a pane
+    // resize (divider drag, orientation flip, split toggle, window resize),
+    // re-anchor the vessel to its pinned viewport fraction. MapLibre's resize
+    // preserves the geographic CENTER, not our pin — without this, a drastic
+    // shrink leaves the vessel at the old pixel displacement, possibly outside
+    // the pane, until the next position/zoom trigger.
     // Re-entry guard: in globe projection easeTo({ center, offset }) internally
     // adjusts zoom to compensate for globe curvature at the new latitude, which
     // fires another zoomend → infinite recursion without this flag.
     let reanchoring = false;
-    function onZoomEnd(): void {
+    function reanchorToPin(): void {
       if (scrollTimer !== null) return; // our own scroll animation is still active
       if (reanchoring) return;
       if (_isInteracting) return;       // user is mid-gesture (pinch-zoom); don't fight it
       const pos = get(vesselState).position;
       if (!pos || !map) return;
+      const off = followMode.offset;
+      if (!off) return; // follow was dropped before this queued event ran
       const W = mapContainer.clientWidth;
       const H = mapContainer.clientHeight;
-      const offset: [number, number] = [followMode.offset!.left * W / 2, followMode.offset!.top * H / 2];
+      const offset: [number, number] = [off.left * W / 2, off.top * H / 2];
       reanchoring = true;
       map.easeTo({ center: [pos.longitude, pos.latitude], offset, duration: 0 });
       reanchoring = false;
     }
 
     mapContainer.addEventListener('wheel', onWheel, { passive: false });
-    map.on('zoomend', onZoomEnd);
+    map.on('zoomend', reanchorToPin);
+    map.on('resize', reanchorToPin);
 
     return () => {
       mapContainer.removeEventListener('wheel', onWheel);
-      map?.off('zoomend', onZoomEnd);
+      map?.off('zoomend', reanchorToPin);
+      map?.off('resize', reanchorToPin);
       if (wheelRaf   !== null) cancelAnimationFrame(wheelRaf);
       if (scrollTimer !== null) clearTimeout(scrollTimer);
     };
