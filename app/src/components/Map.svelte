@@ -881,19 +881,22 @@
     // MapLibre v5's camera matrices — MapboxOverlay works without additional configuration.
     // Do NOT pass a custom `views` prop; let getDeckInstance choose GlobeView or MapView.
     //
-    // cullMode:'none' — getDefaultParameters adds cullMode:'back' in globe mode to cull
-    // far-hemisphere geometry. However, the IconLayer's billboard:false path applies a
-    // pixelOffset.y flip before the globe orientation matrix, resulting in CW (back-face)
-    // winding in screen space — culled invisible. We override to 'none' to keep all
-    // overlay layers visible. Far-hemisphere hull/icon artifacts are handled by the
-    // per-vertex hemisphere discard in VesselMorphLayer/VesselIconLayer instead.
+    // NOTE on culling: since deck.gl 9.3.3, GlobeView injects a view-level
+    // default `cullMode: 'back'` that OVERRIDES the overlay-level parameters
+    // below (merge order: deck.props < view.props < layer.props), so cullMode
+    // must be handled per layer. Our custom vessel layers render correctly
+    // under it — their geometry is CCW by construction (see triangleWinding.ts)
+    // and the culling hides the far hemisphere. deck's own TextLayer billboard
+    // quads however come out CW under the globe orientation matrix and need a
+    // per-layer cullMode:'none' (see the ruler/planner label layers).
     overlay = new MapboxOverlay({
       layers: [],
       interleaved: false,
       // depthCompare:'always' — our layers (hull + icon) occupy nearly identical depths so
       // depth testing causes z-fighting. We draw in painter's order and don't need occlusion
       // between our own layers. In non-interleaved mode this only affects deck.gl's canvas.
-      parameters: { depthCompare: 'always', cullMode: 'none' },
+      // (Still effective: GlobeView's view-level default only sets cullMode.)
+      parameters: { depthCompare: 'always' },
     });
     map.addControl(overlay);
     // Flush any AIS layers that were built before the overlay was ready.
@@ -1013,6 +1016,10 @@
               fontFamily: 'monospace',
               characterSet: Array.from('ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 °·.,\'-/T'),
               pickable: true,
+              // TextLayer billboard quads wind CW under GlobeView's orientation
+              // matrix; the view-level default cullMode:'back' (deck ≥9.3.3)
+              // would cull the label invisible under globe projection.
+              parameters: { cullMode: 'none' },
               updateTriggers: { getText: [currentRulers], getPosition: [currentRulers] },
             }),
           ];
@@ -1104,6 +1111,8 @@
                 fontFamily: 'monospace',
                 characterSet: Array.from('0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz °·.,\'-/TN'),
                 pickable: false,
+                // Same globe-culling escape as ruler-labels above.
+                parameters: { cullMode: 'none' },
                 updateTriggers: { getText: [wpts], getPosition: [wpts] },
               }),
             ];

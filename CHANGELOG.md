@@ -12,6 +12,7 @@ All notable changes to this project are documented in this file.
 - Map pitch (tilt) is now saved and restored across reloads, like center/zoom/bearing.
 - Chart-picker thumbnails for charts crossing the antimeridian pointed at the wrong side of the planet; bounds containment and center now go through the WASM geo core.
 - Vessels rendered hollow (outline only) under globe projection: deck.gl ≥9.3.3 enables backface culling for the whole globe view by default, and the custom vessel layers' fill triangles were wound clockwise. All vessel geometry is now normalized to counter-clockwise winding (pinned by a unit test across every geometry and morph blend), so globe culling works as designed and replaces the layers' in-shader far-hemisphere discard.
+- Ruler and route-planner labels were invisible under globe projection — deck.gl's own text billboard quads fall to the same globe backface-culling default; the label layers now opt out of culling per layer (the overlay-wide opt-out stopped working in deck.gl 9.3.3).
 
 ### Removed
 - The "Show track" toggle in Settings → Own vessel; the same toggle lives in the chart picker's layer chips.
