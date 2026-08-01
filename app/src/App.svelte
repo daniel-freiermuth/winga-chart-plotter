@@ -3,7 +3,7 @@
   import Map from './components/Map.svelte';
   import FaIcon from './lib/FaIcon.svelte';
   import {
-    faGear, faLayerGroup, faLocationCrosshairs, faRuler,
+    faGear, faRuler,
     faExpand, faCompress,
   } from '@fortawesome/free-solid-svg-icons';
   import { routePlanner } from './stores/routePlanner.svelte';
@@ -70,9 +70,8 @@
   import ExtPanel from './components/ExtPanel.svelte';
   import { vesselState } from './stores/vessel';
   import { settings, type SettingsTab } from './stores/settings.svelte';
-  import { followMode } from './stores/follow.svelte';
-  import { rotateMode } from './stores/rotateMode.svelte';
-  import { mapView } from './stores/mapView.svelte';
+  import { primaryPane } from './stores/pane.svelte';
+  import { startRulerSnapSync } from './lib/rulerSnap';
   import { charts } from './stores/charts.svelte';
   import { ais } from './stores/ais.svelte';
   import { fetchVesselInfo } from './lib/wasmRest';
@@ -104,12 +103,8 @@
   // can fully verify the calls without `eslint-disable` suppression.
   interface MapInstance {
     getView(): { center: [number, number]; zoom: number; bounds: [number, number, number, number] };
-    flyTo(position: [number, number], zoom?: number): void;
-    fitBounds(bounds: [number, number, number, number]): void;
-    flyToVessel(): void;
     addRuler(): void;
     setProjection(proj: string): void;
-    toggleFullscreen(): void;
     closePopup(): void;
   }
 
@@ -125,9 +120,11 @@
   const relay = createSkRelay((msg) => worker?.postMessage({ type: 'send', msg }));
 
   const mapControl: MapControl = {
-    getView:   ()        => mapComp!.getView(),
-    flyTo:     (pos, z)  => { mapComp!.flyTo(pos, z); },
-    fitBounds: (b)       => { mapComp!.fitBounds(b); },
+    getView:   () => mapComp!.getView(),
+    // Extensions may not steer the camera — navigation intent comes from the
+    // user. Kept as warning no-ops so existing extensions keep working.
+    flyTo:     () => { console.warn('[ext] map.flyTo ignored — extensions cannot move the map'); },
+    fitBounds: () => { console.warn('[ext] map.fitBounds ignored — extensions cannot move the map'); },
   };
 
   const panelControl: PanelControl = {
@@ -373,8 +370,27 @@
     };
     document.addEventListener('visibilitychange', onVisible);
 
+    isFullscreen = !!document.fullscreenElement;
+    const onFsChange = () => {
+      isFullscreen = !!document.fullscreenElement;
+      if (!document.fullscreenElement) {
+        // When the browser exits fullscreen and re-shows its chrome, the <html>
+        // element's scrollTop is left non-zero — the page shifts up by the height
+        // of the re-appeared address bar, leaving a white gap at the bottom.
+        // Reset it immediately; MapLibre's ResizeObserver handles canvas resize.
+        window.scrollTo(0, 0);
+      }
+    };
+    document.addEventListener('fullscreenchange', onFsChange);
+
+    // App-level frame driver: keeps snapped ruler endpoints following live
+    // vessel positions — shared world data, synced once regardless of panes.
+    const stopRulerSnap = startRulerSnapSync();
+
     return () => {
       document.removeEventListener('visibilitychange', onVisible);
+      document.removeEventListener('fullscreenchange', onFsChange);
+      stopRulerSnap();
       if (reconnectTimer !== null) clearTimeout(reconnectTimer);
       worker?.postMessage({ type: 'disconnect' });
       worker?.terminate();
@@ -466,48 +482,20 @@
     mapComp?.closePopup();
     chartPickerComp?.open();
   }
-  function handleFlyToVessel(): void {
-    mapComp?.flyToVessel();
-  }
-  const NAV_FAB_SIZE = 52; // px
-  let _compassPressTimer: ReturnType<typeof setTimeout> | null = null;
-  let _compassWasLongPress = false;
-  let _compassPressX = 0;
-  let _compassPressY = 0;
-
-  function onCompassPointerDown(e: PointerEvent) {
-    _compassWasLongPress = false;
-    _compassPressX = e.clientX;
-    _compassPressY = e.clientY;
-    _compassPressTimer = setTimeout(() => {
-      _compassWasLongPress = true;
-      _compassPressTimer = null;
-      rotateMode.toggleLock($vesselState.cog !== null, $vesselState.heading !== null, route.nextPoint !== null);
-      if ('vibrate' in navigator) navigator.vibrate(30);
-    }, 500);
-  }
-  function onCompassPointerEnd() {
-    if (_compassPressTimer !== null) { clearTimeout(_compassPressTimer); _compassPressTimer = null; }
-  }
-  function onCompassPointerMove(e: PointerEvent) {
-    if (_compassPressTimer === null) return;
-    const dx = e.clientX - _compassPressX;
-    const dy = e.clientY - _compassPressY;
-    if (dx * dx + dy * dy > (NAV_FAB_SIZE / 2) ** 2) onCompassPointerEnd();
-  }
-  function onCompassClick() {
-    if (_compassWasLongPress) { _compassWasLongPress = false; return; }
-    rotateMode.toggle($vesselState.cog !== null, $vesselState.heading !== null, route.nextPoint !== null);
-  }
   function handleAddRuler(): void {
     chartPickerOpen = false;
     mapComp?.addRuler();
   }
   function handleToggleProjection(): void {
-    mapComp?.setProjection(mapView.projection === 'mercator' ? 'globe' : 'mercator');
+    mapComp?.setProjection(primaryPane.view.projection === 'mercator' ? 'globe' : 'mercator');
   }
+  let isFullscreen = $state(false);
   function handleToggleFullscreen(): void {
-    mapComp?.toggleFullscreen();
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen().catch(() => { /* noop */ });
+    } else {
+      document.exitFullscreen().catch(() => { /* noop */ });
+    }
   }
 
   async function mobRaise() {
@@ -530,9 +518,9 @@
 </script>
 
 <div style="position: relative; width: 100%; height: 100%;">
-  <Map bind:this={mapComp} openSettings={handleOpenSettings} onMapClick={() => { chartPickerOpen = false; }} />
+  <Map bind:this={mapComp} pane={primaryPane} openSettings={handleOpenSettings} onMapClick={() => { chartPickerOpen = false; }} {chartPickerOpen} onOpenChartPicker={handleOpenChartPicker} />
   <Settings bind:this={settingsComp} />
-  <ChartPicker bind:this={chartPickerComp} bind:isOpen={chartPickerOpen} onToggleProjection={handleToggleProjection} />
+  <ChartPicker bind:this={chartPickerComp} pane={primaryPane} bind:isOpen={chartPickerOpen} onToggleProjection={handleToggleProjection} />
   {#each plotterExtensions.layout as placement (placement.instanceId)}
     {@const manifest = plotterExtensions.extensions.get(placement.extensionId)}
     {@const wDef = manifest?.widgets?.find(w => w.id === placement.widgetId)}
@@ -571,9 +559,9 @@
 
     <button
       class="map-btn"
-      title="{mapView.isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}"
+      title="{isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}"
       onclick={handleToggleFullscreen}
-    ><FaIcon icon={mapView.isFullscreen ? faCompress : faExpand} /></button>
+    ><FaIcon icon={isFullscreen ? faCompress : faExpand} /></button>
 
     <div class="map-toolbar-divider"></div>
 
@@ -669,58 +657,6 @@
     </button>
   </div>
 
-  <!-- Navigation stack: compass (top) → pin → layers (bottom), bottom-left corner -->
-  <div class="nav-stack" style="--nav-fab-size: {NAV_FAB_SIZE}px">
-    <!-- Compass: tap cycles auto modes, long-press toggles free rotation -->
-    <button
-      class="nav-fab compass-fab"
-      class:compass-fab--free={rotateMode.mode === 'manual'}
-      title={rotateMode.mode === 'manual'
-        ? 'Free rotation — tap to re-engage, hold to lock'
-        : `Rotation: ${rotateMode.label} — tap to cycle, hold for free`}
-      aria-label="Rotation mode: {rotateMode.compassLabel}"
-      onpointerdown={onCompassPointerDown}
-      onpointermove={onCompassPointerMove}
-      onpointerup={onCompassPointerEnd}
-      onpointercancel={onCompassPointerEnd}
-      onpointerleave={onCompassPointerEnd}
-      onclick={onCompassClick}
-    >
-      <svg width={NAV_FAB_SIZE} height={NAV_FAB_SIZE} viewBox="0 0 44 44" aria-hidden="true">
-        <circle cx="22" cy="22" r="21"
-          fill="rgba(0,0,0,0.72)"
-          stroke={rotateMode.mode === 'manual' ? '#f59e0b' : 'rgba(255,255,255,0.18)'}
-          stroke-width="1.5"/>
-        <!-- Rotating needle always points true North; label rotates with it -->
-        <g transform="rotate({-mapView.bearing}, 22, 22)">
-          <polygon points="22,5 17,23 22,20 27,23" fill="#e53e3e"/>
-          <polygon points="22,39 17,21 22,24 27,21" fill="rgba(200,200,200,0.75)"/>
-          <circle cx="22" cy="22" r="6" fill="rgba(0,0,0,0.75)"/>
-          <text x="22" y="22" text-anchor="middle" dominant-baseline="middle"
-            font-size="12" font-family="system-ui,sans-serif" font-weight="700"
-            fill={rotateMode.mode === 'manual' ? '#f59e0b' : 'white'}
-          >{rotateMode.compassLabel}</text>
-        </g>
-      </svg>
-    </button>
-
-    <!-- Position pin -->
-    <button
-      class="nav-fab"
-      class:nav-fab--active={followMode.following}
-      title={followMode.following ? 'Stop following vessel' : 'Follow vessel'}
-      disabled={!followMode.following && !$vesselState.position}
-      onclick={handleFlyToVessel}
-    ><FaIcon icon={faLocationCrosshairs} /></button>
-
-    <!-- Chart &amp; layer picker -->
-    <button
-      class="nav-fab"
-      class:nav-fab--open={chartPickerOpen}
-      title="Charts &amp; layers"
-      onclick={handleOpenChartPicker}
-    ><FaIcon icon={faLayerGroup} /></button>
-  </div>
 </div>
 
 <style>
@@ -762,48 +698,6 @@
     margin: 2px 0;
   }
 
-  .nav-stack {
-    position: absolute;
-    bottom: 20px;
-    left: 16px;
-    z-index: 10;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-
-  .nav-fab {
-    width: var(--nav-fab-size);
-    height: var(--nav-fab-size);
-    border-radius: 50%;
-    border: 1.5px solid rgba(255,255,255,0.18);
-    background: rgba(0,0,0,0.72);
-    color: white;
-    font-size: 20px;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.45);
-    transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
-    padding: 0;
-  }
-  .nav-fab:disabled              { opacity: 0.35; cursor: default; }
-  .nav-fab--active               { background: rgba(255,255,255,0.9); color: #111827; border-color: rgba(255,255,255,0.9); }
-  .nav-fab--open                 { background: rgba(76,201,240,0.15); box-shadow: 0 0 0 2px #4cc9f0, 0 2px 12px rgba(0,0,0,0.45); }
-  @media (hover: hover) and (pointer: fine) {
-    .nav-fab:hover:not(:disabled)         { background: rgba(40,40,80,0.9); }
-    .nav-fab--active:hover:not(:disabled) { background: rgba(220,220,240,0.95); }
-    .nav-fab--open:hover                  { background: rgba(76,201,240,0.25); }
-  }
-  .nav-fab:active:not(:disabled) { transform: scale(0.94); }
-
-  /* Compass FAB: the SVG renders its own circle; the button wrapper is transparent. */
-  .compass-fab { background: none; border: none; box-shadow: none; padding: 0; }
-  @media (hover: hover) and (pointer: fine) {
-    .compass-fab:hover svg { filter: brightness(1.25); }
-  }
-  .compass-fab:active { transform: scale(0.94); }
 
   .mob-container {
     position: absolute;

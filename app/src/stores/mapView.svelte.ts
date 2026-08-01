@@ -9,9 +9,9 @@ export interface SavedMapView { center: [number, number]; zoom: number; bearing:
 const DEFAULT_VIEW: SavedMapView = { center: [10.75, 59.91], zoom: 10, bearing: 0 };
 
 /** Reads the last-persisted camera view, falling back to Oslo on first run / corrupt data. */
-export function loadSavedView(): SavedMapView {
+function loadSavedView(key: string): SavedMapView {
   try {
-    const s = localStorage.getItem(VIEW_LS_KEY);
+    const s = localStorage.getItem(key);
     if (s) {
       const p = JSON.parse(s) as { center?: unknown; zoom?: unknown; bearing?: unknown };
       if (
@@ -30,52 +30,55 @@ export function loadSavedView(): SavedMapView {
   return { center: [...DEFAULT_VIEW.center], zoom: DEFAULT_VIEW.zoom, bearing: DEFAULT_VIEW.bearing };
 }
 
-/** Call this on map `moveend` — keeps the store in sync and persists to localStorage. */
-export function saveView(center: [number, number], zoom: number, bearing: number): void {
-  try { localStorage.setItem(VIEW_LS_KEY, JSON.stringify({ center, zoom, bearing })); } catch { /* ignore */ }
+/** Per-pane camera state: live center/zoom/bearing plus projection choice. */
+export interface MapViewStore {
+  projection: ProjectionId;
+  /** Live camera position (updated on every map `moveend`). */
+  readonly center: [number, number];
+  readonly zoom: number;
+  readonly bearing: number;
+  /** Called on map `moveend` — updates reactive state and persists to localStorage. */
+  syncView(c: [number, number], z: number, b: number): void;
+  /** Called on map `rotate` — updates reactive bearing without persisting (persist happens on moveend). */
+  updateBearing(b: number): void;
 }
 
-/** Reads the last-persisted projection, falling back to mercator on first run / corrupt data. */
-function loadSavedProjection(): ProjectionId {
-  try {
-    const s = localStorage.getItem(PROJECTION_LS_KEY);
-    if (s === 'globe' || s === 'mercator') return s;
-  } catch { /* ignore */ }
-  return 'mercator';
-}
+/**
+ * `lsSuffix` namespaces the localStorage keys per pane: '' for the primary
+ * pane (legacy keys — no migration needed), ':1' for the second pane.
+ */
+export function createMapViewStore(lsSuffix = ''): MapViewStore {
+  const viewKey = VIEW_LS_KEY + lsSuffix;
+  const projKey = PROJECTION_LS_KEY + lsSuffix;
 
-function createMapViewStore() {
-  const saved     = loadSavedView();
+  const saved     = loadSavedView(viewKey);
   let _center     = $state<[number, number]>(saved.center);
   let _zoom       = $state<number>(saved.zoom);
   let _bearing    = $state<number>(saved.bearing);
-  let projection  = $state<ProjectionId>(loadSavedProjection());
-  let isFullscreen = $state(false);
+
+  let projection  = $state<ProjectionId>('mercator');
+  try {
+    const s = localStorage.getItem(projKey);
+    if (s === 'globe' || s === 'mercator') projection = s;
+  } catch { /* ignore */ }
 
   return {
     get projection()    { return projection; },
     set projection(v: ProjectionId) {
       projection = v;
-      try { localStorage.setItem(PROJECTION_LS_KEY, v); } catch { /* ignore */ }
+      try { localStorage.setItem(projKey, v); } catch { /* ignore */ }
     },
-    get isFullscreen()  { return isFullscreen; },
-    set isFullscreen(v: boolean) { isFullscreen = v; },
 
-    /** Live camera position (updated on every map `moveend`). */
     get center():  [number, number] { return _center;  },
     get zoom():    number           { return _zoom;    },
     get bearing(): number           { return _bearing; },
 
-    /** Called on map `moveend` — updates reactive state and persists to localStorage. */
     syncView(c: [number, number], z: number, b: number): void {
       _center  = c;
       _zoom    = z;
       _bearing = b;
-      saveView(c, z, b);
+      try { localStorage.setItem(viewKey, JSON.stringify({ center: c, zoom: z, bearing: b })); } catch { /* ignore */ }
     },
-    /** Called on map `rotate` — updates reactive bearing without persisting (persist happens on moveend). */
     updateBearing(b: number): void { _bearing = b; },
   };
 }
-
-export const mapView = createMapViewStore();

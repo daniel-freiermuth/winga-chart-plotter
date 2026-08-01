@@ -1,13 +1,16 @@
 <script lang="ts">
   import type { StyleSpecification } from 'maplibre-gl';
   import MapThumb from './MapThumb.svelte';
+  import type { MapViewStore } from '../stores/mapView.svelte';
 
   let {
     style,
     bounds,
+    view,
   }: {
     style: StyleSpecification | string;
     bounds?: [number, number, number, number] | undefined;
+    view: MapViewStore;
   } = $props();
 
   let container = $state<HTMLDivElement | undefined>();
@@ -39,7 +42,7 @@
 
 <div bind:this={container} class="lazy-thumb">
   {#if visible}
-    <MapThumb {style} {bounds} />
+    <MapThumb {style} {bounds} {view} />
   {/if}
 </div>
 

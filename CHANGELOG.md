@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [Unreleased]
+
+### Removed
+- The "Show track" toggle in Settings → Own vessel; the same toggle lives in the chart picker's layer chips.
+- Plotter extensions can no longer move the map: `map.flyTo` and `map.fitBounds` in the extension host API are ignored (with a console warning). `map.getView` still works.
+
 ## [0.20.1] - 2026-07-30
 
 ### Fixed

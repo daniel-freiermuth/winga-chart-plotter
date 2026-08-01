@@ -3,7 +3,7 @@
   import maplibregl from 'maplibre-gl';
   import { untrack } from 'svelte';
   import { fetchAndResolveStyle } from '../lib/resolveStyle';
-  import { mapView } from '../stores/mapView.svelte';
+  import type { MapViewStore } from '../stores/mapView.svelte';
 
   let {
     /**
@@ -18,12 +18,15 @@
      * Optional geographic bounds [west, south, east, north].  When provided,
      * the camera snaps to the current map position if it falls inside the
      * bounds, otherwise shows the geographic centre of the chart.  When
-     * omitted, the camera follows mapView.center directly.
+     * omitted, the camera follows view.center directly.
      */
     bounds,
+    /** Camera state of the pane this thumbnail previews charts for. */
+    view,
   }: {
     style: StyleSpecification | string;
     bounds?: [number, number, number, number] | undefined;
+    view: MapViewStore;
   } = $props();
 
   let container = $state<HTMLDivElement | undefined>();
@@ -31,11 +34,11 @@
   let mapReady  = $state(false);
   let mapRef: maplibregl.Map | null = null;
 
-  // ── Camera — derived from live mapView so the parent template never needs to
-  //    track mapView.center/zoom (no re-renders, no style-recreation on pan). ─
+  // ── Camera — derived from the pane's live view so the parent template never
+  //    needs to track view.center/zoom (no re-renders, no style-recreation on pan). ─
 
   const cameraCenter = $derived.by((): [number, number] => {
-    const [lon, lat] = mapView.center;
+    const [lon, lat] = view.center;
     if (bounds) {
       const [w, s, e, n] = bounds;
       if (lon >= w && lon <= e && lat >= s && lat <= n) return [lon, lat];
@@ -44,11 +47,11 @@
     return [lon, lat];
   });
 
-  // Follow mapView.zoom directly — no clamping to chart zoom bounds.
+  // Follow view.zoom directly — no clamping to chart zoom bounds.
   // Clamping would make previews appear at different scales from each other
-  // (too zoomed-in when mapView < minzoom, too zoomed-out when mapView > maxzoom).
+  // (too zoomed-in when view.zoom < minzoom, too zoomed-out when view.zoom > maxzoom).
   // MapLibre handles over/under-zoom gracefully; out-of-range tiles render gray.
-  const cameraZoom = $derived(mapView.zoom);
+  const cameraZoom = $derived(view.zoom);
 
   // ── Style resolution ──────────────────────────────────────────────────────
 
