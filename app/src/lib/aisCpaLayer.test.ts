@@ -61,7 +61,7 @@ describe('buildCpaLayers SK ghost projection cap', () => {
     expect(dots.length).toBe(2);
 
     // Own vessel is stationary (NaN COG) → ghost should be at own position.
-    const [ownGhostLon, ownGhostLat] = dots[0];
+    const [ownGhostLon, ownGhostLat] = dots[0]!;
     expect(ownGhostLon).toBeCloseTo(OWN_LON, 4);
     expect(ownGhostLat).toBeCloseTo(OWN_LAT, 4);
 
@@ -77,7 +77,7 @@ describe('buildCpaLayers SK ghost projection cap', () => {
     expect(Math.abs(uncapped6hLon - expected2hLon)).toBeGreaterThan(0.1);
 
     // The ghost MUST match the capped 2 h position.
-    const [tgtGhostLon, tgtGhostLat] = dots[1];
+    const [tgtGhostLon, tgtGhostLat] = dots[1]!;
     expect(tgtGhostLon).toBeCloseTo(expected2hLon, 6);
     expect(tgtGhostLat).toBeCloseTo(expected2hLat, 6);
   });
@@ -96,7 +96,7 @@ describe('buildCpaLayers SK ghost projection cap', () => {
       TGT_LON, TGT_LAT, TGT_COG, TGT_SOG, 0, 0, 1800 * 1000,
     );
 
-    const [tgtGhostLon, tgtGhostLat] = dots[1];
+    const [tgtGhostLon, tgtGhostLat] = dots[1]!;
     expect(tgtGhostLon).toBeCloseTo(expected30mLon, 6);
     expect(tgtGhostLat).toBeCloseTo(expected30mLat, 6);
   });

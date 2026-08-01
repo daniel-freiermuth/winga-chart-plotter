@@ -68,7 +68,7 @@ export function buildCpaLayers(
 
   // ── SK server CPA ghost (linear model) ───────────────────────────────────
   if (skCpa && skCpa.timeToS > 0) {
-    const tcpa_s = skCpa.timeToS;
+    const tcpa_s = Math.min(skCpa.timeToS, 7200);
     // Linear projection for both vessels (SK plugins use straight-line model).
     const [skOwnLon, skOwnLat] = (isNaN(ownCog) || isNaN(ownSog))
       ? [ownLon, ownLat]
