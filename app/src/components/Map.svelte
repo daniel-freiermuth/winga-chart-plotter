@@ -298,6 +298,10 @@
   // Source names injected into the current style — targets for in-place tile
   // updates when only the layer choice changes.
   let injectedStyleSources: string[] = [];
+  // Discriminates concurrent loadBaseStyle() calls: bumped on every base-style
+  // switch, so a fetch superseded by a newer switch becomes a no-op instead of
+  // setStyle()-ing stale content or contaminating injectedStyleSources.
+  let styleLoadGen = 0;
 
 
   /** Return the current map view for extension host API. */
@@ -2037,6 +2041,59 @@
     };
   });
 
+  /**
+   * Fetches and applies the base style for a style-based chart, injecting the
+   * pane's chart tile source into the resolved style before setStyle().
+   * Failure restores the retry flags; the map keeps its previous style.
+   */
+  function loadBaseStyle(m: maplibregl.Map, spec: StyleChartSpec): void {
+    const gen = styleLoadGen;
+    const chartUrl = spec.chartUrl;
+    const injected: string[] = [];
+    fetchAndResolveStyle(spec.styleUrl)
+      .then(resolved => {
+        if (gen !== styleLoadGen) return; // superseded by a newer switch
+        // If chart.url is available, inject it as a source for any layer
+        // whose source is not already defined in the style. This means:
+        //   - style has sources.enc → use it (tile URL from style.json)
+        //   - style lacks sources.enc but chart.url is set → inject from SK
+        //   - both set → both exist (style wins for enc, SK url fills gaps)
+        if (chartUrl) {
+          const style = resolved as maplibregl.StyleSpecification;
+          const sources = style.sources;
+          const definedSources = new Set(Object.keys(sources));
+          const referencedSources = new Set(
+            style.layers
+              .map((l: maplibregl.LayerSpecification) => ('source' in l ? l.source : undefined))
+              .filter((s): s is string => typeof s === 'string')
+          );
+          for (const src of referencedSources) {
+            if (!definedSources.has(src)) {
+              sources[src] = {
+                type: 'vector',
+                tiles: [chartUrl],
+                minzoom: spec.chart.minzoom ?? 0,
+                maxzoom: spec.chart.maxzoom ?? 22,
+              };
+              injected.push(src);
+            }
+          }
+          style.sources = sources;
+        }
+        injectedStyleSources = injected;
+        m.setStyle(resolved as maplibregl.StyleSpecification, { diff: false });
+      })
+      .catch((e: unknown) => {
+        if (gen !== styleLoadGen) return; // superseded — newer switch owns the flags
+        console.error('[map] Failed to load style', spec.styleUrl, e);
+        // setStyle() was never called, so the map's previous style is still intact.
+        // Reset both flags so the effect can retry on next trigger (e.g. chart still
+        // selected → effect re-runs because mapLoaded flipped back to true).
+        activeStyleUrl = null;
+        mapLoaded = true;
+      });
+  }
+
   $effect(() => {
     if (!map || !mapLoaded) return;
     const m   = map;
@@ -2053,48 +2110,11 @@
       activeStyleUrl = newStyleUrl;
       activeStyleChartUrl = spec?.chartUrl ?? null;
       injectedStyleSources = [];
+      // Supersede any in-flight base-style fetch (also when switching to the
+      // default style, whose setStyle below is synchronous).
+      styleLoadGen++;
       if (spec) {
-        const styleChart = spec.chart;
-        const chartUrl   = spec.chartUrl;
-        fetchAndResolveStyle(spec.styleUrl)
-          .then(resolved => {
-            // If chart.url is available, inject it as a source for any layer
-            // whose source is not already defined in the style. This means:
-            //   - style has sources.enc → use it (tile URL from style.json)
-            //   - style lacks sources.enc but chart.url is set → inject from SK
-            //   - both set → both exist (style wins for enc, SK url fills gaps)
-            if (chartUrl) {
-              const spec2 = resolved as maplibregl.StyleSpecification;
-              const sources = spec2.sources;
-              const definedSources = new Set(Object.keys(sources));
-              const referencedSources = new Set(
-                spec2.layers
-                  .map((l: maplibregl.LayerSpecification) => ('source' in l ? l.source : undefined))
-                  .filter((s): s is string => typeof s === 'string')
-              );
-              for (const src of referencedSources) {
-                if (!definedSources.has(src)) {
-                  sources[src] = {
-                    type: 'vector',
-                    tiles: [chartUrl],
-                    minzoom: styleChart.minzoom ?? 0,
-                    maxzoom: styleChart.maxzoom ?? 22,
-                  };
-                  injectedStyleSources.push(src);
-                }
-              }
-              spec2.sources = sources;
-            }
-            m.setStyle(resolved as maplibregl.StyleSpecification, { diff: false });
-          })
-          .catch((e: unknown) => {
-            console.error('[map] Failed to load style', spec.styleUrl, e);
-            // setStyle() was never called, so the map's previous style is still intact.
-            // Reset both flags so the effect can retry on next trigger (e.g. chart still
-            // selected → effect re-runs because mapLoaded flipped back to true).
-            activeStyleUrl = null;
-            mapLoaded = true;
-          });
+        loadBaseStyle(m, spec);
       } else {
         m.setStyle(DEFAULT_STYLE, { diff: false });
       }
