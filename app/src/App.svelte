@@ -175,7 +175,10 @@
     // the most zoomed-out pane"), NOT a fit — a fit zoom would need a target
     // viewport, and a cross-pane union has none.
     getView: () => {
-      const v0 = mapComp!.getView();
+      const v0 = mapComp?.getView();
+      // Extension asks before the primary pane's Map has mounted — degrade to
+      // the same empty view Map.getView() itself returns when it has no map.
+      if (!v0) return { center: [0, 0] as [number, number], zoom: 0, bounds: [0, 0, 0, 0] as [number, number, number, number] };
       const v1 = settings.splitView ? mapComp1?.getView() : null;
       if (!v1) return v0;
       const u = unionViewBounds(v0.bounds, v1.bounds);
