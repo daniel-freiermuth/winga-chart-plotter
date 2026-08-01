@@ -1,11 +1,11 @@
 import { get } from 'svelte/store';
-import { ais, AIS_HOT_STRIDE, AIS_F_LON, AIS_F_LAT, AIS_F_COG, AIS_F_SOG, AIS_F_ROT, AIS_F_AGE } from '../stores/ais.svelte';
+import { ais } from '../stores/ais.svelte';
 import { rulers } from '../stores/rulers.svelte';
 import { vesselState } from '../stores/vessel';
-import { extrapolatePos } from './deadReckoning';
+import { settings } from '../stores/settings.svelte';
+import { buildSnapTargets, type SnapTarget } from './snapTargets';
 
-/** A live position a ruler endpoint can snap to (own vessel, AIS target, or its dead-reckoned ghost). */
-export interface SnapTarget { id: string; position: { longitude: number; latitude: number } }
+export type { SnapTarget };
 
 let targets: SnapTarget[] = [];
 
@@ -24,9 +24,7 @@ const IDLE_POLL_MS = 250;
  *
  * Rulers are shared world data; endpoints snapped to a vessel must follow its
  * live (dead-reckoned) position no matter how many panes render them, so the
- * app — not a pane — owns the per-frame sync. For each moving AIS vessel two
- * targets exist: last-known (`id`) and dead-reckoned ghost (`id + ':ghost'`);
- * stationary vessels get one; own vessel is always included.
+ * app — not a pane — owns the per-frame sync.
  *
  * Scheduling: per display frame (rAF) only while rulers exist; while none do,
  * a slow setTimeout poll watches for one appearing instead of burning a rAF
@@ -44,33 +42,9 @@ export function startRulerSnapSync(): () => void {
       timerId = setTimeout(tick, IDLE_POLL_MS);
       return;
     }
-
-    const nowMs = Date.now();
-    const snapPts: SnapTarget[] = [];
-    const hd = ais.hotData;
-    const ids = ais.ids;
-    const uploadTs = ais.uploadTimestamp;
-    const S = AIS_HOT_STRIDE;
-    if (hd && ids.length > 0 && uploadTs) {
-      for (let i = 0; i < ids.length; i++) {
-        const lon = hd[i * S + AIS_F_LON]!;
-        const lat = hd[i * S + AIS_F_LAT]!;
-        snapPts.push({ id: ids[i]!, position: { longitude: lon, latitude: lat } });
-        const cog = hd[i * S + AIS_F_COG]!;
-        const sog = hd[i * S + AIS_F_SOG]!;
-        if (!isNaN(cog) && !isNaN(sog)) {
-          const rot = hd[i * S + AIS_F_ROT]!;
-          const lastPosMs = uploadTs - hd[i * S + AIS_F_AGE]! * 1000;
-          const [gLon, gLat] = extrapolatePos(lon, lat, cog, sog, isNaN(rot) ? 0 : rot, lastPosMs, nowMs);
-          snapPts.push({ id: `${String(ids[i])}:ghost`, position: { longitude: gLon, latitude: gLat } });
-        }
-      }
-    }
-    const ownPos = get(vesselState).position;
-    if (ownPos) {
-      snapPts.push({ id: 'own-vessel', position: { longitude: ownPos.longitude, latitude: ownPos.latitude } });
-    }
-    targets = snapPts;
+    // Same dead-reckoning cap as the CPA ring and DR anchor in Map.svelte.
+    const capMs = settings.appearance.ais.cog.lengthMinutes * 60 * 1000;
+    targets = buildSnapTargets(ais.hotData, ais.ids, ais.uploadTimestamp, get(vesselState).position, Date.now(), capMs);
     rulers.syncSnapped(targets);
     rafId = requestAnimationFrame(tick);
   };
