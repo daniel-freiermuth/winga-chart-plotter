@@ -824,6 +824,7 @@
       center: mapView.center,
       zoom: mapView.zoom,
       bearing: mapView.bearing,
+      pitch: mapView.pitch,
       maxPitch: 85,
       bearingSnap: 0,
       attributionControl: false,
@@ -1211,7 +1212,7 @@
           }
         }
       }
-      if (map) { const c = map.getCenter(); mapView.syncView([c.lng, c.lat], map.getZoom(), map.getBearing()); }
+      if (map) { const c = map.getCenter(); mapView.syncView([c.lng, c.lat], map.getZoom(), map.getBearing(), map.getPitch()); }
     });
 
     // Cursor feedback for interactive MapLibre layers. The route-full/-leg/-bearing

@@ -42,13 +42,14 @@ describe('createMapViewStore', () => {
 
   it('persists via syncView and restores in a fresh instance', () => {
     const v = createMapViewStore();
-    v.syncView([5.5, 60.25], 12, 45);
+    v.syncView([5.5, 60.25], 12, 45, 30);
     expect(v.hasSavedView).toBe(true);
 
     const restored = createMapViewStore();
     expect(restored.center).toEqual([5.5, 60.25]);
     expect(restored.zoom).toBe(12);
     expect(restored.bearing).toBe(45);
+    expect(restored.pitch).toBe(30);
     expect(restored.hasSavedView).toBe(true);
   });
 
@@ -59,11 +60,19 @@ describe('createMapViewStore', () => {
     expect(v.hasSavedView).toBe(false);
   });
 
+  it('restores views persisted before pitch was saved with a flat pitch', () => {
+    localStorage.setItem('map-view-coords', '{"center":[1,2],"zoom":9,"bearing":15}');
+    const v = createMapViewStore();
+    expect(v.bearing).toBe(15);
+    expect(v.pitch).toBe(0);
+    expect(v.hasSavedView).toBe(true);
+  });
+
   it('namespaces keys by lsSuffix — panes do not share cameras', () => {
-    createMapViewStore().syncView([1, 2], 8, 0);
+    createMapViewStore().syncView([1, 2], 8, 0, 0);
     const pane1 = createMapViewStore(':1');
     expect(pane1.hasSavedView).toBe(false);
-    pane1.syncView([3, 4], 9, 10);
+    pane1.syncView([3, 4], 9, 10, 0);
     expect(createMapViewStore().center).toEqual([1, 2]);
     expect(createMapViewStore(':1').center).toEqual([3, 4]);
   });

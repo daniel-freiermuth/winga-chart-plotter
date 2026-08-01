@@ -64,7 +64,7 @@ function ensureSecondPaneSeeded(): void {
   const [p0, p1] = panes;
   if (p1.view.hasSavedView) return;
   p1.view.projection = p0.view.projection;
-  p1.view.syncView([p0.view.center[0], p0.view.center[1]], p0.view.zoom, p0.view.bearing);
+  p1.view.syncView([p0.view.center[0], p0.view.center[1]], p0.view.zoom, p0.view.bearing, p0.view.pitch);
 }
 
 /** Toggle split view. Seeds pane 1 synchronously BEFORE it mounts. */
