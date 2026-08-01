@@ -1,3 +1,5 @@
+import { loadJSON, saveJSON } from './paneStorage';
+
 const LS_KEY = 'layer-visibility';
 
 export interface VisibilityState {
@@ -19,11 +21,7 @@ const DEFAULTS: VisibilityState = {
 };
 
 function load(key: string): VisibilityState {
-  try {
-    const s = localStorage.getItem(key);
-    if (s) return { ...DEFAULTS, ...(JSON.parse(s) as Partial<VisibilityState>) };
-  } catch { /* ignore */ }
-  return { ...DEFAULTS };
+  return { ...DEFAULTS, ...((loadJSON(key) ?? {}) as Partial<VisibilityState>) };
 }
 
 /** Per-pane layer visibility toggles. */
@@ -57,11 +55,7 @@ export function createVisibilityStore(lsSuffix = ''): VisibilityStore {
       else if (key === 'ownTrack')      { ownTrack      = !ownTrack;      }
       else if (key === 'routes')        { routes        = !routes;        }
       else                              { waypoints     = !waypoints;     }
-      try {
-        localStorage.setItem(lsKey, JSON.stringify(
-          { aisVessels, aisTracks, aisPredictors, ownTrack, routes, waypoints },
-        ));
-      } catch { /* ignore */ }
+      saveJSON(lsKey, { aisVessels, aisTracks, aisPredictors, ownTrack, routes, waypoints });
     },
   };
 }

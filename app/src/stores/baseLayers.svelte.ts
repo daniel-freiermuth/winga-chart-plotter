@@ -1,5 +1,6 @@
 import { SvelteSet } from 'svelte/reactivity';
 import { resolveEnabledIds } from '../lib/baseLayerPrefs';
+import { loadJSON, saveJSON } from './paneStorage';
 
 export interface BaseLayer {
   id: string;
@@ -39,11 +40,7 @@ export interface BaseLayersStore {
 export function createBaseLayersStore(lsSuffix = ''): BaseLayersStore {
   const key = LS_BASE_LAYERS_KEY + lsSuffix;
 
-  let raw: string | null = null;
-  try {
-    raw = localStorage.getItem(key);
-  } catch { /* storage unavailable */ }
-  const enabled = new SvelteSet<string>(resolveEnabledIds(raw, BASE_LAYERS.map(l => l.id)));
+  const enabled = new SvelteSet<string>(resolveEnabledIds(loadJSON(key), BASE_LAYERS.map(l => l.id)));
 
   return {
     get enabled(): SvelteSet<string> { return enabled; },
@@ -52,13 +49,13 @@ export function createBaseLayersStore(lsSuffix = ''): BaseLayersStore {
       if (enabled.has(id)) return; // already active — clicking again is a no-op
       enabled.clear();             // exclusive: only one base layer at a time
       enabled.add(id);
-      try { localStorage.setItem(key, JSON.stringify([...enabled])); } catch { /* ignore */ }
+      saveJSON(key, [...enabled]);
     },
 
     deselectAll() {
       if (enabled.size === 0) return;
       enabled.clear();
-      try { localStorage.setItem(key, JSON.stringify([])); } catch { /* ignore */ }
+      saveJSON(key, []);
     },
   };
 }

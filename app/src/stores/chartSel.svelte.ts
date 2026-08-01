@@ -1,4 +1,5 @@
 import { SvelteSet, SvelteMap } from 'svelte/reactivity';
+import { loadJSON, saveJSON } from './paneStorage';
 
 const LS_SELECTED_KEY  = 'chart-selected';
 const LS_LAYER_SEL_KEY = 'chart-wmts-layer-sel';
@@ -35,35 +36,25 @@ export function createChartSelStore(lsSuffix = ''): ChartSelStore {
   const layerKey    = LS_LAYER_SEL_KEY + lsSuffix;
 
   let restored: string[] = [];
-  try {
-    const s = localStorage.getItem(selectedKey);
-    if (s) {
-      const p = JSON.parse(s) as unknown;
-      if (Array.isArray(p)) {
-        // Exclusivity invariant: at most ONE selected chart. Older app
-        // versions persisted multiple ids — keep only the first valid one.
-        const first = p.find((v): v is string => typeof v === 'string');
-        if (first !== undefined) restored = [first];
-      }
-    }
-  } catch { /* ignore */ }
+  const savedSel = loadJSON(selectedKey);
+  if (Array.isArray(savedSel)) {
+    // Exclusivity invariant: at most ONE selected chart. Older app
+    // versions persisted multiple ids — keep only the first valid one.
+    const first = savedSel.find((v): v is string => typeof v === 'string');
+    if (first !== undefined) restored = [first];
+  }
   const selected = new SvelteSet<string>(restored);
 
   // chartId → WMTS layer id, persisted as a Map-entries array ([[id, layer]]).
   const layerSel = new SvelteMap<string, string>();
-  try {
-    const s = localStorage.getItem(layerKey);
-    if (s) {
-      const p = JSON.parse(s) as unknown;
-      if (Array.isArray(p)) {
-        for (const e of p) {
-          if (Array.isArray(e) && typeof e[0] === 'string' && typeof e[1] === 'string') {
-            layerSel.set(e[0], e[1]);
-          }
-        }
+  const savedLayers = loadJSON(layerKey);
+  if (Array.isArray(savedLayers)) {
+    for (const e of savedLayers) {
+      if (Array.isArray(e) && typeof e[0] === 'string' && typeof e[1] === 'string') {
+        layerSel.set(e[0], e[1]);
       }
     }
-  } catch { /* ignore */ }
+  }
 
   return {
     get selected(): SvelteSet<string> { return selected; },
@@ -72,20 +63,20 @@ export function createChartSelStore(lsSuffix = ''): ChartSelStore {
       if (selected.has(id)) return; // already active — clicking again is a no-op
       selected.clear();             // exclusive: only one chart at a time
       selected.add(id);
-      try { localStorage.setItem(selectedKey, JSON.stringify([...selected])); } catch { /* ignore */ }
+      saveJSON(selectedKey, [...selected]);
     },
 
     deselectAll() {
       if (selected.size === 0) return;
       selected.clear();
-      try { localStorage.setItem(selectedKey, JSON.stringify([])); } catch { /* ignore */ }
+      saveJSON(selectedKey, []);
     },
 
     getLayerSel(id: string): string { return layerSel.get(id) ?? ''; },
 
     activateLayer(chartId: string, layerId: string) {
       layerSel.set(chartId, layerId);
-      try { localStorage.setItem(layerKey, JSON.stringify([...layerSel])); } catch { /* ignore */ }
+      saveJSON(layerKey, [...layerSel]);
     },
   };
 }

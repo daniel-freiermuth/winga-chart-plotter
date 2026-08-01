@@ -1,6 +1,7 @@
 export type AutoRotateMode = 'north' | 'cog' | 'heading' | 'bearing';
 export type RotateMode = AutoRotateMode | 'manual';
 import { resolveResumeMode } from './rotateModeLogic';
+import { loadJSON, saveJSON } from './paneStorage';
 
 const AUTO_MODES: AutoRotateMode[] = ['north', 'cog', 'heading', 'bearing'];
 const ALL_MODES: RotateMode[] = [...AUTO_MODES, 'manual'];
@@ -27,15 +28,10 @@ interface SavedRotateMode { mode: RotateMode; resumeMode: AutoRotateMode }
 
 /** Reads the last-persisted rotation mode, falling back to north on first run / corrupt data. */
 function loadSaved(key: string): SavedRotateMode {
-  try {
-    const s = localStorage.getItem(key);
-    if (s) {
-      const p = JSON.parse(s) as { mode?: unknown; resumeMode?: unknown };
-      if (isRotateMode(p.mode)) {
-        return { mode: p.mode, resumeMode: isAutoRotateMode(p.resumeMode) ? p.resumeMode : 'north' };
-      }
-    }
-  } catch { /* ignore */ }
+  const p = loadJSON(key) as { mode?: unknown; resumeMode?: unknown } | null;
+  if (p && isRotateMode(p.mode)) {
+    return { mode: p.mode, resumeMode: isAutoRotateMode(p.resumeMode) ? p.resumeMode : 'north' };
+  }
   return { mode: 'north', resumeMode: 'north' };
 }
 
@@ -81,7 +77,7 @@ export function createRotateModeStore(lsSuffix = ''): RotateModeStore {
   let resumeMode = $state<AutoRotateMode>(saved.resumeMode);
 
   function save(): void {
-    try { localStorage.setItem(key, JSON.stringify({ mode, resumeMode })); } catch { /* ignore */ }
+    saveJSON(key, { mode, resumeMode });
   }
 
   return {

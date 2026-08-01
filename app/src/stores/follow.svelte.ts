@@ -1,3 +1,5 @@
+import { loadJSON, saveJSON, removeItem } from './paneStorage';
+
 export interface FollowOffset { left: number; top: number }
 
 const LS_KEY = 'follow-mode-offset';
@@ -12,13 +14,8 @@ export interface FollowStore {
 
 /** Reads the last-persisted follow offset, falling back to "not following" on first run / corrupt data. */
 function loadSaved(key: string): FollowOffset | null {
-  try {
-    const s = localStorage.getItem(key);
-    if (s) {
-      const p = JSON.parse(s) as Partial<FollowOffset>;
-      if (typeof p.left === 'number' && typeof p.top === 'number') return { left: p.left, top: p.top };
-    }
-  } catch { /* ignore */ }
+  const p = loadJSON(key) as Partial<FollowOffset> | null;
+  if (p && typeof p.left === 'number' && typeof p.top === 'number') return { left: p.left, top: p.top };
   return null;
 }
 
@@ -30,10 +27,8 @@ export function createFollowStore(lsSuffix = ''): FollowStore {
     get offset()                       { return offset; },
     set offset(v: FollowOffset | null) {
       offset = v;
-      try {
-        if (v) localStorage.setItem(key, JSON.stringify(v));
-        else   localStorage.removeItem(key);
-      } catch { /* ignore */ }
+      if (v) saveJSON(key, v);
+      else   removeItem(key);
     },
     get following()                    { return offset !== null; },
   };

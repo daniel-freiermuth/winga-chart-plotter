@@ -1,3 +1,5 @@
+import { loadJSON, saveJSON } from './paneStorage';
+
 export type ProjectionId = 'globe' | 'mercator';
 
 const VIEW_LS_KEY       = 'map-view-coords';
@@ -10,25 +12,21 @@ const DEFAULT_VIEW: SavedMapView = { center: [10.75, 59.91], zoom: 10, bearing: 
 
 /** Reads the last-persisted camera view; null on first run / corrupt data. */
 function loadSavedView(key: string): SavedMapView | null {
-  try {
-    const s = localStorage.getItem(key);
-    if (s) {
-      const p = JSON.parse(s) as { center?: unknown; zoom?: unknown; bearing?: unknown; pitch?: unknown };
-      if (
-        Array.isArray(p.center) && p.center.length === 2 &&
-        typeof p.center[0] === 'number' && typeof p.center[1] === 'number' &&
-        typeof p.zoom === 'number'
-      ) {
-        return {
-          center: [p.center[0], p.center[1]],
-          zoom: p.zoom,
-          bearing: typeof p.bearing === 'number' ? p.bearing : 0,
-          // Views persisted before pitch was saved lack the field — restore flat.
-          pitch: typeof p.pitch === 'number' ? p.pitch : 0,
-        };
-      }
-    }
-  } catch { /* ignore */ }
+  const p = loadJSON(key) as { center?: unknown; zoom?: unknown; bearing?: unknown; pitch?: unknown } | null;
+  if (
+    p &&
+    Array.isArray(p.center) && p.center.length === 2 &&
+    typeof p.center[0] === 'number' && typeof p.center[1] === 'number' &&
+    typeof p.zoom === 'number'
+  ) {
+    return {
+      center: [p.center[0], p.center[1]],
+      zoom: p.zoom,
+      bearing: typeof p.bearing === 'number' ? p.bearing : 0,
+      // Views persisted before pitch was saved lack the field — restore flat.
+      pitch: typeof p.pitch === 'number' ? p.pitch : 0,
+    };
+  }
   return null;
 }
 
@@ -88,7 +86,7 @@ export function createMapViewStore(lsSuffix = ''): MapViewStore {
       _bearing = b;
       _pitch   = p;
       hasSaved = true;
-      try { localStorage.setItem(viewKey, JSON.stringify({ center: c, zoom: z, bearing: b, pitch: p })); } catch { /* ignore */ }
+      saveJSON(viewKey, { center: c, zoom: z, bearing: b, pitch: p });
     },
     updateBearing(b: number): void { _bearing = b; },
     get hasSavedView(): boolean { return hasSaved; },
