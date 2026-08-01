@@ -41,9 +41,10 @@ const skCpa6h: SkCpaInput = { distanceM: 5000, timeToS: SIX_HOURS_S };
 
 /** Extract the ScatterplotLayer data (ghost dot coordinates) for the SK layer. */
 function skGhostDots(layers: unknown[]): [number, number][] {
-  const scatter = (layers as Array<{ id: string; props: { data: [number, number][] } }>)
+  const scatter = (layers as { id: string; props: { data: [number, number][] } }[])
     .find((l) => l.id === 'cpa-ghost-sk');
-  return scatter?.props?.data ?? [];
+  if (!scatter) return [];
+  return scatter.props.data;
 }
 
 // --- tests ------------------------------------------------------------------
