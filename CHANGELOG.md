@@ -14,6 +14,7 @@ All notable changes to this project are documented in this file.
 - Vessels rendered hollow (outline only) under globe projection: deck.gl ≥9.3.3 enables backface culling for the whole globe view by default, and the custom vessel layers' fill triangles were wound clockwise. All vessel geometry is now normalized to counter-clockwise winding (pinned by a unit test across every geometry and morph blend), so globe culling works as designed and replaces the layers' in-shader far-hemisphere discard.
 - Ruler and route-planner labels were invisible under globe projection — deck.gl's own text billboard quads fall to the same globe backface-culling default; the label layers now opt out of culling per layer (the overlay-wide opt-out stopped working in deck.gl 9.3.3).
 - The compass button's free-rotation lock (long-press) is now also reachable by keyboard via Shift+Enter.
+- The Settings toggles (Browser GPS, Split view, AIS track on click) now have accessible names for screen readers.
 
 ### Removed
 - The "Show track" toggle in Settings → Own vessel; the same toggle lives in the chart picker's layer chips.

@@ -195,6 +195,7 @@
           <label class="toggle">
             <input
               type="checkbox"
+              aria-label="Browser GPS"
               checked={settings.useGeoLocation}
               onchange={(e) => {
                 const checked = (e.target as HTMLInputElement).checked;
@@ -243,11 +244,13 @@
       {/if}
 
       <p class="section-title">Display</p>
+      <!-- Applies immediately, like Browser GPS — deliberately NOT part of the
+           Cancel snapshot, which only covers live-preview appearance/fps. -->
       <div class="row">
         <span class="field-label">Split view</span>
         <div class="field">
           <label class="toggle">
-            <input type="checkbox" checked={settings.splitView}
+            <input type="checkbox" aria-label="Split view" checked={settings.splitView}
               onchange={() => { setSplitViewEnabled(!settings.splitView); }} />
             <span class="toggle-track"><span class="toggle-thumb"></span></span>
           </label>
@@ -437,7 +440,7 @@
         <span class="field-label">Show</span>
         <div class="field">
           <label class="toggle">
-            <input type="checkbox" bind:checked={settings.appearance.ais.track.show} onchange={applyAppearance} />
+            <input type="checkbox" aria-label="Show AIS track on click" bind:checked={settings.appearance.ais.track.show} onchange={applyAppearance} />
             <span class="toggle-track"><span class="toggle-thumb"></span></span>
           </label>
         </div>
