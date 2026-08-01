@@ -62,6 +62,7 @@
 import { Layer, project32, picking } from '@deck.gl/core';
 import type { LayerProps, UpdateParameters, DefaultProps, Accessor } from '@deck.gl/core';
 import { Model, Geometry } from '@luma.gl/engine';
+import { ccwTriangleList } from './triangleWinding';
 
 // ---------------------------------------------------------------------------
 // Shader uniform module
@@ -212,13 +213,15 @@ void main(void) {
   DECKGL_FILTER_GL_POSITION(gl_Position, geometry);
 
   // ------------------------------------------------------------------
-  // 5b. Far-hemisphere discard (globe mode) — see the old AisHullLayer for the full
-  //      explanation of why this is needed to prevent mirrored ghosts through the globe.
+  // 5b. Far hemisphere (globe mode): handled by backface culling. GlobeView
+  //     (deck.gl ≥9.3.3) enables cullMode 'back' for the whole view; all our
+  //     triangles are CCW by construction (ccwTriangleList in every builder,
+  //     pinned by geometryWinding.test.ts), so far-side geometry — whose
+  //     tangent plane faces away from the camera — is culled by the GPU.
+  //     This replaced an in-shader discard that moved far-side vertices
+  //     behind the near plane (which could clip-smear terminator-straddling
+  //     triangles).
   // ------------------------------------------------------------------
-  if (project.projectionMode == PROJECTION_MODE_GLOBE &&
-      dot(worldPos.xyz, project.cameraPosition) < 0.0) {
-    gl_Position = vec4(0.0, 0.0, -2.0, 1.0);
-  }
 
   // ------------------------------------------------------------------
   // 6. Color — identical formula regardless of t, so there is no alpha crossfade left:
@@ -268,12 +271,12 @@ function circleVerts(cx: number, cy: number, r: number, sides: number): number[]
            cx + r * Math.sin(a0), cy + r * Math.cos(a0), 0,
            cx + r * Math.sin(a1), cy + r * Math.cos(a1), 0);
   }
-  return v;
+  return ccwTriangleList(v);
 }
 
 function rectVerts(x0: number, y0: number, x1: number, y1: number): number[] {
-  return [x0, y0, 0,  x1, y0, 0,  x1, y1, 0,
-          x0, y0, 0,  x1, y1, 0,  x0, y1, 0];
+  return ccwTriangleList([x0, y0, 0,  x1, y0, 0,  x1, y1, 0,
+                          x0, y0, 0,  x1, y1, 0,  x0, y1, 0]);
 }
 
 function lineSeg(x0: number, y0: number, x1: number, y1: number, halfWidth: number): number[] {
@@ -282,23 +285,23 @@ function lineSeg(x0: number, y0: number, x1: number, y1: number, halfWidth: numb
   const len = Math.sqrt(dx * dx + dy * dy);
   const nx = (-dy / len) * halfWidth;
   const ny = ( dx / len) * halfWidth;
-  return [
+  return ccwTriangleList([
     x0 + nx, y0 + ny, 0,
     x0 - nx, y0 - ny, 0,
     x1 - nx, y1 - ny, 0,
     x0 + nx, y0 + ny, 0,
     x1 - nx, y1 - ny, 0,
     x1 + nx, y1 + ny, 0,
-  ];
+  ]);
 }
 
 function diamondVerts(cx: number, cy: number, w: number, h: number): number[] {
-  return [
+  return ccwTriangleList([
     cx, cy, 0,  cx,   cy+h, 0,  cx+w, cy,   0,
     cx, cy, 0,  cx+w, cy,   0,  cx,   cy-h, 0,
     cx, cy, 0,  cx,   cy-h, 0,  cx-w, cy,   0,
     cx, cy, 0,  cx-w, cy,   0,  cx,   cy+h, 0,
-  ];
+  ]);
 }
 
 function arcVerts(
@@ -322,7 +325,7 @@ function arcVerts(
       cx + inner * s1, cy + inner * c1, 0,
     );
   }
-  return v;
+  return ccwTriangleList(v);
 }
 
 /** Fan-triangulate a closed N-point polygon from its first point — (N-2) triangles. */
@@ -334,7 +337,7 @@ function fanTriangulate(points: [number, number][]): number[] {
     const [cx, cy] = points[i + 1]!;
     v.push(bx, by, 0, ax, ay, 0, cx, cy, 0);
   }
-  return v;
+  return ccwTriangleList(v);
 }
 
 /** Stroke every edge of a closed N-point polygon with a fixed half-width — N*6 verts. */
@@ -678,13 +681,9 @@ export interface VesselMorphLayerProps<DataT = number> extends LayerProps {
 }
 
 const defaultProps: DefaultProps<VesselMorphLayerProps> = {
-  // deck.gl ≥9.3.3 injects `cullMode: 'back'` as a GlobeView-wide default
-  // (GLOBE_VIEW_DEFAULT_PARAMETERS) to hide far-hemisphere geometry. Our
-  // triangle-list mixes windings (the fill fan is CW, the outline strip CCW),
-  // so backface culling silently drops the fill pass under globe projection.
-  // Layer parameters override the view default; the far hemisphere is already
-  // handled by this layer's in-shader discard, so culling adds nothing here.
-  parameters:     { cullMode: 'none' },
+  // NOTE: no cullMode override — GlobeView's default backface culling is
+  // load-bearing (it hides the far hemisphere); geometry must stay CCW.
+  // See triangleWinding.ts and geometryWinding.test.ts.
   getPosition:    { type: 'accessor', value: [0, 0] },
   getSog:         { type: 'accessor', value: 0 },
   getCog:         { type: 'accessor', value: 0 },

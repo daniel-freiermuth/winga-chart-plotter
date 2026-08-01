@@ -14,10 +14,10 @@
     "build:wasm": "$HOME/.cargo/bin/wasm-pack build ../crates/core --target web --out-dir ../../app/src/wasm"
   },
   "dependencies": {
-    "@deck.gl/core": "^9.1.0",
-    "@deck.gl/extensions": "^9.3.2",
-    "@deck.gl/layers": "^9.1.0",
-    "@deck.gl/mapbox": "^9.1.0",
+    "@deck.gl/core": "^9.3.7",
+    "@deck.gl/extensions": "^9.3.7",
+    "@deck.gl/layers": "^9.3.7",
+    "@deck.gl/mapbox": "^9.3.7",
     "@fortawesome/fontawesome-svg-core": "^7.2.0",
     "@fortawesome/free-solid-svg-icons": "^7.2.0",
     "@luma.gl/engine": "^9.3.3",
