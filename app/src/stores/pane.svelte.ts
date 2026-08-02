@@ -4,7 +4,7 @@ import { createRotateModeStore, type RotateModeStore } from './rotateMode.svelte
 import { createVisibilityStore, type VisibilityStore } from './visibility.svelte';
 import { createBaseLayersStore, type BaseLayersStore } from './baseLayers.svelte';
 import { createChartSelStore, type ChartSelStore } from './chartSel.svelte';
-import { settings } from './settings.svelte';
+import { settings, type PaneLayout } from './settings.svelte';
 
 /**
  * Pane state — everything that is *a way of looking at the world*, replicated
@@ -67,12 +67,12 @@ function ensureSecondPaneSeeded(): void {
   p1.view.syncView([p0.view.center[0], p0.view.center[1]], p0.view.zoom, p0.view.bearing, p0.view.pitch);
 }
 
-/** Toggle split view. Seeds pane 1 synchronously BEFORE it mounts. */
-export function setSplitViewEnabled(on: boolean): void {
-  if (on) ensureSecondPaneSeeded();
-  settings.setSplitView(on);
+/** Switch the pane layout. Entering the split seeds pane 1 synchronously BEFORE it mounts. */
+export function setPaneLayout(layout: PaneLayout): void {
+  if (layout === 'split') ensureSecondPaneSeeded();
+  settings.setPaneLayout(layout);
 }
 
-// Booting with split already enabled but pane 1 never persisted (keys cleared
-// out-of-band): seed at module init, before any component renders.
-if (settings.splitView) ensureSecondPaneSeeded();
+// Booting with the split already enabled but pane 1 never persisted (keys
+// cleared out-of-band): seed at module init, before any component renders.
+if (settings.paneLayout === 'split') ensureSecondPaneSeeded();

@@ -73,13 +73,17 @@ export interface AppearanceSettings {
   track:       TrackAppearance;
 }
 
+/** How the map area is laid out: dual-pane split, or one pane fullscreen. */
+export type PaneLayout = 'split' | 'solo0';
+
 export interface SettingsData {
   signalkProtocol: 'ws' | 'wss';
   signalkHost: string;
   signalkPort: number;
   useGeoLocation: boolean;
-  /** Dual-pane split view (split along the longer viewport edge). */
-  splitView: boolean;
+  /** Pane layout: dual-pane split (along the longer viewport edge), or one
+   *  pane fullscreen — 'solo0' = the primary pane fills the screen. */
+  paneLayout: PaneLayout;
   /** Primary pane's share of the split axis, clamped to 0.2–0.8. */
   splitRatio: number;
   appearance: AppearanceSettings;
@@ -94,7 +98,7 @@ export const SPLIT_RATIO_MAX = 0.8;
 const DEFAULTS: SettingsData = {
   ...detectSignalkOrigin(),
   useGeoLocation: false,
-  splitView: false,
+  paneLayout: 'solo0',
   splitRatio: 0.5,
   targetFps: 60,
   resourcePollIntervalSeconds: 5,
@@ -194,7 +198,7 @@ function load(): SettingsData {
           ...DEFAULTS, ...p,
           ...normalizedConn,
           useGeoLocation: typeof p.useGeoLocation === 'boolean' ? p.useGeoLocation : DEFAULTS.useGeoLocation,
-          splitView: typeof p.splitView === 'boolean' ? p.splitView : DEFAULTS.splitView,
+          paneLayout: p.paneLayout === 'split' ? 'split' : DEFAULTS.paneLayout,
           splitRatio: typeof p.splitRatio === 'number' && p.splitRatio >= SPLIT_RATIO_MIN && p.splitRatio <= SPLIT_RATIO_MAX ? p.splitRatio : DEFAULTS.splitRatio,
           targetFps: typeof p.targetFps === 'number' && p.targetFps > 0 ? p.targetFps : DEFAULTS.targetFps,
           resourcePollIntervalSeconds: typeof p.resourcePollIntervalSeconds === 'number' && p.resourcePollIntervalSeconds > 0 ? p.resourcePollIntervalSeconds : DEFAULTS.resourcePollIntervalSeconds,
@@ -236,7 +240,7 @@ function createSettings() {
     get host(): string            { return data.signalkHost; },
     get port(): number            { return data.signalkPort; },
     get useGeoLocation(): boolean { return data.useGeoLocation; },
-    get splitView(): boolean      { return data.splitView; },
+    get paneLayout(): PaneLayout  { return data.paneLayout; },
     get splitRatio(): number      { return data.splitRatio; },
     get geoError(): string | null { return geoError; },
     /** Current position accuracy in metres. null = no fix yet. */
@@ -280,8 +284,8 @@ function createSettings() {
       data.targetFps = fps;
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
     },
-    setSplitView(on: boolean) {
-      data.splitView = on;
+    setPaneLayout(layout: PaneLayout) {
+      data.paneLayout = layout;
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
     },
     setSplitRatio(ratio: number) {

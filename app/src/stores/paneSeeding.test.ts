@@ -28,10 +28,10 @@ describe('pane seeding', () => {
   it('first split enable clones pane 0 camera and projection into pane 1', async () => {
     localStorage.setItem('map-view-coords', JSON.stringify({ center: [5.5, 60.25], zoom: 12, bearing: 45, pitch: 30 }));
     localStorage.setItem('map-view-projection', 'globe');
-    const { panes, setSplitViewEnabled } = await import('./pane.svelte');
+    const { panes, setPaneLayout } = await import('./pane.svelte');
     expect(panes[1].view.hasSavedView).toBe(false);
 
-    setSplitViewEnabled(true);
+    setPaneLayout('split');
 
     expect(panes[1].view.center).toEqual([5.5, 60.25]);
     expect(panes[1].view.zoom).toBe(12);
@@ -40,15 +40,15 @@ describe('pane seeding', () => {
     expect(panes[1].view.projection).toBe('globe');
     expect(panes[1].view.hasSavedView).toBe(true);
     const { settings } = await import('./settings.svelte');
-    expect(settings.splitView).toBe(true);
+    expect(settings.paneLayout).toBe('split');
   });
 
   it('enabling split never overwrites an existing pane 1 camera', async () => {
     localStorage.setItem('map-view-coords', JSON.stringify({ center: [5, 60], zoom: 12, bearing: 0, pitch: 0 }));
     localStorage.setItem('map-view-coords:1', JSON.stringify({ center: [24, 59], zoom: 8, bearing: 90, pitch: 0 }));
-    const { panes, setSplitViewEnabled } = await import('./pane.svelte');
+    const { panes, setPaneLayout } = await import('./pane.svelte');
 
-    setSplitViewEnabled(true);
+    setPaneLayout('split');
 
     expect(panes[1].view.center).toEqual([24, 59]);
     expect(panes[1].view.zoom).toBe(8);
@@ -58,7 +58,7 @@ describe('pane seeding', () => {
   it('booting with split persisted on seeds pane 1 at module init', async () => {
     // Split enabled but pane-1 keys cleared out-of-band: the module seeds
     // pane 1 before any component renders.
-    localStorage.setItem('signalk-chart-settings', JSON.stringify({ splitView: true }));
+    localStorage.setItem('signalk-chart-settings', JSON.stringify({ paneLayout: 'split' }));
     localStorage.setItem('map-view-coords', JSON.stringify({ center: [7.7, 54.2], zoom: 10, bearing: 10, pitch: 5 }));
     const { panes } = await import('./pane.svelte');
 

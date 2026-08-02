@@ -70,7 +70,7 @@
   import ExtPanel from './components/ExtPanel.svelte';
   import { vesselState } from './stores/vessel';
   import { settings, SPLIT_RATIO_MIN, SPLIT_RATIO_MAX, type SettingsTab } from './stores/settings.svelte';
-  import { panes, primaryPane, setSplitViewEnabled, type PaneState } from './stores/pane.svelte';
+  import { panes, primaryPane, setPaneLayout, type PaneState } from './stores/pane.svelte';
   import { startRulerSnapSync } from './lib/rulerSnap';
   import { charts } from './stores/charts.svelte';
   import { ais } from './stores/ais.svelte';
@@ -129,6 +129,7 @@
   /** True from pointerdown to up/cancel — disables the settle transition so the divider tracks the pointer exactly. */
   let dividerDragging = $state(false);
   const splitRatio = $derived(dragRatio ?? settings.splitRatio);
+  const splitOpen  = $derived(settings.paneLayout === 'split');
   /** Release threshold: let go with the second pane under half its minimum size and the split closes. */
   const SPLIT_OPEN_THRESHOLD = SPLIT_RATIO_MIN / 2;
   // Divider orientation for screen readers — mirrors the CSS orientation media
@@ -154,7 +155,7 @@
     // Opening gesture: mount the second pane immediately so it follows the
     // pointer out of the edge from the first moment — that is what makes
     // the drawer discoverable.
-    if (!settings.splitView) setSplitViewEnabled(true);
+    if (!splitOpen) setPaneLayout('split');
     onDividerMove(e);
   }
   function onDividerMove(e: PointerEvent): void {
@@ -170,7 +171,7 @@
       if (1 - dragRatio < SPLIT_OPEN_THRESHOLD) {
         // Released (almost) at the edge — close and park. The pre-drag ratio
         // is deliberately not overwritten, so the next open restores it.
-        setSplitViewEnabled(false);
+        setPaneLayout('solo0');
       } else {
         settings.setSplitRatio(dragRatio); // clamps → settles back into the band
       }
@@ -182,14 +183,14 @@
                 : (e.key === 'ArrowRight' || e.key === 'ArrowDown') ? 0.05 : 0;
     if (delta === 0) return;
     e.preventDefault();
-    if (!settings.splitView) {
+    if (!splitOpen) {
       // Parked: a step inward re-opens the split at its last persisted ratio.
-      if (delta < 0) setSplitViewEnabled(true);
+      if (delta < 0) setPaneLayout('split');
       return;
     }
     if (delta > 0 && settings.splitRatio >= SPLIT_RATIO_MAX) {
       // Already at the outer clamp — one more step closes the split.
-      setSplitViewEnabled(false);
+      setPaneLayout('solo0');
       return;
     }
     settings.setSplitRatio(settings.splitRatio + delta); // store clamps
@@ -213,7 +214,7 @@
       // Extension asks before the primary pane's Map has mounted — degrade to
       // the same empty view Map.getView() itself returns when it has no map.
       if (!v0) return { center: [0, 0] as [number, number], zoom: 0, bounds: [0, 0, 0, 0] as [number, number, number, number] };
-      const v1 = settings.splitView ? mapComp1?.getView() : null;
+      const v1 = splitOpen ? mapComp1?.getView() : null;
       if (!v1) return v0;
       const u = unionViewBounds(v0.bounds, v1.bounds);
       if (!u) return v0; // WASM not ready yet — degrade to the primary pane
@@ -593,7 +594,7 @@
   // Split view off → the second pane unmounts; anything targeting it falls
   // back to the primary pane.
   $effect(() => {
-    if (!settings.splitView && pickerPane !== primaryPane) pickerPane = primaryPane;
+    if (!splitOpen && pickerPane !== primaryPane) pickerPane = primaryPane;
   });
   // Rulers are shared world data rendered in BOTH panes — only the initial
   // placement is viewport-relative. It spawns in the BIGGER pane: that is
@@ -602,7 +603,7 @@
   // last active map", so routing through it would be no less arbitrary.)
   function handleAddRuler(): void {
     chartPickerOpen = false;
-    const target = settings.splitView && settings.splitRatio < 0.5 ? mapComp1 : mapComp;
+    const target = splitOpen && settings.splitRatio < 0.5 ? mapComp1 : mapComp;
     target?.addRuler();
   }
   function handleToggleProjection(): void {
@@ -639,7 +640,7 @@
 
 <div style="position: relative; width: 100%; height: 100%;">
   <div class="panes" class:panes--dragging={dividerDragging} bind:this={panesEl} style="--split: {(splitRatio * 100).toFixed(2)}%">
-    <div id="pane-primary" class="pane" class:pane--sized={settings.splitView}>
+    <div id="pane-primary" class="pane" class:pane--sized={splitOpen}>
       <Map
         bind:this={mapComp}
         pane={panes[0]}
@@ -658,13 +659,13 @@
     <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
     <div
       class="split-divider"
-      class:split-divider--parked={!settings.splitView}
+      class:split-divider--parked={!splitOpen}
       role="separator"
       tabindex="0"
-      aria-label={settings.splitView ? 'Resize panes' : 'Open split view'}
+      aria-label={splitOpen ? 'Resize panes' : 'Open split view'}
       aria-controls="pane-primary"
       aria-orientation={isLandscape ? 'vertical' : 'horizontal'}
-      aria-valuenow={settings.splitView ? Math.round(splitRatio * 100) : 100}
+      aria-valuenow={splitOpen ? Math.round(splitRatio * 100) : 100}
       aria-valuemin={Math.round(SPLIT_RATIO_MIN * 100)}
       aria-valuemax={100}
       onpointerdown={onDividerDown}
@@ -674,7 +675,7 @@
       onlostpointercapture={onDividerUp}
       onkeydown={onDividerKey}
     ></div>
-    {#if settings.splitView}
+    {#if splitOpen}
       <div class="pane pane--second">
         <Map
           bind:this={mapComp1}

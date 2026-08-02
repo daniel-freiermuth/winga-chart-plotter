@@ -36,7 +36,7 @@
   function close() {
     // Touch every VISIBLE pane's active charts/layers — not just the pane this
     // picker configures — so neither pane's selection ages out of the LRU.
-    const visiblePanes = settings.splitView ? panes : [panes[0]];
+    const visiblePanes = settings.paneLayout === 'split' ? panes : [panes[0]];
     const activeIds: string[] = [];
     for (const p of visiblePanes) {
       activeIds.push(...p.baseLayers.enabled);
