@@ -3,24 +3,20 @@ import { memStorage } from './testStorage';
 
 /**
  * touchVisibleSelections() must record exactly the VISIBLE panes' active
- * base layers and charts in the LRU — WMTS charts under `${chartId}:${layerId}`,
- * everything else under its plain id. Which panes are visible follows the
- * pane layout (visiblePanesFor).
+ * base layers and charts in the LRU — selections with a WMTS layer under
+ * `${chartId}:${layerId}`, everything else under its plain id. Which panes
+ * are visible follows the pane layout (visiblePanesFor).
+ *
+ * The key shape derives from the pane's own selection state, never from the
+ * chart catalog — these tests deliberately run with the catalog UNLOADED
+ * (charts.available is empty), pinning that a WMTS selection stays fresh
+ * under its composite key even when its chart is missing from the catalog
+ * (fetch still in flight, or chart dropped server-side).
  *
  * The pane/settings/chartLru singletons initialize at module load, so every
  * test resets the module registry and re-imports with a fresh in-memory
- * localStorage (same pattern as paneSeeding.test.ts). The chart catalog is
- * server-loaded state and is mocked instead.
+ * localStorage (same pattern as paneSeeding.test.ts).
  */
-
-vi.mock('./charts.svelte', () => ({
-  charts: {
-    available: {
-      w1: { type: 'WMTS' },
-      c1: { type: 'MBTILES' },
-    },
-  },
-}));
 
 beforeEach(() => {
   vi.resetModules();
