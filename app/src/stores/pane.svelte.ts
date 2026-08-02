@@ -53,8 +53,6 @@ export function createPaneState(id: number): PaneState {
  */
 export const panes: readonly [PaneState, PaneState] = [createPaneState(0), createPaneState(1)];
 
-export const primaryPane: PaneState = panes[0];
-
 /** Clone `from`'s live camera and projection into `to`. syncView() persists. */
 function seedPane(from: PaneState, to: PaneState): void {
   to.view.projection = from.view.projection;

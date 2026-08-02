@@ -70,7 +70,7 @@
   import ExtPanel from './components/ExtPanel.svelte';
   import { vesselState } from './stores/vessel';
   import { settings, SPLIT_RATIO_MIN, SPLIT_RATIO_MAX, type SettingsTab } from './stores/settings.svelte';
-  import { panes, primaryPane, setPaneLayout, type PaneState } from './stores/pane.svelte';
+  import { panes, setPaneLayout, type PaneState } from './stores/pane.svelte';
   import { startRulerSnapSync } from './lib/rulerSnap';
   import { charts } from './stores/charts.svelte';
   import { ais } from './stores/ais.svelte';
@@ -110,13 +110,11 @@
 
   let mapComp             = $state<MapInstance | null>(null);
   let mapComp1            = $state<MapInstance | null>(null);
-  /** Which pane the (single, app-level) chart picker currently configures. */
+  /** Pane the (single, app-level) chart picker is open for; null = closed. */
   // $state.raw: PaneState must keep its identity (compared against panes[i]);
   // a deep $state proxy would break === and re-proxy the pane's stores.
-  let pickerPane          = $state.raw<PaneState>(primaryPane);
+  let pickerFor           = $state.raw<PaneState | null>(null);
   let settingsComp        = $state<{ open(): void; openTo(t: SettingsTab): void } | null>(null);
-  let chartPickerComp     = $state<{ open(): void } | null>(null);
-  let chartPickerOpen     = $state(false);
 
   // ── Split divider drag ────────────────────────────────────────────────────
   // The divider doubles as the split-view control: outside the split it parks
@@ -579,40 +577,41 @@
   });
 
   function handleOpenSettings(tab: SettingsTab): void {
-    chartPickerOpen = false;
+    pickerFor = null;
     settingsComp?.openTo(tab);
   }
   function handleOpenSettingsModal(): void {
     mapComp?.closePopup();
     mapComp1?.closePopup();
-    chartPickerOpen      = false;
+    pickerFor = null;
     settingsComp?.open();
   }
   function openChartPickerFor(p: PaneState): void {
-    pickerPane = p;
+    pickerFor = p;
     mapComp?.closePopup();
     mapComp1?.closePopup();
-    chartPickerComp?.open();
   }
-  // Solo layout → one pane unmounts; anything targeting it falls back to the
-  // pane that stays fullscreen.
+  // Collapsing a pane closes its picker — a deliberate gesture should not
+  // covertly retarget the sheet at the surviving pane.
   $effect(() => {
-    const solo = panes[settings.paneLayout === 'solo1' ? 1 : 0];
-    if (!splitOpen && pickerPane !== solo) pickerPane = solo;
+    if (pickerFor === panes[0] && !pane0Visible) pickerFor = null;
+    else if (pickerFor === panes[1] && !pane1Visible) pickerFor = null;
   });
   // Rulers are shared world data rendered in BOTH panes — only the initial
   // placement is viewport-relative. It spawns in the BIGGER pane: that is
   // where the user has room to work; outside the split that is the solo pane.
-  // (pickerPane tracks the chart picker, not "the last active map", so
+  // (pickerFor tracks the chart picker, not "the last active map", so
   // routing through it would be no less arbitrary.)
   function handleAddRuler(): void {
-    chartPickerOpen = false;
+    pickerFor = null;
     const useSecond = splitOpen ? settings.splitRatio < 0.5 : settings.paneLayout === 'solo1';
     (useSecond ? mapComp1 : mapComp)?.addRuler();
   }
   function handleToggleProjection(): void {
-    const target = pickerPane === panes[1] ? mapComp1 : mapComp;
-    target?.setProjection(pickerPane.view.projection === 'mercator' ? 'globe' : 'mercator');
+    const p = pickerFor;
+    if (!p) return; // only reachable from inside the open sheet
+    const target = p === panes[1] ? mapComp1 : mapComp;
+    target?.setProjection(p.view.projection === 'mercator' ? 'globe' : 'mercator');
   }
   let isFullscreen = $state(false);
   function handleToggleFullscreen(): void {
@@ -650,8 +649,8 @@
           bind:this={mapComp}
           pane={panes[0]}
           openSettings={handleOpenSettings}
-          onMapClick={() => { chartPickerOpen = false; }}
-          chartPickerOpen={chartPickerOpen && pickerPane === panes[0]}
+          onMapClick={() => { pickerFor = null; }}
+          chartPickerOpen={pickerFor === panes[0]}
           onOpenChartPicker={() => { openChartPickerFor(panes[0]); }}
         />
       </div>
@@ -690,15 +689,17 @@
           pane={panes[1]}
           fpsOwner={!pane0Visible}
           openSettings={handleOpenSettings}
-          onMapClick={() => { chartPickerOpen = false; }}
-          chartPickerOpen={chartPickerOpen && pickerPane === panes[1]}
+          onMapClick={() => { pickerFor = null; }}
+          chartPickerOpen={pickerFor === panes[1]}
           onOpenChartPicker={() => { openChartPickerFor(panes[1]); }}
         />
       </div>
     {/if}
   </div>
   <Settings bind:this={settingsComp} />
-  <ChartPicker bind:this={chartPickerComp} pane={pickerPane} bind:isOpen={chartPickerOpen} onToggleProjection={handleToggleProjection} />
+  {#if pickerFor}
+    <ChartPicker pane={pickerFor} onClose={() => { pickerFor = null; }} onToggleProjection={handleToggleProjection} />
+  {/if}
   {#each plotterExtensions.layout as placement (placement.instanceId)}
     {@const manifest = plotterExtensions.extensions.get(placement.extensionId)}
     {@const wDef = manifest?.widgets?.find(w => w.id === placement.widgetId)}

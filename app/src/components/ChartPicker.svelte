@@ -11,11 +11,12 @@
 
   let {
     pane,
-    isOpen = $bindable(false),
+    onClose,
     onToggleProjection,
   }: {
     pane: PaneState;
-    isOpen?: boolean;
+    /** The picker is mounted only while open — closing = asking the app to unmount it. */
+    onClose: () => void;
     onToggleProjection?: () => void;
   } = $props();
 
@@ -32,7 +33,6 @@
   let isDragging  = $state(false);
   let _dragY = 0;
 
-  export function open() { isOpen = true; sheetHeight = 52; }
   function close() {
     // Touch every VISIBLE pane's active charts/layers — not just the pane this
     // picker configures — so neither pane's selection ages out of the LRU.
@@ -51,7 +51,7 @@
       }
     }
     chartLru.touch(activeIds);
-    isOpen = false;
+    onClose();
   }
 
   // ── Handle drag ── live height tracking, snap on release ─────────────────
@@ -264,7 +264,6 @@
   );
 </script>
 
-{#if isOpen}
   <div class="sheet" class:dragging={isDragging}
        style="height: {String(Math.round(sheetHeight))}dvh; border-radius: {sheetHeight >= 99 ? '0' : '14px 14px 0 0'}"
        transition:slideUp>
@@ -462,7 +461,6 @@
       </div>
     </div>
   </div>
-{/if}
 
 <style>
   /* ── Sheet (bottom drawer) ───────────────────────────────────────────── */
