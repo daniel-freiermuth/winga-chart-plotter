@@ -287,8 +287,7 @@ replicated.
 
 - **App (singletons):** Signal K connection/worker, AIS, own vessel, routes,
   waypoints, tracks, rulers (geographic data — rendered in both panes), MOB,
-  settings, widgets, extensions, fullscreen, chart *catalog* (incl. WMTS
-  resolution).
+  settings, widgets, extensions, chart *catalog* (incl. WMTS resolution).
 - **Pane (×2, `stores/pane.svelte.ts` → `PaneState`):** camera + projection
   (`view`), chart *selection* (`chartSel`), base layers, layer visibility,
   rotation mode, vessel follow/pinning. Created by store factories taking an

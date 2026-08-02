@@ -4,7 +4,6 @@
   import FaIcon from './lib/FaIcon.svelte';
   import {
     faGear, faRuler,
-    faExpand, faCompress,
   } from '@fortawesome/free-solid-svg-icons';
   import { routePlanner } from './stores/routePlanner.svelte';
   import { waypoints } from './stores/waypoints.svelte';
@@ -474,18 +473,6 @@
     };
     document.addEventListener('visibilitychange', onVisible);
 
-    isFullscreen = !!document.fullscreenElement;
-    const onFsChange = () => {
-      isFullscreen = !!document.fullscreenElement;
-      if (!document.fullscreenElement) {
-        // When the browser exits fullscreen and re-shows its chrome, the <html>
-        // element's scrollTop is left non-zero — the page shifts up by the height
-        // of the re-appeared address bar, leaving a white gap at the bottom.
-        // Reset it immediately; MapLibre's ResizeObserver handles canvas resize.
-        window.scrollTo(0, 0);
-      }
-    };
-    document.addEventListener('fullscreenchange', onFsChange);
     const onOrientationChange = () => { isLandscape = landscapeMql.matches; };
     landscapeMql.addEventListener('change', onOrientationChange);
 
@@ -495,7 +482,6 @@
 
     return () => {
       document.removeEventListener('visibilitychange', onVisible);
-      document.removeEventListener('fullscreenchange', onFsChange);
       landscapeMql.removeEventListener('change', onOrientationChange);
       stopRulerSnap();
       if (reconnectTimer !== null) clearTimeout(reconnectTimer);
@@ -613,14 +599,6 @@
     const target = p === panes[1] ? mapComp1 : mapComp;
     target?.setProjection(p.view.projection === 'mercator' ? 'globe' : 'mercator');
   }
-  let isFullscreen = $state(false);
-  function handleToggleFullscreen(): void {
-    if (!document.fullscreenElement) {
-      document.documentElement.requestFullscreen().catch(() => { /* noop */ });
-    } else {
-      document.exitFullscreen().catch(() => { /* noop */ });
-    }
-  }
 
   async function mobRaise() {
     try {
@@ -733,14 +711,6 @@
       {/each}
     {/each}
 
-
-    <div class="map-toolbar-divider"></div>
-
-    <button
-      class="map-btn"
-      title="{isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}"
-      onclick={handleToggleFullscreen}
-    ><FaIcon icon={isFullscreen ? faCompress : faExpand} /></button>
 
     <div class="map-toolbar-divider"></div>
 
