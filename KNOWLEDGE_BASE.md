@@ -276,8 +276,10 @@ If sources multiply, extract a source-selector/merger layer that receives all so
 ### ADR-010: Split/dual-pane view — app vs. pane state boundary
 
 **Decision:** The screen can split along the longer viewport edge into two
-independent chart panes (Settings toggle, draggable divider). The split forced
-an explicit state boundary, now load-bearing across the whole frontend:
+independent chart panes. The draggable divider is the only split control: it
+parks at the collapsed pane's screen edge and doubles as the drawer handle
+that opens the split. The split forced an explicit state boundary, now
+load-bearing across the whole frontend:
 
 **Litmus test:** *data about the world* (has lon/lat) is app-level and shared;
 *a way of looking at the world* (camera params, screen px) is pane-level and

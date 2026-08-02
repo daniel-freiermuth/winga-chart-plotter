@@ -70,7 +70,7 @@
   import ExtPanel from './components/ExtPanel.svelte';
   import { vesselState } from './stores/vessel';
   import { settings, SPLIT_RATIO_MIN, SPLIT_RATIO_MAX, type SettingsTab } from './stores/settings.svelte';
-  import { panes, primaryPane, type PaneState } from './stores/pane.svelte';
+  import { panes, primaryPane, setSplitViewEnabled, type PaneState } from './stores/pane.svelte';
   import { startRulerSnapSync } from './lib/rulerSnap';
   import { charts } from './stores/charts.svelte';
   import { ais } from './stores/ais.svelte';
@@ -119,38 +119,62 @@
   let chartPickerOpen     = $state(false);
 
   // ── Split divider drag ────────────────────────────────────────────────────
+  // The divider doubles as the split-view control: with no split it parks at
+  // the right/bottom screen edge as a drawer handle. Dragging it inward past
+  // SPLIT_OPEN_THRESHOLD opens the second pane (at the clamped ratio); pushing
+  // it back to the edge closes the split again. No Settings toggle needed.
   let panesEl: HTMLDivElement | undefined;
-  /** Live ratio during a divider drag; null when idle (persisted value applies). */
+  /** Live ratio during a divider drag; null when idle or parked (persisted value applies). */
   let dragRatio = $state<number | null>(null);
+  /** True from pointerdown to up/cancel — disables the settle transition so the divider tracks the pointer exactly. */
+  let dividerDragging = $state(false);
   const splitRatio = $derived(dragRatio ?? settings.splitRatio);
+  /** Release threshold: let go with the second pane under half its minimum size and the split closes. */
+  const SPLIT_OPEN_THRESHOLD = SPLIT_RATIO_MIN / 2;
   // Divider orientation for screen readers — mirrors the CSS orientation media
   // query that lays out the panes: side-by-side panes (landscape) are split by
   // a vertical separator, stacked panes (portrait) by a horizontal one.
   const landscapeMql = window.matchMedia('(orientation: landscape)');
   let isLandscape = $state(landscapeMql.matches);
 
-  function dividerRatioFromEvent(e: PointerEvent): number {
+  /** Raw divider position as a pane-0 fraction — unclamped, so the parked zone is reachable. */
+  function dividerFracFromEvent(e: PointerEvent): number {
     if (!panesEl) return settings.splitRatio;
     const r = panesEl.getBoundingClientRect();
     // Horizontal split axis in landscape, vertical in portrait — same
     // orientation source the pane layout CSS and aria-orientation use (the
     // aspect-ratio test would disagree with the media query at width == height).
-    const frac = isLandscape
+    return isLandscape
       ? (e.clientX - r.left) / r.width
       : (e.clientY - r.top) / r.height;
-    return Math.min(SPLIT_RATIO_MAX, Math.max(SPLIT_RATIO_MIN, frac));
   }
   function onDividerDown(e: PointerEvent): void {
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-    dragRatio = dividerRatioFromEvent(e);
+    dividerDragging = true;
+    // Opening gesture: mount the second pane immediately so it follows the
+    // pointer out of the edge from the first moment — that is what makes
+    // the drawer discoverable.
+    if (!settings.splitView) setSplitViewEnabled(true);
+    onDividerMove(e);
   }
   function onDividerMove(e: PointerEvent): void {
-    if (dragRatio === null) return;
-    dragRatio = dividerRatioFromEvent(e);
+    if (!dividerDragging) return;
+    // Follow the pointer everywhere, including outside the 20-80% band —
+    // the release below either bounces back into the band or closes.
+    dragRatio = Math.min(1, Math.max(0, dividerFracFromEvent(e)));
   }
   function onDividerUp(): void {
-    if (dragRatio === null) return;
-    settings.setSplitRatio(dragRatio);
+    if (!dividerDragging) return;
+    dividerDragging = false;
+    if (dragRatio !== null) {
+      if (1 - dragRatio < SPLIT_OPEN_THRESHOLD) {
+        // Released (almost) at the edge — close and park. The pre-drag ratio
+        // is deliberately not overwritten, so the next open restores it.
+        setSplitViewEnabled(false);
+      } else {
+        settings.setSplitRatio(dragRatio); // clamps → settles back into the band
+      }
+    }
     dragRatio = null;
   }
   function onDividerKey(e: KeyboardEvent): void {
@@ -158,6 +182,16 @@
                 : (e.key === 'ArrowRight' || e.key === 'ArrowDown') ? 0.05 : 0;
     if (delta === 0) return;
     e.preventDefault();
+    if (!settings.splitView) {
+      // Parked: a step inward re-opens the split at its last persisted ratio.
+      if (delta < 0) setSplitViewEnabled(true);
+      return;
+    }
+    if (delta > 0 && settings.splitRatio >= SPLIT_RATIO_MAX) {
+      // Already at the outer clamp — one more step closes the split.
+      setSplitViewEnabled(false);
+      return;
+    }
     settings.setSplitRatio(settings.splitRatio + delta); // store clamps
   }
   let worker: Worker | null = null;
@@ -603,7 +637,7 @@
 </script>
 
 <div style="position: relative; width: 100%; height: 100%;">
-  <div class="panes" bind:this={panesEl} style="--split: {(splitRatio * 100).toFixed(2)}%">
+  <div class="panes" class:panes--dragging={dividerDragging} bind:this={panesEl} style="--split: {(splitRatio * 100).toFixed(2)}%">
     <div id="pane-primary" class="pane" class:pane--sized={settings.splitView}>
       <Map
         bind:this={mapComp}
@@ -614,29 +648,32 @@
         onOpenChartPicker={() => { openChartPickerFor(panes[0]); }}
       />
     </div>
+    <!-- WAI-ARIA "window splitter" pattern: a focusable separator with
+         aria-valuenow IS the interactive variant per the ARIA spec; the
+         checker doesn't model it. The divider always exists — parked at the
+         right/bottom edge it is the handle that OPENS the split (valuenow 100
+         = second pane fully collapsed, per the collapsible-splitter pattern). -->
+    <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+    <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+    <div
+      class="split-divider"
+      class:split-divider--parked={!settings.splitView}
+      role="separator"
+      tabindex="0"
+      aria-label={settings.splitView ? 'Resize panes' : 'Open split view'}
+      aria-controls="pane-primary"
+      aria-orientation={isLandscape ? 'vertical' : 'horizontal'}
+      aria-valuenow={settings.splitView ? Math.round(splitRatio * 100) : 100}
+      aria-valuemin={Math.round(SPLIT_RATIO_MIN * 100)}
+      aria-valuemax={100}
+      onpointerdown={onDividerDown}
+      onpointermove={onDividerMove}
+      onpointerup={onDividerUp}
+      onpointercancel={onDividerUp}
+      onlostpointercapture={onDividerUp}
+      onkeydown={onDividerKey}
+    ></div>
     {#if settings.splitView}
-      <!-- WAI-ARIA "window splitter" pattern: a focusable separator with
-           aria-valuenow IS the interactive variant per the ARIA spec; the
-           checker doesn't model it. -->
-      <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-      <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-      <div
-        class="split-divider"
-        role="separator"
-        tabindex="0"
-        aria-label="Resize panes"
-        aria-controls="pane-primary"
-        aria-orientation={isLandscape ? 'vertical' : 'horizontal'}
-        aria-valuenow={Math.round(splitRatio * 100)}
-        aria-valuemin={Math.round(SPLIT_RATIO_MIN * 100)}
-        aria-valuemax={Math.round(SPLIT_RATIO_MAX * 100)}
-        onpointerdown={onDividerDown}
-        onpointermove={onDividerMove}
-        onpointerup={onDividerUp}
-        onpointercancel={onDividerUp}
-        onlostpointercapture={onDividerUp}
-        onkeydown={onDividerKey}
-      ></div>
       <div class="pane pane--second">
         <Map
           bind:this={mapComp1}
@@ -814,10 +851,16 @@
     min-height: 0;
   }
   /* When split, pane 0 takes the persisted share of the split axis
-     (minus half the 2px divider); pane 1 fills the rest. */
+     (minus half the 2px divider); pane 1 fills the rest. The transition is
+     the release "bounce": a drag can leave the divider outside the 20-80%
+     band, and letting go animates it back to the clamped ratio (or the
+     edge, when closing). During a drag it is off so the divider tracks the
+     pointer exactly. */
   .pane--sized {
     flex: 0 0 calc(var(--split, 50%) - 1px);
+    transition: flex-basis 200ms ease;
   }
+  .panes--dragging .pane--sized { transition: none; }
 
   /* The divider element is the visible 2px line itself — same footprint as
      the old pane border. Grabbability comes from the pseudo-elements. The
@@ -858,6 +901,10 @@
       background: linear-gradient(to bottom, #000 calc(50% - 26px), transparent calc(50% - 26px) calc(50% + 26px), #000 calc(50% + 26px));
     }
     .split-divider::before { inset: 0 -21px; }
+    /* Parked at the right edge: no line to draw, and the grab zone extends
+       inward only (the outward half would be offscreen). */
+    .split-divider--parked { background: none; }
+    .split-divider--parked::before { inset: 0 0 0 -42px; }
     /* 48px tall, 16px tile → exactly three dots stacked vertically. */
     .split-divider::after { width: 18px; height: 48px; background-size: 18px 16px; background-repeat: repeat-y; }
   }
@@ -868,6 +915,9 @@
       background: linear-gradient(to right, #000 calc(50% - 26px), transparent calc(50% - 26px) calc(50% + 26px), #000 calc(50% + 26px));
     }
     .split-divider::before { inset: -21px 0; }
+    /* Parked at the bottom edge: grab zone extends upward only. */
+    .split-divider--parked { background: none; }
+    .split-divider--parked::before { inset: -42px 0 0 0; }
     /* 48px wide, 16px tile → exactly three dots in a row. */
     .split-divider::after { width: 48px; height: 18px; background-size: 16px 18px; background-repeat: repeat-x; }
   }
