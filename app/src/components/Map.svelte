@@ -2971,9 +2971,11 @@
         // screen position. `around` triggers _calcMatrices → calcMatrices → _calcMatrices
         // infinite recursion in MapLibre's globe projection; center+offset uses
         // the same code path as the follow-mode effect and has no such issue.
+        const off = followMode.offset;
+        if (!off) return; // follow dropped mid-gesture (vessel left the viewport)
         const W   = mapContainer.clientWidth;
         const H   = mapContainer.clientHeight;
-        const offset: [number, number] = [followMode.offset!.left * W / 2, followMode.offset!.top * H / 2];
+        const offset: [number, number] = [off.left * W / 2, off.top * H / 2];
 
         map.easeTo({
           zoom:    newZoom,
@@ -3062,7 +3064,7 @@
     const state = $vesselState;
     const pos = state.position;
     const rm = rotateMode.mode;
-    const following = followMode.following;
+    const off = followMode.offset; // null = not following (or the pin was just dropped)
 
     // Compute target bearing.
     let bearing: number | undefined;
@@ -3077,12 +3079,12 @@
     if (posChanged) { _easedLon = pos.longitude; _easedLat = pos.latitude; }
     _lastRm = rm;
 
-    if (pos && following) {
+    if (pos && off) {
       const W = mapContainer.clientWidth;
       const H = mapContainer.clientHeight;
       const offset : [number, number] = [
-        followMode.offset!.left * W/2,
-        followMode.offset!.top * H/2,
+        off.left * W/2,
+        off.top * H/2,
       ];
       if (!_isInteracting && !_touchActive && (posChanged || rmChanged || rm === 'heading' || rm === 'cog')) {
         const center = map.getCenter();
@@ -3163,9 +3165,11 @@
         // Use zoomTarget as base so rapid scroll accumulates correctly even while
         // a previous easeTo animation is still in flight.
         zoomTarget = (zoomTarget ?? map.getZoom()) + Math.log2(scale);
+        const off = followMode.offset;
+        if (!off) return; // follow dropped before this frame ran
         const W = mapContainer.clientWidth;
         const H = mapContainer.clientHeight;
-        const offset: [number, number] = [followMode.offset!.left * W / 2, followMode.offset!.top * H / 2];
+        const offset: [number, number] = [off.left * W / 2, off.top * H / 2];
         map.easeTo({ zoom: zoomTarget, center: [pos.longitude, pos.latitude], offset, duration: 0 });
       });
     }
