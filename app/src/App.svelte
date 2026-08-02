@@ -595,14 +595,15 @@
   $effect(() => {
     if (!settings.splitView && pickerPane !== primaryPane) pickerPane = primaryPane;
   });
-  // Deliberately primary-anchored: rulers are shared world data rendered in
-  // BOTH panes — only the initial placement is viewport-relative, and the
-  // always-present primary pane is its stable anchor. (pickerPane tracks the
-  // chart picker, not "the last active map", so routing through it would be
-  // no less arbitrary.)
+  // Rulers are shared world data rendered in BOTH panes — only the initial
+  // placement is viewport-relative. It spawns in the BIGGER pane: that is
+  // where the user has room to work, and it degrades to the primary pane
+  // when there is no split. (pickerPane tracks the chart picker, not "the
+  // last active map", so routing through it would be no less arbitrary.)
   function handleAddRuler(): void {
     chartPickerOpen = false;
-    mapComp?.addRuler();
+    const target = settings.splitView && settings.splitRatio < 0.5 ? mapComp1 : mapComp;
+    target?.addRuler();
   }
   function handleToggleProjection(): void {
     const target = pickerPane === panes[1] ? mapComp1 : mapComp;
