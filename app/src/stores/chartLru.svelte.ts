@@ -1,3 +1,6 @@
+import { visiblePanesFor } from './pane.svelte';
+import { settings } from './settings.svelte';
+import { charts } from './charts.svelte';
 import { SvelteMap } from 'svelte/reactivity';
 
 const LS_KEY = 'chart-lru';
@@ -32,3 +35,25 @@ function createChartLruStore() {
 }
 
 export const chartLru = createChartLruStore();
+
+/**
+ * Record every VISIBLE pane's active charts/layers as just-used — not only the
+ * pane a picker configures — so neither pane's selection ages out of the LRU.
+ * WMTS charts key as `${chartId}:${layerId}`; everything else by its id.
+ * Called when a chart picker closes.
+ */
+export function touchVisibleSelections(): void {
+  const activeIds: string[] = [];
+  for (const p of visiblePanesFor(settings.paneLayout)) {
+    activeIds.push(...p.baseLayers.enabled);
+    for (const cid of p.chartSel.selected) {
+      if (charts.available[cid]?.type === 'WMTS') {
+        const layerId = p.chartSel.getLayerSel(cid);
+        if (layerId) activeIds.push(`${cid}:${layerId}`);
+      } else {
+        activeIds.push(cid);
+      }
+    }
+  }
+  chartLru.touch(activeIds);
+}

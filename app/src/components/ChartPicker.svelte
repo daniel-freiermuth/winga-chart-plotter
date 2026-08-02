@@ -5,9 +5,8 @@
   import { BASE_LAYERS, type BaseLayer } from '../stores/baseLayers.svelte';
   import LazyMapThumb from './LazyMapThumb.svelte';
   import type { VisibilityState } from '../stores/visibility.svelte';
-  import { chartLru } from '../stores/chartLru.svelte';
-  import { visiblePanesFor, type PaneState } from '../stores/pane.svelte';
-  import { settings } from '../stores/settings.svelte';
+  import { chartLru, touchVisibleSelections } from '../stores/chartLru.svelte';
+  import type { PaneState } from '../stores/pane.svelte';
 
   let {
     pane,
@@ -34,22 +33,7 @@
   let _dragY = 0;
 
   function close() {
-    // Touch every VISIBLE pane's active charts/layers — not just the pane this
-    // picker configures — so neither pane's selection ages out of the LRU.
-    const visiblePanes = visiblePanesFor(settings.paneLayout);
-    const activeIds: string[] = [];
-    for (const p of visiblePanes) {
-      activeIds.push(...p.baseLayers.enabled);
-      for (const cid of p.chartSel.selected) {
-        if (charts.available[cid]?.type === 'WMTS') {
-          const layerId = p.chartSel.getLayerSel(cid);
-          if (layerId) activeIds.push(`${cid}:${layerId}`);
-        } else {
-          activeIds.push(cid);
-        }
-      }
-    }
-    chartLru.touch(activeIds);
+    touchVisibleSelections(); // keep every visible pane's active charts in the LRU
     onClose();
   }
 
