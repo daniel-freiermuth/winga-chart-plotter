@@ -1,7 +1,6 @@
 <script lang="ts">
   import { settings, type AppearanceSettings, type SettingsTab } from '../stores/settings.svelte';
   import { plotterExtensions } from '../stores/plotterExtensions.svelte';
-  import { visibility } from '../stores/visibility.svelte';
   import { auth } from '../stores/auth.svelte';
   import { fpsStore } from '../stores/fps.svelte';
   import { connection } from '../stores/connection.svelte';
@@ -195,6 +194,7 @@
           <label class="toggle">
             <input
               type="checkbox"
+              aria-label="Browser GPS"
               checked={settings.useGeoLocation}
               onchange={(e) => {
                 const checked = (e.target as HTMLInputElement).checked;
@@ -292,16 +292,6 @@
       </div>
 
       <p class="section-title">Track</p>
-      <div class="row">
-        <span class="field-label">Show</span>
-        <div class="field">
-          <label class="toggle">
-            <input type="checkbox" checked={visibility.ownTrack}
-              onchange={() => { visibility.toggle('ownTrack'); }} />
-            <span class="toggle-track"><span class="toggle-thumb"></span></span>
-          </label>
-        </div>
-      </div>
       <div class="row">
         <span class="field-label">Color</span>
         <div class="field"><ColorInput bind:value={settings.appearance.track.color} oninput={applyAppearance} /></div>
@@ -435,7 +425,7 @@
         <span class="field-label">Show</span>
         <div class="field">
           <label class="toggle">
-            <input type="checkbox" bind:checked={settings.appearance.ais.track.show} onchange={applyAppearance} />
+            <input type="checkbox" aria-label="Show AIS track on click" bind:checked={settings.appearance.ais.track.show} onchange={applyAppearance} />
             <span class="toggle-track"><span class="toggle-thumb"></span></span>
           </label>
         </div>

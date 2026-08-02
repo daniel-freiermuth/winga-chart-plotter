@@ -3,13 +3,12 @@
   import Map from './components/Map.svelte';
   import FaIcon from './lib/FaIcon.svelte';
   import {
-    faGear, faLayerGroup, faLocationCrosshairs, faRuler,
-    faExpand, faCompress,
+    faGear, faRuler,
   } from '@fortawesome/free-solid-svg-icons';
   import { routePlanner } from './stores/routePlanner.svelte';
   import { waypoints } from './stores/waypoints.svelte';
   import { saveRoute, updateRoute, raiseMob, activateRoute, setActiveRoutePointIndex } from './lib/wasmRest';
-  import { gcDistanceNm } from './lib/wasmGeo';
+  import { gcDistanceNm, unionViewBounds } from './lib/wasmGeo';
 
   let plannerSaving = $state(false);
   let plannerDiscardConfirm = $state(false);
@@ -69,10 +68,9 @@
   import WidgetPanel from './components/WidgetPanel.svelte';
   import ExtPanel from './components/ExtPanel.svelte';
   import { vesselState } from './stores/vessel';
-  import { settings, type SettingsTab } from './stores/settings.svelte';
-  import { followMode } from './stores/follow.svelte';
-  import { rotateMode } from './stores/rotateMode.svelte';
-  import { mapView } from './stores/mapView.svelte';
+  import { settings, SPLIT_RATIO_MIN, SPLIT_RATIO_MAX, type SettingsTab } from './stores/settings.svelte';
+  import { panes, setPaneLayout, visiblePanesFor, type PaneState } from './stores/pane.svelte';
+  import { startRulerSnapSync } from './lib/rulerSnap';
   import { charts } from './stores/charts.svelte';
   import { ais } from './stores/ais.svelte';
   import { fetchVesselInfo } from './lib/wasmRest';
@@ -104,19 +102,98 @@
   // can fully verify the calls without `eslint-disable` suppression.
   interface MapInstance {
     getView(): { center: [number, number]; zoom: number; bounds: [number, number, number, number] };
-    flyTo(position: [number, number], zoom?: number): void;
-    fitBounds(bounds: [number, number, number, number]): void;
-    flyToVessel(): void;
     addRuler(): void;
     setProjection(proj: string): void;
-    toggleFullscreen(): void;
     closePopup(): void;
   }
 
   let mapComp             = $state<MapInstance | null>(null);
+  let mapComp1            = $state<MapInstance | null>(null);
+  /** Pane the (single, app-level) chart picker is open for; null = closed. */
+  // $state.raw: PaneState must keep its identity (compared against panes[i]);
+  // a deep $state proxy would break === and re-proxy the pane's stores.
+  let pickerFor           = $state.raw<PaneState | null>(null);
   let settingsComp        = $state<{ open(): void; openTo(t: SettingsTab): void } | null>(null);
-  let chartPickerComp     = $state<{ open(): void } | null>(null);
-  let chartPickerOpen     = $state(false);
+
+  // ── Split divider drag ────────────────────────────────────────────────────
+  // The divider doubles as the split-view control: outside the split it parks
+  // at the collapsed pane's screen edge as a drawer handle — EITHER edge is a
+  // resting position (paneLayout names the pane that stays fullscreen).
+  // Grabbing the handle mounts the other pane and the divider follows the
+  // pointer; the release either settles into the 20-80% band or collapses a
+  // pane again. No Settings toggle needed.
+  let panesEl: HTMLDivElement | undefined;
+  /** Live ratio during a divider drag; null when idle or parked (persisted value applies). */
+  let dragRatio = $state<number | null>(null);
+  /** True from pointerdown to up/cancel — disables the settle transition so the divider tracks the pointer exactly. */
+  let dividerDragging = $state(false);
+  const splitRatio = $derived(dragRatio ?? settings.splitRatio);
+  const splitOpen  = $derived(settings.paneLayout === 'split');
+  const pane0Visible = $derived(visiblePanesFor(settings.paneLayout).includes(panes[0]));
+  const pane1Visible = $derived(visiblePanesFor(settings.paneLayout).includes(panes[1]));
+  /** Release threshold: let go with a pane under half its minimum size and that pane collapses. */
+  const SPLIT_OPEN_THRESHOLD = SPLIT_RATIO_MIN / 2;
+  // Divider orientation for screen readers — mirrors the CSS orientation media
+  // query that lays out the panes: side-by-side panes (landscape) are split by
+  // a vertical separator, stacked panes (portrait) by a horizontal one.
+  const landscapeMql = window.matchMedia('(orientation: landscape)');
+  let isLandscape = $state(landscapeMql.matches);
+
+  /** Raw divider position as a pane-0 fraction — unclamped, so the parked zone is reachable. */
+  function dividerFracFromEvent(e: PointerEvent): number {
+    if (!panesEl) return settings.splitRatio;
+    const r = panesEl.getBoundingClientRect();
+    // Horizontal split axis in landscape, vertical in portrait — same
+    // orientation source the pane layout CSS and aria-orientation use (the
+    // aspect-ratio test would disagree with the media query at width == height).
+    return isLandscape
+      ? (e.clientX - r.left) / r.width
+      : (e.clientY - r.top) / r.height;
+  }
+  function onDividerDown(e: PointerEvent): void {
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    dividerDragging = true;
+    // Opening gesture: mount the collapsed pane immediately so it follows the
+    // pointer out of the edge from the first moment — that is what makes
+    // the drawer discoverable.
+    if (!splitOpen) setPaneLayout('split');
+    onDividerMove(e);
+  }
+  function onDividerMove(e: PointerEvent): void {
+    if (!dividerDragging) return;
+    // Follow the pointer everywhere, including outside the 20-80% band —
+    // the release below either bounces back into the band or collapses a pane.
+    dragRatio = Math.min(1, Math.max(0, dividerFracFromEvent(e)));
+  }
+  function onDividerUp(): void {
+    if (!dividerDragging) return;
+    dividerDragging = false;
+    if (dragRatio !== null) {
+      // Released (almost) at an edge — that pane collapses and the divider
+      // parks. The pre-drag ratio is deliberately not overwritten, so the
+      // next open restores it.
+      if (1 - dragRatio < SPLIT_OPEN_THRESHOLD)  setPaneLayout('solo0');
+      else if (dragRatio < SPLIT_OPEN_THRESHOLD) setPaneLayout('solo1');
+      else settings.setSplitRatio(dragRatio); // clamps → settles back into the band
+    }
+    dragRatio = null;
+  }
+  function onDividerKey(e: KeyboardEvent): void {
+    const delta = (e.key === 'ArrowLeft' || e.key === 'ArrowUp') ? -0.05
+                : (e.key === 'ArrowRight' || e.key === 'ArrowDown') ? 0.05 : 0;
+    if (delta === 0) return;
+    e.preventDefault();
+    if (!splitOpen) {
+      // Parked: a step inward (away from the parked edge) re-opens the split
+      // at its last persisted ratio.
+      if (settings.paneLayout === 'solo0' ? delta < 0 : delta > 0) setPaneLayout('split');
+      return;
+    }
+    // Already at a clamp — one more step outward collapses that side's pane.
+    if (delta > 0 && settings.splitRatio >= SPLIT_RATIO_MAX) { setPaneLayout('solo0'); return; }
+    if (delta < 0 && settings.splitRatio <= SPLIT_RATIO_MIN) { setPaneLayout('solo1'); return; }
+    settings.setSplitRatio(settings.splitRatio + delta); // store clamps
+  }
   let worker: Worker | null = null;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let reconnectDelay = 2000; // ms, doubles on each failure up to 30s
@@ -125,9 +202,32 @@
   const relay = createSkRelay((msg) => worker?.postMessage({ type: 'send', msg }));
 
   const mapControl: MapControl = {
-    getView:   ()        => mapComp!.getView(),
-    flyTo:     (pos, z)  => { mapComp!.flyTo(pos, z); },
-    fitBounds: (b)       => { mapComp!.fitBounds(b); },
+    // Visible area across panes: in split view, the dateline-aware union of
+    // both cameras (WASM — arcs on the circle, so two panes on either side of
+    // the antimeridian merge across it instead of spanning the globe through
+    // Greenwich). zoom is min(z0, z1): a scale bound ("no more zoomed-in than
+    // the most zoomed-out pane"), NOT a fit — a fit zoom would need a target
+    // viewport, and a cross-pane union has none.
+    getView: () => {
+      // Either pane can be the solo/fullscreen one — gather whatever is mounted.
+      const v0 = pane0Visible ? mapComp?.getView() : null;
+      const v1 = pane1Visible ? mapComp1?.getView() : null;
+      // Extension asks before any pane's Map has mounted — degrade to the
+      // same empty view Map.getView() itself returns when it has no map.
+      if (!v0 && !v1) return { center: [0, 0] as [number, number], zoom: 0, bounds: [0, 0, 0, 0] as [number, number, number, number] };
+      if (!v0 || !v1) return (v0 ?? v1)!;
+      const u = unionViewBounds(v0.bounds, v1.bounds);
+      if (!u) return v0; // WASM not ready yet — degrade to the primary pane
+      return {
+        center: u.center,
+        zoom: Math.min(v0.zoom, v1.zoom),
+        bounds: u.bounds,
+      };
+    },
+    // Extensions may not steer the camera — navigation intent comes from the
+    // user. Kept as warning no-ops so existing extensions keep working.
+    flyTo:     () => { console.warn('[ext] map.flyTo ignored — extensions cannot move the map'); },
+    fitBounds: () => { console.warn('[ext] map.fitBounds ignored — extensions cannot move the map'); },
   };
 
   const panelControl: PanelControl = {
@@ -373,8 +473,17 @@
     };
     document.addEventListener('visibilitychange', onVisible);
 
+    const onOrientationChange = () => { isLandscape = landscapeMql.matches; };
+    landscapeMql.addEventListener('change', onOrientationChange);
+
+    // App-level frame driver: keeps snapped ruler endpoints following live
+    // vessel positions — shared world data, synced once regardless of panes.
+    const stopRulerSnap = startRulerSnapSync();
+
     return () => {
       document.removeEventListener('visibilitychange', onVisible);
+      landscapeMql.removeEventListener('change', onOrientationChange);
+      stopRulerSnap();
       if (reconnectTimer !== null) clearTimeout(reconnectTimer);
       worker?.postMessage({ type: 'disconnect' });
       worker?.terminate();
@@ -454,60 +563,41 @@
   });
 
   function handleOpenSettings(tab: SettingsTab): void {
-    chartPickerOpen = false;
+    pickerFor = null;
     settingsComp?.openTo(tab);
   }
   function handleOpenSettingsModal(): void {
     mapComp?.closePopup();
-    chartPickerOpen      = false;
+    mapComp1?.closePopup();
+    pickerFor = null;
     settingsComp?.open();
   }
-  function handleOpenChartPicker(): void {
+  function openChartPickerFor(p: PaneState): void {
+    pickerFor = p;
     mapComp?.closePopup();
-    chartPickerComp?.open();
+    mapComp1?.closePopup();
   }
-  function handleFlyToVessel(): void {
-    mapComp?.flyToVessel();
-  }
-  const NAV_FAB_SIZE = 52; // px
-  let _compassPressTimer: ReturnType<typeof setTimeout> | null = null;
-  let _compassWasLongPress = false;
-  let _compassPressX = 0;
-  let _compassPressY = 0;
-
-  function onCompassPointerDown(e: PointerEvent) {
-    _compassWasLongPress = false;
-    _compassPressX = e.clientX;
-    _compassPressY = e.clientY;
-    _compassPressTimer = setTimeout(() => {
-      _compassWasLongPress = true;
-      _compassPressTimer = null;
-      rotateMode.toggleLock($vesselState.cog !== null, $vesselState.heading !== null, route.nextPoint !== null);
-      if ('vibrate' in navigator) navigator.vibrate(30);
-    }, 500);
-  }
-  function onCompassPointerEnd() {
-    if (_compassPressTimer !== null) { clearTimeout(_compassPressTimer); _compassPressTimer = null; }
-  }
-  function onCompassPointerMove(e: PointerEvent) {
-    if (_compassPressTimer === null) return;
-    const dx = e.clientX - _compassPressX;
-    const dy = e.clientY - _compassPressY;
-    if (dx * dx + dy * dy > (NAV_FAB_SIZE / 2) ** 2) onCompassPointerEnd();
-  }
-  function onCompassClick() {
-    if (_compassWasLongPress) { _compassWasLongPress = false; return; }
-    rotateMode.toggle($vesselState.cog !== null, $vesselState.heading !== null, route.nextPoint !== null);
-  }
+  // Collapsing a pane closes its picker — a deliberate gesture should not
+  // covertly retarget the sheet at the surviving pane.
+  $effect(() => {
+    if (pickerFor === panes[0] && !pane0Visible) pickerFor = null;
+    else if (pickerFor === panes[1] && !pane1Visible) pickerFor = null;
+  });
+  // Rulers are shared world data rendered in BOTH panes — only the initial
+  // placement is viewport-relative. It spawns in the BIGGER pane: that is
+  // where the user has room to work; outside the split that is the solo pane.
+  // (pickerFor tracks the chart picker, not "the last active map", so
+  // routing through it would be no less arbitrary.)
   function handleAddRuler(): void {
-    chartPickerOpen = false;
-    mapComp?.addRuler();
+    pickerFor = null;
+    const useSecond = splitOpen ? settings.splitRatio < 0.5 : settings.paneLayout === 'solo1';
+    (useSecond ? mapComp1 : mapComp)?.addRuler();
   }
   function handleToggleProjection(): void {
-    mapComp?.setProjection(mapView.projection === 'mercator' ? 'globe' : 'mercator');
-  }
-  function handleToggleFullscreen(): void {
-    mapComp?.toggleFullscreen();
+    const p = pickerFor;
+    if (!p) return; // only reachable from inside the open sheet
+    const target = p === panes[1] ? mapComp1 : mapComp;
+    target?.setProjection(p.view.projection === 'mercator' ? 'globe' : 'mercator');
   }
 
   async function mobRaise() {
@@ -530,9 +620,64 @@
 </script>
 
 <div style="position: relative; width: 100%; height: 100%;">
-  <Map bind:this={mapComp} openSettings={handleOpenSettings} onMapClick={() => { chartPickerOpen = false; }} />
+  <div class="panes" class:panes--dragging={dividerDragging} bind:this={panesEl} style="--split: {(splitRatio * 100).toFixed(2)}%">
+    {#if pane0Visible}
+      <div id="pane-primary" class="pane" class:pane--sized={splitOpen}>
+        <Map
+          bind:this={mapComp}
+          pane={panes[0]}
+          openSettings={handleOpenSettings}
+          onMapClick={() => { pickerFor = null; }}
+          chartPickerOpen={pickerFor === panes[0]}
+          onOpenChartPicker={() => { openChartPickerFor(panes[0]); }}
+        />
+      </div>
+    {/if}
+    <!-- WAI-ARIA "window splitter" pattern: a focusable separator with
+         aria-valuenow IS the interactive variant per the ARIA spec; the
+         checker doesn't model it. The divider always exists — parked at a
+         screen edge it is the handle that OPENS the split (valuenow 100 =
+         second pane fully collapsed, 0 = primary pane fully collapsed, per
+         the collapsible-splitter pattern). -->
+    <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+    <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+    <div
+      class="split-divider"
+      class:split-divider--parked-end={settings.paneLayout === 'solo0'}
+      class:split-divider--parked-start={settings.paneLayout === 'solo1'}
+      role="separator"
+      tabindex="0"
+      aria-label={splitOpen ? 'Resize panes' : 'Open split view'}
+      aria-controls={pane0Visible ? 'pane-primary' : 'pane-second'}
+      aria-orientation={isLandscape ? 'vertical' : 'horizontal'}
+      aria-valuenow={splitOpen ? Math.round(splitRatio * 100) : settings.paneLayout === 'solo0' ? 100 : 0}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      onpointerdown={onDividerDown}
+      onpointermove={onDividerMove}
+      onpointerup={onDividerUp}
+      onpointercancel={onDividerUp}
+      onlostpointercapture={onDividerUp}
+      onkeydown={onDividerKey}
+    ></div>
+    {#if pane1Visible}
+      <div id="pane-second" class="pane pane--second">
+        <Map
+          bind:this={mapComp1}
+          pane={panes[1]}
+          fpsOwner={!pane0Visible}
+          openSettings={handleOpenSettings}
+          onMapClick={() => { pickerFor = null; }}
+          chartPickerOpen={pickerFor === panes[1]}
+          onOpenChartPicker={() => { openChartPickerFor(panes[1]); }}
+        />
+      </div>
+    {/if}
+  </div>
   <Settings bind:this={settingsComp} />
-  <ChartPicker bind:this={chartPickerComp} bind:isOpen={chartPickerOpen} onToggleProjection={handleToggleProjection} />
+  {#if pickerFor}
+    <ChartPicker pane={pickerFor} onClose={() => { pickerFor = null; }} onToggleProjection={handleToggleProjection} />
+  {/if}
   {#each plotterExtensions.layout as placement (placement.instanceId)}
     {@const manifest = plotterExtensions.extensions.get(placement.extensionId)}
     {@const wDef = manifest?.widgets?.find(w => w.id === placement.widgetId)}
@@ -566,14 +711,6 @@
       {/each}
     {/each}
 
-
-    <div class="map-toolbar-divider"></div>
-
-    <button
-      class="map-btn"
-      title="{mapView.isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}"
-      onclick={handleToggleFullscreen}
-    ><FaIcon icon={mapView.isFullscreen ? faCompress : faExpand} /></button>
 
     <div class="map-toolbar-divider"></div>
 
@@ -669,58 +806,6 @@
     </button>
   </div>
 
-  <!-- Navigation stack: compass (top) → pin → layers (bottom), bottom-left corner -->
-  <div class="nav-stack" style="--nav-fab-size: {NAV_FAB_SIZE}px">
-    <!-- Compass: tap cycles auto modes, long-press toggles free rotation -->
-    <button
-      class="nav-fab compass-fab"
-      class:compass-fab--free={rotateMode.mode === 'manual'}
-      title={rotateMode.mode === 'manual'
-        ? 'Free rotation — tap to re-engage, hold to lock'
-        : `Rotation: ${rotateMode.label} — tap to cycle, hold for free`}
-      aria-label="Rotation mode: {rotateMode.compassLabel}"
-      onpointerdown={onCompassPointerDown}
-      onpointermove={onCompassPointerMove}
-      onpointerup={onCompassPointerEnd}
-      onpointercancel={onCompassPointerEnd}
-      onpointerleave={onCompassPointerEnd}
-      onclick={onCompassClick}
-    >
-      <svg width={NAV_FAB_SIZE} height={NAV_FAB_SIZE} viewBox="0 0 44 44" aria-hidden="true">
-        <circle cx="22" cy="22" r="21"
-          fill="rgba(0,0,0,0.72)"
-          stroke={rotateMode.mode === 'manual' ? '#f59e0b' : 'rgba(255,255,255,0.18)'}
-          stroke-width="1.5"/>
-        <!-- Rotating needle always points true North; label rotates with it -->
-        <g transform="rotate({-mapView.bearing}, 22, 22)">
-          <polygon points="22,5 17,23 22,20 27,23" fill="#e53e3e"/>
-          <polygon points="22,39 17,21 22,24 27,21" fill="rgba(200,200,200,0.75)"/>
-          <circle cx="22" cy="22" r="6" fill="rgba(0,0,0,0.75)"/>
-          <text x="22" y="22" text-anchor="middle" dominant-baseline="middle"
-            font-size="12" font-family="system-ui,sans-serif" font-weight="700"
-            fill={rotateMode.mode === 'manual' ? '#f59e0b' : 'white'}
-          >{rotateMode.compassLabel}</text>
-        </g>
-      </svg>
-    </button>
-
-    <!-- Position pin -->
-    <button
-      class="nav-fab"
-      class:nav-fab--active={followMode.following}
-      title={followMode.following ? 'Stop following vessel' : 'Follow vessel'}
-      disabled={!followMode.following && !$vesselState.position}
-      onclick={handleFlyToVessel}
-    ><FaIcon icon={faLocationCrosshairs} /></button>
-
-    <!-- Chart &amp; layer picker -->
-    <button
-      class="nav-fab"
-      class:nav-fab--open={chartPickerOpen}
-      title="Charts &amp; layers"
-      onclick={handleOpenChartPicker}
-    ><FaIcon icon={faLayerGroup} /></button>
-  </div>
 </div>
 
 <style>
@@ -732,6 +817,95 @@
     display: flex;
     flex-direction: column;
     gap: 3px;
+  }
+
+  /* Dual-pane container. Split along the longer viewport edge: side-by-side
+     in landscape, stacked in portrait. Single pane = one flex child. */
+  .panes {
+    position: absolute;
+    inset: 0;
+    display: flex;
+  }
+  .pane {
+    position: relative;
+    flex: 1 1 0;
+    min-width: 0;
+    min-height: 0;
+  }
+  /* When split, pane 0 takes the persisted share of the split axis
+     (minus half the 2px divider); pane 1 fills the rest. The transition is
+     the release "bounce": a drag can leave the divider outside the 20-80%
+     band, and letting go animates it back to the clamped ratio (or the
+     edge, when closing). During a drag it is off so the divider tracks the
+     pointer exactly. */
+  .pane--sized {
+    flex: 0 0 calc(var(--split, 50%) - 1px);
+    transition: flex-basis 200ms ease;
+  }
+  .panes--dragging .pane--sized { transition: none; }
+
+  /* The divider element is the visible 2px line itself — same footprint as
+     the old pane border. Grabbability comes from the pseudo-elements. The
+     line is a gradient with a transparent window under the grab handle
+     (48px pill + border), so it doesn't show through the translucent pill. */
+  .split-divider {
+    flex: 0 0 2px;
+    position: relative;
+    z-index: 11; /* extended hit area must win over pane content */
+    touch-action: none;
+    outline-offset: 2px;
+  }
+  /* Invisible 44px grab zone — pseudo-elements participate in hit testing,
+     so the touch target extends over the charts without any visible gutter. */
+  .split-divider::before {
+    content: '';
+    position: absolute;
+  }
+  /* Grab handle: dark pill with three dots, FAB-styled so it reads on both
+     light and dark charts. */
+  .split-divider::after {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    border-radius: 9px;
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+    background-color: rgba(0, 0, 0, 0.6);
+    background-image: radial-gradient(circle, rgba(255, 255, 255, 0.85) 2px, transparent 2.6px);
+    background-position: center;
+  }
+  @media (orientation: landscape) {
+    .panes { flex-direction: row; }
+    .split-divider {
+      cursor: col-resize;
+      background: linear-gradient(to bottom, #000 calc(50% - 26px), transparent calc(50% - 26px) calc(50% + 26px), #000 calc(50% + 26px));
+    }
+    .split-divider::before { inset: 0 -21px; }
+    /* Parked at an edge: no line to draw, and the grab zone extends inward
+       only (the outward half would be offscreen). --parked-end = right edge
+       (pane 1 collapsed), --parked-start = left edge (pane 0 collapsed). */
+    .split-divider--parked-end, .split-divider--parked-start { background: none; }
+    .split-divider--parked-end::before   { inset: 0 0 0 -42px; }
+    .split-divider--parked-start::before { inset: 0 -42px 0 0; }
+    /* 48px tall, 16px tile → exactly three dots stacked vertically. */
+    .split-divider::after { width: 18px; height: 48px; background-size: 18px 16px; background-repeat: repeat-y; }
+  }
+  @media (orientation: portrait) {
+    .panes { flex-direction: column; }
+    .split-divider {
+      cursor: row-resize;
+      background: linear-gradient(to right, #000 calc(50% - 26px), transparent calc(50% - 26px) calc(50% + 26px), #000 calc(50% + 26px));
+    }
+    .split-divider::before { inset: -21px 0; }
+    /* Parked at the bottom (--parked-end, pane 1 collapsed) or top
+       (--parked-start, pane 0 collapsed) edge: grab zone extends inward only. */
+    .split-divider--parked-end, .split-divider--parked-start { background: none; }
+    .split-divider--parked-end::before   { inset: -42px 0 0 0; }
+    .split-divider--parked-start::before { inset: 0 0 -42px 0; }
+    /* 48px wide, 16px tile → exactly three dots in a row. */
+    .split-divider::after { width: 48px; height: 18px; background-size: 16px 18px; background-repeat: repeat-x; }
   }
 
   .map-btn {
@@ -762,48 +936,6 @@
     margin: 2px 0;
   }
 
-  .nav-stack {
-    position: absolute;
-    bottom: 20px;
-    left: 16px;
-    z-index: 10;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-
-  .nav-fab {
-    width: var(--nav-fab-size);
-    height: var(--nav-fab-size);
-    border-radius: 50%;
-    border: 1.5px solid rgba(255,255,255,0.18);
-    background: rgba(0,0,0,0.72);
-    color: white;
-    font-size: 20px;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.45);
-    transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
-    padding: 0;
-  }
-  .nav-fab:disabled              { opacity: 0.35; cursor: default; }
-  .nav-fab--active               { background: rgba(255,255,255,0.9); color: #111827; border-color: rgba(255,255,255,0.9); }
-  .nav-fab--open                 { background: rgba(76,201,240,0.15); box-shadow: 0 0 0 2px #4cc9f0, 0 2px 12px rgba(0,0,0,0.45); }
-  @media (hover: hover) and (pointer: fine) {
-    .nav-fab:hover:not(:disabled)         { background: rgba(40,40,80,0.9); }
-    .nav-fab--active:hover:not(:disabled) { background: rgba(220,220,240,0.95); }
-    .nav-fab--open:hover                  { background: rgba(76,201,240,0.25); }
-  }
-  .nav-fab:active:not(:disabled) { transform: scale(0.94); }
-
-  /* Compass FAB: the SVG renders its own circle; the button wrapper is transparent. */
-  .compass-fab { background: none; border: none; box-shadow: none; padding: 0; }
-  @media (hover: hover) and (pointer: fine) {
-    .compass-fab:hover svg { filter: brightness(1.25); }
-  }
-  .compass-fab:active { transform: scale(0.94); }
 
   .mob-container {
     position: absolute;

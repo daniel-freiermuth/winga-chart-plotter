@@ -1,6 +1,7 @@
 export type AutoRotateMode = 'north' | 'cog' | 'heading' | 'bearing';
 export type RotateMode = AutoRotateMode | 'manual';
 import { resolveResumeMode } from './rotateModeLogic';
+import { loadJSON, saveJSON } from './paneStorage';
 
 const AUTO_MODES: AutoRotateMode[] = ['north', 'cog', 'heading', 'bearing'];
 const ALL_MODES: RotateMode[] = [...AUTO_MODES, 'manual'];
@@ -26,21 +27,12 @@ function isRotateMode(v: unknown): v is RotateMode {
 interface SavedRotateMode { mode: RotateMode; resumeMode: AutoRotateMode }
 
 /** Reads the last-persisted rotation mode, falling back to north on first run / corrupt data. */
-function loadSaved(): SavedRotateMode {
-  try {
-    const s = localStorage.getItem(LS_KEY);
-    if (s) {
-      const p = JSON.parse(s) as { mode?: unknown; resumeMode?: unknown };
-      if (isRotateMode(p.mode)) {
-        return { mode: p.mode, resumeMode: isAutoRotateMode(p.resumeMode) ? p.resumeMode : 'north' };
-      }
-    }
-  } catch { /* ignore */ }
+function loadSaved(key: string): SavedRotateMode {
+  const p = loadJSON(key) as { mode?: unknown; resumeMode?: unknown } | null;
+  if (p && isRotateMode(p.mode)) {
+    return { mode: p.mode, resumeMode: isAutoRotateMode(p.resumeMode) ? p.resumeMode : 'north' };
+  }
   return { mode: 'north', resumeMode: 'north' };
-}
-
-function save(mode: RotateMode, resumeMode: AutoRotateMode): void {
-  try { localStorage.setItem(LS_KEY, JSON.stringify({ mode, resumeMode })); } catch { /* ignore */ }
 }
 
 function isAvailable(m: AutoRotateMode, hasCog: boolean, hasHeading: boolean, hasCourse: boolean): boolean {
@@ -50,28 +42,55 @@ function isAvailable(m: AutoRotateMode, hasCog: boolean, hasHeading: boolean, ha
   return true;
 }
 
-function createRotateModeStore() {
-  const saved = loadSaved();
+/** Per-pane chart rotation mode (auto modes + free/manual rotation). */
+export interface RotateModeStore {
+  readonly mode: RotateMode;
+  readonly resumeMode: AutoRotateMode;
+  readonly label: string;
+  /** Label shown in the compass SVG center — 'FREE' replaces 'MAN'. */
+  readonly compassLabel: string;
+  /**
+   * Tap action on the compass button.
+   * - Free mode → re-engage last remembered auto mode.
+   * - Auto mode → advance to the next available auto mode (manual not in cycle).
+   */
+  toggle(hasCog: boolean, hasHeading: boolean, hasCourse: boolean): void;
+  /**
+   * Long-press action on the compass button.
+   * Toggles between free rotation (manual) and the last remembered auto mode.
+   * Orthogonal to position pinning — does not affect followMode.
+   */
+  toggleLock(hasCog: boolean, hasHeading: boolean, hasCourse: boolean): void;
+  /**
+   * Called reactively when availability changes (e.g. route cleared, GPS lost).
+   * If the current auto mode is no longer available, falls back to COG → north.
+   * No-op in manual mode.
+   */
+  ensureAvailable(hasCog: boolean, hasHeading: boolean, hasCourse: boolean): void;
+}
+
+/** `lsSuffix` namespaces the localStorage key per pane ('' = primary pane, legacy key). */
+export function createRotateModeStore(lsSuffix = ''): RotateModeStore {
+  const key = LS_KEY + lsSuffix;
+  const saved = loadSaved(key);
   let mode = $state<RotateMode>(saved.mode);
   let resumeMode = $state<AutoRotateMode>(saved.resumeMode);
+
+  function save(): void {
+    saveJSON(key, { mode, resumeMode });
+  }
 
   return {
     get mode() { return mode; },
     get resumeMode() { return resumeMode; },
     get label()         { return LABELS[mode]; },
-    /** Label shown in the compass SVG center — 'FREE' replaces 'MAN'. */
     get compassLabel()  { return mode === 'manual' ? 'FREE' : LABELS[mode]; },
 
-    /**
-     * Tap action on the compass button.
-     * - Free mode → re-engage last remembered auto mode.
-     * - Auto mode → advance to the next available auto mode (manual not in cycle).
-     */
     toggle(hasCog: boolean, hasHeading: boolean, hasCourse: boolean) {
       if (mode === 'manual') {
         // Tap while free → snap back to last auto mode.
         mode = resolveResumeMode(resumeMode, hasCog, hasHeading, hasCourse);
-        save(mode, resumeMode);
+        save();
         return;
       }
       // Cycle through available auto modes only.
@@ -79,14 +98,9 @@ function createRotateModeStore() {
       if (available.length === 0) return;
       const idx = available.indexOf(mode);
       mode = available[(idx + 1) % available.length]!;
-      save(mode, resumeMode);
+      save();
     },
 
-    /**
-     * Long-press action on the compass button.
-     * Toggles between free rotation (manual) and the last remembered auto mode.
-     * Orthogonal to position pinning — does not affect followMode.
-     */
     toggleLock(hasCog: boolean, hasHeading: boolean, hasCourse: boolean) {
       if (mode === 'manual') {
         mode = resolveResumeMode(resumeMode, hasCog, hasHeading, hasCourse);
@@ -94,23 +108,16 @@ function createRotateModeStore() {
         resumeMode = mode;
         mode = 'manual';
       }
-      save(mode, resumeMode);
+      save();
     },
 
-    /**
-     * Called reactively when availability changes (e.g. route cleared, GPS lost).
-     * If the current auto mode is no longer available, falls back to COG → north.
-     * No-op in manual mode.
-     */
     ensureAvailable(hasCog: boolean, hasHeading: boolean, hasCourse: boolean) {
       if (mode === 'manual') return;
       if (isAvailable(mode, hasCog, hasHeading, hasCourse)) return;
       const next: AutoRotateMode = hasCog ? 'cog' : 'north';
       if (next === mode) return;
       mode = next;
-      save(mode, resumeMode);
+      save();
     },
   };
 }
-
-export const rotateMode = createRotateModeStore();

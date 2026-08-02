@@ -34,33 +34,33 @@ describe('resolveEnabledIds', () => {
   });
 
   it('never enables more than one base layer, whatever is stored', () => {
-    for (const raw of [null, '["osm","watercolor"]', '["watercolor","osm"]', '["seamarks"]', '{bad json', '"osm"']) {
-      const ids = resolveEnabledIds(raw, knownIds);
-      expect(ids.length, `raw=${String(raw)} resolved to [${ids.join(', ')}]`).toBeLessThanOrEqual(1);
+    for (const stored of [null, ['osm', 'watercolor'], ['watercolor', 'osm'], ['seamarks'], 'osm', 42]) {
+      const ids = resolveEnabledIds(stored, knownIds);
+      expect(ids.length, `stored=${JSON.stringify(stored)} resolved to [${ids.join(', ')}]`).toBeLessThanOrEqual(1);
     }
   });
 
   it('migrates a retired-ids-only selection to the default instead of a blank map', () => {
     // Legal under the old independent-toggle semantics; 'seamarks' is now an
     // extra layer of 'osm', not a base layer id.
-    expect(resolveEnabledIds('["seamarks"]', knownIds)).toEqual(['osm']);
+    expect(resolveEnabledIds(['seamarks'], knownIds)).toEqual(['osm']);
   });
 
   it('clamps an old multi-toggle selection to a single base layer', () => {
-    expect(resolveEnabledIds('["osm","seamarks"]', knownIds)).toEqual(['osm']);
-    expect(resolveEnabledIds('["watercolor","osm"]', knownIds)).toEqual(['watercolor']);
+    expect(resolveEnabledIds(['osm', 'seamarks'], knownIds)).toEqual(['osm']);
+    expect(resolveEnabledIds(['watercolor', 'osm'], knownIds)).toEqual(['watercolor']);
   });
 
   it('keeps a stored single selection', () => {
-    expect(resolveEnabledIds('["watercolor"]', knownIds)).toEqual(['watercolor']);
+    expect(resolveEnabledIds(['watercolor'], knownIds)).toEqual(['watercolor']);
   });
 
   it("round-trips '[]' — the deliberate no-base-layer state while a chart is selected", () => {
-    expect(resolveEnabledIds('[]', knownIds)).toEqual([]);
+    expect(resolveEnabledIds([], knownIds)).toEqual([]);
   });
 
-  it('falls back to the default on corrupt storage', () => {
-    expect(resolveEnabledIds('{not json', knownIds)).toEqual(['osm']);
-    expect(resolveEnabledIds('"osm"', knownIds)).toEqual(['osm']);
+  it('falls back to the default on non-array values (corrupt storage parses to null)', () => {
+    expect(resolveEnabledIds(null, knownIds)).toEqual(['osm']);
+    expect(resolveEnabledIds('osm', knownIds)).toEqual(['osm']);
   });
 });

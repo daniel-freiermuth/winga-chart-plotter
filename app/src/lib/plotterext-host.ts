@@ -8,8 +8,14 @@ import type { SkRelay } from './sk-relay';
 // ── Public interfaces ────────────────────────────────────────────────────────
 
 export interface MapControl {
+  /** Visible area across panes — in split view, the dateline-aware union of both cameras. */
   getView(): { center: [number, number]; zoom: number; bounds: [number, number, number, number] };
+  /**
+   * Compatibility no-op: extensions may not steer the camera (navigation
+   * intent comes from the user). Calls are ignored with a console warning.
+   */
   flyTo(position: [number, number], zoom?: number): void;
+  /** Compatibility no-op — see {@link MapControl.flyTo}. */
   fitBounds(bounds: [number, number, number, number]): void;
 }
 

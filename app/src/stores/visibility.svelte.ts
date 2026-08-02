@@ -1,3 +1,5 @@
+import { loadJSON, saveJSON } from './paneStorage';
+
 const LS_KEY = 'layer-visibility';
 
 export interface VisibilityState {
@@ -18,28 +20,34 @@ const DEFAULTS: VisibilityState = {
   waypoints:     true,
 };
 
-function load(): VisibilityState {
-  try {
-    const s = localStorage.getItem(LS_KEY);
-    if (s) return { ...DEFAULTS, ...(JSON.parse(s) as Partial<VisibilityState>) };
-  } catch { /* ignore */ }
-  return { ...DEFAULTS };
+/** Merges persisted values over the defaults, accepting only booleans for known keys. */
+function load(key: string): VisibilityState {
+  const p = loadJSON(key) as Partial<Record<keyof VisibilityState, unknown>> | null;
+  const out = { ...DEFAULTS };
+  if (p && typeof p === 'object') {
+    for (const k of Object.keys(DEFAULTS) as (keyof VisibilityState)[]) {
+      const v = p[k];
+      if (typeof v === 'boolean') out[k] = v;
+    }
+  }
+  return out;
 }
 
-function createVisibilityStore() {
-  const saved = load();
+/** Per-pane layer visibility toggles. */
+export interface VisibilityStore extends Readonly<VisibilityState> {
+  toggle(key: keyof VisibilityState): void;
+}
+
+/** `lsSuffix` namespaces the localStorage key per pane ('' = primary pane, legacy key). */
+export function createVisibilityStore(lsSuffix = ''): VisibilityStore {
+  const lsKey = LS_KEY + lsSuffix;
+  const saved = load(lsKey);
   let aisVessels    = $state(saved.aisVessels);
   let aisTracks     = $state(saved.aisTracks);
   let aisPredictors = $state(saved.aisPredictors);
   let ownTrack      = $state(saved.ownTrack);
   let routes        = $state(saved.routes);
   let waypoints     = $state(saved.waypoints);
-
-  function persist() {
-    localStorage.setItem(LS_KEY, JSON.stringify(
-      { aisVessels, aisTracks, aisPredictors, ownTrack, routes, waypoints },
-    ));
-  }
 
   return {
     get aisVessels()    { return aisVessels;    },
@@ -56,9 +64,7 @@ function createVisibilityStore() {
       else if (key === 'ownTrack')      { ownTrack      = !ownTrack;      }
       else if (key === 'routes')        { routes        = !routes;        }
       else                              { waypoints     = !waypoints;     }
-      persist();
+      saveJSON(lsKey, { aisVessels, aisTracks, aisPredictors, ownTrack, routes, waypoints });
     },
   };
 }
-
-export const visibility = createVisibilityStore();

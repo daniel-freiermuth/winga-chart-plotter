@@ -8,10 +8,10 @@
   import { vesselState, vesselPosition } from '../stores/vessel';
   import { settings, type SettingsTab } from '../stores/settings.svelte';
   import { fpsStore } from '../stores/fps.svelte';
-  import { followMode, type FollowOffset } from '../stores/follow.svelte';
-  import { rotateMode } from '../stores/rotateMode.svelte';
-  import { charts } from '../stores/charts.svelte';
-  import { baseLayers, BASE_LAYERS } from '../stores/baseLayers.svelte';
+  import type { FollowOffset } from '../stores/follow.svelte';
+  import { charts, type Chart } from '../stores/charts.svelte';
+  import { BASE_LAYERS } from '../stores/baseLayers.svelte';
+  import type { PaneState } from '../stores/pane.svelte';
   import { ais, AIS_HOT_STRIDE, AIS_F_LON, AIS_F_LAT, AIS_F_COG, AIS_F_SOG, AIS_F_ROT, AIS_F_AGE } from '../stores/ais.svelte';
   import type { AisTarget } from '../stores/ais.svelte';
   import { MapboxOverlay } from '@deck.gl/mapbox';
@@ -24,28 +24,48 @@
   import { waypoints } from '../stores/waypoints.svelte';
   import { track } from '../stores/track.svelte';
   import { gcLine, gcBearingDeg, gcDistanceNm } from '../lib/wasmGeo';
-  import { fetchAndResolveStyle } from '../lib/resolveStyle';
+  import { mapStyles } from '../stores/mapStyles.svelte';
   import { auth } from '../stores/auth.svelte';
   import { fetchAisVesselTrack, navigateToPoint, clearCourse, activateRoute, setActiveRoutePointIndex, deleteRoute, saveWaypoint, updateWaypoint, deleteWaypoint } from '../lib/wasmRest';
   import { extrapolatePos } from '../lib/deadReckoning';
   import { SvelteMap, SvelteSet } from 'svelte/reactivity';
-  import { mapView, loadSavedView } from '../stores/mapView.svelte';
-  import { visibility } from '../stores/visibility.svelte';
   import { buildTrackGradient, processTrack, processRouteCoords } from '../lib/trackProcessing';
   import { hexToRgba, dashArray } from '../lib/mapStyles';
+  import { currentSnapTargets } from '../lib/rulerSnap';
+  import FaIcon from '../lib/FaIcon.svelte';
+  import { faLocationCrosshairs, faLayerGroup } from '@fortawesome/free-solid-svg-icons';
   import { buildAisLayers } from '../lib/aisLayerBuilder';
   import { buildCpaLayers, formatCpaLabel, type SkCpaInput } from '../lib/aisCpaLayer';
   import { computeCpa } from '../lib/wasmGeo';
   import { buildOwnVesselLayers, buildCourseLayers } from '../lib/vesselLayers';
-  import ZoomSlider from './ZoomSlider.svelte';
 
   const {
+    pane,
+    fpsOwner = pane.isPrimary,
     openSettings = () => { /* noop */ },
     onMapClick   = () => { /* noop */ },
+    chartPickerOpen = false,
+    onOpenChartPicker = () => { /* noop */ },
   }: {
+    pane: PaneState;
+    /** Whether this pane samples the app-wide FPS metric — exactly one mounted pane owns it (the primary when it is visible, else the solo second pane). */
+    fpsOwner?: boolean;
     openSettings?: (tab: SettingsTab) => void;
     onMapClick?:   () => void;
+    /** Whether the app-level chart picker is currently open for this pane. */
+    chartPickerOpen?: boolean;
+    /** Opens the app-level chart picker targeted at this pane. */
+    onOpenChartPicker?: () => void;
   } = $props();
+
+  // Pane-scoped stores — this component renders exactly one pane's view of the
+  // shared app-level data. Aliased so call sites read naturally.
+  const mapView    = $derived(pane.view);
+  const followMode = $derived(pane.follow);
+  const rotateMode = $derived(pane.rotate);
+  const visibility = $derived(pane.visibility);
+  const baseLayers = $derived(pane.baseLayers);
+  const chartSel   = $derived(pane.chartSel);
 
   const DEFAULT_STYLE: maplibregl.StyleSpecification = {
     version: 8,
@@ -64,14 +84,48 @@
 
   let mapContainer: HTMLDivElement;
   let map = $state.raw<maplibregl.Map | undefined>(undefined);
-  let onFsChange = () => { /* noop */ };
 
-  export function toggleFullscreen() {
-    if (!document.fullscreenElement) {
-      document.documentElement.requestFullscreen().catch(() => { /* noop */ });
-    } else {
-      document.exitFullscreen().catch(() => { /* noop */ });
-    }
+
+  // ── Pane chrome: compass / follow FABs (doubled per pane in split view) ──
+  const NAV_FAB_SIZE = 52; // px
+  let _compassPressTimer: ReturnType<typeof setTimeout> | null = null;
+  let _compassWasLongPress = false;
+  let _compassPressX = 0;
+  let _compassPressY = 0;
+
+  function onCompassPointerDown(e: PointerEvent) {
+    _compassWasLongPress = false;
+    _compassPressX = e.clientX;
+    _compassPressY = e.clientY;
+    _compassPressTimer = setTimeout(() => {
+      _compassWasLongPress = true;
+      _compassPressTimer = null;
+      const vs = get(vesselState);
+      rotateMode.toggleLock(vs.cog !== null, vs.heading !== null, route.nextPoint !== null);
+      if ('vibrate' in navigator) navigator.vibrate(30);
+    }, 500);
+  }
+  function onCompassPointerEnd() {
+    if (_compassPressTimer !== null) { clearTimeout(_compassPressTimer); _compassPressTimer = null; }
+  }
+  function onCompassPointerMove(e: PointerEvent) {
+    if (_compassPressTimer === null) return;
+    const dx = e.clientX - _compassPressX;
+    const dy = e.clientY - _compassPressY;
+    if (dx * dx + dy * dy > (NAV_FAB_SIZE / 2) ** 2) onCompassPointerEnd();
+  }
+  function onCompassClick() {
+    if (_compassWasLongPress) { _compassWasLongPress = false; return; }
+    const vs = get(vesselState);
+    rotateMode.toggle(vs.cog !== null, vs.heading !== null, route.nextPoint !== null);
+  }
+  // Keyboard path for the long-press action — without it, free-rotation lock
+  // would be unreachable for keyboard users (a pointer-only gesture).
+  function onCompassKeyDown(e: KeyboardEvent) {
+    if (e.key !== 'Enter' || !e.shiftKey) return;
+    e.preventDefault();
+    const vs = get(vesselState);
+    rotateMode.toggleLock(vs.cog !== null, vs.heading !== null, route.nextPoint !== null);
   }
 
   // t 0, l 0 -> center
@@ -91,7 +145,7 @@
     };
   }
 
-  export function flyToVessel() {
+  function flyToVessel() {
     if (followMode.following) {
       followMode.offset = null;
       return;
@@ -107,36 +161,6 @@
       _easedLon = inView ? pos.longitude : NaN;
       _easedLat = inView ? pos.latitude  : NaN;
     }
-  }
-  /** Zoom in one step, keeping the vessel at its current screen pixel when following. */
-  function zoomIn() {
-    if (!map) return;
-    if (followMode.following) {
-      const pos = get(vesselState).position;
-      if (pos) {
-        // Mirror zoomIn() behaviour: snap to the next integer zoom level.
-        const snap = map.getZoomSnap() || 1;
-        const target = Math.ceil(map.getZoom() / snap) * snap + snap;
-        map.easeTo({ zoom: target, around: [pos.longitude, pos.latitude] });
-        return;
-      }
-    }
-    map.zoomIn();
-  }
-
-  /** Zoom out one step, keeping the vessel at its current screen pixel when following. */
-  function zoomOut() {
-    if (!map) return;
-    if (followMode.following) {
-      const pos = get(vesselState).position;
-      if (pos) {
-        const snap = map.getZoomSnap() || 1;
-        const target = Math.floor(map.getZoom() / snap) * snap - snap;
-        map.easeTo({ zoom: target, around: [pos.longitude, pos.latitude] });
-        return;
-      }
-    }
-    map.zoomOut();
   }
 
   let mapLoaded     = $state(false);
@@ -278,7 +302,13 @@
   // The MapLibre style URL currently loaded as the map base (null = default OSM style).
   // Not $state — only read inside the $effect, never rendered.
   let activeStyleUrl: string | null = null;
-
+  // The injected-chart-source URL rendered with the current style. Diffed
+  // separately from activeStyleUrl: the pane's WMTS layer choice can change
+  // this while the base style stays the same.
+  let activeStyleChartUrl: string | null = null;
+  // Source names injected into the current style — targets for in-place tile
+  // updates when only the layer choice changes.
+  let injectedStyleSources: string[] = [];
 
   /** Return the current map view for extension host API. */
   export function getView(): { center: [number, number]; zoom: number; bounds: [number, number, number, number] } {
@@ -292,19 +322,9 @@
     };
   }
 
-  /** Fly to a position, optionally changing zoom. Used by extension map.center. */
-  export function flyTo(position: [number, number], zoom?: number): void {
-    map?.flyTo({ center: position, ...(zoom !== undefined ? { zoom } : {}) });
-  }
-
   /** Close any open MapLibre popup (e.g. before opening a settings panel). */
   export function closePopup(): void { activePopup?.remove(); }
 
-
-  /** Fit the map to a bounding box [west, south, east, north]. Used by extension map.fitBounds. */
-  export function fitBounds(bounds: [number, number, number, number]): void {
-    map?.fitBounds([[bounds[0], bounds[1]], [bounds[2], bounds[3]]], { padding: 20 });
-  }
 
   /** Add a new ruler in the lower third of the screen, endpoints ¼ screen-width apart. */
   export function addRuler() {
@@ -723,8 +743,9 @@
     let lng = coord.lng, lat = coord.lat;
     let snapId: string | undefined;
     if (target.drag.snapsToTargets) {
+      const snapTargets = currentSnapTargets();
       // Own vessel has priority: snap to it first if within radius.
-      const own = liveSnapTargets.find(t => t.id === 'own-vessel');
+      const own = snapTargets.find(t => t.id === 'own-vessel');
       if (own) {
         const pt = map!.project([own.position.longitude, own.position.latitude]);
         if (Math.hypot(pt.x - x, pt.y - y) < RULER_SNAP_PX) {
@@ -734,7 +755,7 @@
       // Otherwise snap to the nearest AIS target within radius.
       if (!snapId) {
         let bestDist = RULER_SNAP_PX;
-        for (const t of liveSnapTargets) {
+        for (const t of snapTargets) {
           if (t.id === 'own-vessel') continue;
           const pt = map!.project([t.position.longitude, t.position.latitude]);
           const d = Math.hypot(pt.x - x, pt.y - y);
@@ -757,21 +778,12 @@
   // Snap threshold in pixels.
   const RULER_SNAP_PX = 24;
 
-  // Ghost positions updated each rAF — dead-reckoned (lon, lat) keyed by AIS target id.
-  // Used for ruler snap so endpoints follow the animated ghost, not last-known position.
-  let liveSnapTargets: { id: string; position: { longitude: number; latitude: number } }[] = [];
 
   let overlay: MapboxOverlay | null = null;
-  // Typed-array snapshots of the last AIS data batch — used by rafTick for ruler snap.
+  // Typed-array snapshots of the last AIS data batch — used by rafTick
+  // dead-reckoning (CPA ring, DR anchor).
   let aisHotSnapshot: Float64Array | null = null;
-  let aisIdsSnapshot: string[] = [];
   let aisUploadTimestamp = 0;
-  // Reference to the last hotData array seen by the AIS deck.gl $effect.
-  // Used to detect whether the effect was triggered by new WS data (hotData changed)
-  // or by a cold-data-only change (e.g. setInfoCache every 3 min). Only update
-  // aisUploadTimestamp when hotData actually changes — otherwise dead-reckoned
-  // vessel positions snap backwards each time vessel info is refreshed.
-  let _lastAisHotData: Float64Array | null = null;
   // Layer groups composed into overlay.setProps():
   //   aisLayerGroup     — rebuilt on each AIS data batch
   //   aisRingLayerGroup — highlight ring rebuilt every rAF tick (tracks DR position at frame rate)
@@ -814,16 +826,15 @@
   });
 
   onMount(() => {
-    mapView.isFullscreen = !!document.fullscreenElement;
-    // Seed the camera from the last-persisted view instead of a hardcoded fallback (Oslo is
-    // only used the very first time the app ever runs — see loadSavedView()).
-    const savedView = loadSavedView();
+    // Seed the camera from the pane's persisted view (Oslo is only used the
+    // very first time the app ever runs — see the mapView store).
     map = new maplibregl.Map({
       container: mapContainer,
       style: DEFAULT_STYLE,
-      center: savedView.center,
-      zoom: savedView.zoom,
-      bearing: savedView.bearing,
+      center: mapView.center,
+      zoom: mapView.zoom,
+      bearing: mapView.bearing,
+      pitch: mapView.pitch,
       maxPitch: 85,
       bearingSnap: 0,
       attributionControl: false,
@@ -881,19 +892,22 @@
     // MapLibre v5's camera matrices — MapboxOverlay works without additional configuration.
     // Do NOT pass a custom `views` prop; let getDeckInstance choose GlobeView or MapView.
     //
-    // cullMode:'none' — getDefaultParameters adds cullMode:'back' in globe mode to cull
-    // far-hemisphere geometry. However, the IconLayer's billboard:false path applies a
-    // pixelOffset.y flip before the globe orientation matrix, resulting in CW (back-face)
-    // winding in screen space — culled invisible. We override to 'none' to keep all
-    // overlay layers visible. Far-hemisphere hull/icon artifacts are handled by the
-    // per-vertex hemisphere discard in VesselMorphLayer/VesselIconLayer instead.
+    // NOTE on culling: since deck.gl 9.3.3, GlobeView injects a view-level
+    // default `cullMode: 'back'` that OVERRIDES the overlay-level parameters
+    // below (merge order: deck.props < view.props < layer.props), so cullMode
+    // must be handled per layer. Our custom vessel layers render correctly
+    // under it — their geometry is CCW by construction (see triangleWinding.ts)
+    // and the culling hides the far hemisphere. deck's own TextLayer billboard
+    // quads however come out CW under the globe orientation matrix and need a
+    // per-layer cullMode:'none' (see the ruler/planner label layers).
     overlay = new MapboxOverlay({
       layers: [],
       interleaved: false,
       // depthCompare:'always' — our layers (hull + icon) occupy nearly identical depths so
       // depth testing causes z-fighting. We draw in painter's order and don't need occlusion
       // between our own layers. In non-interleaved mode this only affects deck.gl's canvas.
-      parameters: { depthCompare: 'always', cullMode: 'none' },
+      // (Still effective: GlobeView's view-level default only sets cullMode.)
+      parameters: { depthCompare: 'always' },
     });
     map.addControl(overlay);
     // Flush any AIS layers that were built before the overlay was ready.
@@ -903,13 +917,16 @@
     // AIS layers are self-animating — no setProps() from here for them.
     function rafTick() {
       // Measure actual FPS using a rolling window of frame timestamps.
-      const now = performance.now();
-      _fpsSamples.push(now);
-      const cutoff = now - 3000;
-      while (_fpsSamples.length > 2 && _fpsSamples[0]! < cutoff) _fpsSamples.shift();
-      if (_fpsSamples.length >= 2) {
-        const span = _fpsSamples[_fpsSamples.length - 1]! - _fpsSamples[0]!;
-        fpsStore.set((_fpsSamples.length - 1) / (span / 1000));
+      // One FPS metric for the app — sampled by the designated owner pane.
+      if (fpsOwner) {
+        const now = performance.now();
+        _fpsSamples.push(now);
+        const cutoff = now - 3000;
+        while (_fpsSamples.length > 2 && _fpsSamples[0]! < cutoff) _fpsSamples.shift();
+        if (_fpsSamples.length >= 2) {
+          const span = _fpsSamples[_fpsSamples.length - 1]! - _fpsSamples[0]!;
+          fpsStore.set((_fpsSamples.length - 1) / (span / 1000));
+        }
       }
 
       if (overlay !== null) {
@@ -920,38 +937,9 @@
         // AIS layers are self-animating (no setProps needed from here for them).
         const currentRulers = rulers.rulers;
 
-        // Build live snap targets only when there are active rulers to snap to.
-        // For moving vessels: two snap points — last-known (id) and dead-reckoned (id+':ghost').
-        // For stationary vessels: one snap point at last-known position.
-        // Own vessel always included.
+        // (Live snap targets + rulers.syncSnapped are app-level — see
+        // lib/rulerSnap.ts; panes only render the shared ruler state.)
         if (currentRulers.length > 0) {
-          const nowForSnap = nowMs;
-          const ownPosForSnap = get(vesselState).position;
-          const snapPts: typeof liveSnapTargets = [];
-          const S = AIS_HOT_STRIDE;
-          if (aisHotSnapshot && aisIdsSnapshot.length > 0) {
-            const hd = aisHotSnapshot;
-            const ids = aisIdsSnapshot;
-            const n = ids.length;
-            for (let i = 0; i < n; i++) {
-              const lon = hd[i * S + AIS_F_LON]!;
-              const lat = hd[i * S + AIS_F_LAT]!;
-              snapPts.push({ id: ids[i]!, position: { longitude: lon, latitude: lat } });
-              const cog = hd[i * S + AIS_F_COG]!;
-              const sog = hd[i * S + AIS_F_SOG]!;
-              if (!isNaN(cog) && !isNaN(sog)) {
-                const rot = hd[i * S + AIS_F_ROT]!;
-                const lastPosMs = aisUploadTimestamp - hd[i * S + AIS_F_AGE]! * 1000;
-                const [gLon, gLat] = extrapolatePos(lon, lat, cog, sog, isNaN(rot) ? 0 : rot, lastPosMs, nowForSnap);
-                snapPts.push({ id: `${String(ids[i])}:ghost`, position: { longitude: gLon, latitude: gLat } });
-              }
-            }
-          }
-          if (ownPosForSnap) {
-            snapPts.push({ id: 'own-vessel', position: { longitude: ownPosForSnap.longitude, latitude: ownPosForSnap.latitude } });
-          }
-          liveSnapTargets = snapPts;
-          rulers.syncSnapped(liveSnapTargets);
 
           // --- Ruler layers ---
           interface HandleDatum { rulerId: string; endpoint: 'a' | 'b'; lon: number; lat: number; snapId?: string | undefined }
@@ -1039,6 +1027,10 @@
               fontFamily: 'monospace',
               characterSet: Array.from('ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 °·.,\'-/T'),
               pickable: true,
+              // TextLayer billboard quads wind CW under GlobeView's orientation
+              // matrix; the view-level default cullMode:'back' (deck ≥9.3.3)
+              // would cull the label invisible under globe projection.
+              parameters: { cullMode: 'none' },
               updateTriggers: { getText: [currentRulers], getPosition: [currentRulers] },
             }),
           ];
@@ -1130,6 +1122,8 @@
                 fontFamily: 'monospace',
                 characterSet: Array.from('0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz °·.,\'-/TN'),
                 pickable: false,
+                // Same globe-culling escape as ruler-labels above.
+                parameters: { cullMode: 'none' },
                 updateTriggers: { getText: [wpts], getPosition: [wpts] },
               }),
             ];
@@ -1213,18 +1207,6 @@
     mapContainer.addEventListener('pointerup',     onPointerUp,     { capture: true });
     mapContainer.addEventListener('pointercancel', onPointerCancel, { capture: true });
 
-    onFsChange = () => {
-      mapView.isFullscreen = !!document.fullscreenElement;
-      if (!document.fullscreenElement) {
-        // When the browser exits fullscreen and re-shows its chrome, the <html>
-        // element's scrollTop is left non-zero — the page shifts up by the height
-        // of the re-appeared address bar, leaving a white gap at the bottom.
-        // Reset it immediately; MapLibre's ResizeObserver handles canvas resize.
-        window.scrollTo(0, 0);
-      }
-    };
-    document.addEventListener('fullscreenchange', onFsChange);
-
     map.on('zoom',   () => { mapZoom    = map?.getZoom()    ?? mapZoom; });
     map.on('rotate', () => { mapView.updateBearing(map?.getBearing() ?? mapView.bearing); });
     // Track user interactions so programmatic easeTo calls don't interrupt gestures.
@@ -1249,7 +1231,7 @@
           }
         }
       }
-      if (map) { const c = map.getCenter(); mapView.syncView([c.lng, c.lat], map.getZoom(), map.getBearing()); }
+      if (map) { const c = map.getCenter(); mapView.syncView([c.lng, c.lat], map.getZoom(), map.getBearing(), map.getPitch()); }
     });
 
     // Cursor feedback for interactive MapLibre layers. The route-full/-leg/-bearing
@@ -1530,8 +1512,8 @@
   onDestroy(() => {
     cancelAnimationFrame(rafId);
     clearTimeout(rafId);
+    if (_compassPressTimer !== null) { clearTimeout(_compassPressTimer); _compassPressTimer = null; }
     overlay?.finalize();
-    document.removeEventListener('fullscreenchange', onFsChange);
     mapContainer.removeEventListener('pointerdown',   onPointerDown,   { capture: true });
     mapContainer.removeEventListener('pointermove',   onPointerMove,   { capture: true });
     mapContainer.removeEventListener('pointerup',     onPointerUp,     { capture: true });
@@ -2052,65 +2034,129 @@
   }
 
 
+  // ── Effective style-chart render spec ────────────────────────────────────
+  // ONE derivation folds in EVERY input that affects how this pane renders a
+  // style-based chart: chart selection, catalog resolution state, and the
+  // pane's WMTS layer choice. The effect below diffs SPEC FIELDS (styleUrl,
+  // chartUrl) — never raw inputs — so a new input cannot end up read inside
+  // only one guarded branch and silently bypass change detection (the bug
+  // class where a pane layer switch didn't reach style-based charts).
+  interface StyleChartSpec { chart: Chart; styleUrl: string; chartUrl: string | null }
+  const styleChartSpec = $derived.by((): StyleChartSpec | null => {
+    const sel = chartSel.selected;
+    // Find the first selected chart that provides a full MapLibre style.
+    const styleChart = Object.values(charts.available).find(c => sel.has(c.identifier) && !!c.style);
+    if (!styleChart) return null;
+    const styleUrl = charts.styleUrl(styleChart);
+    if (!styleUrl) return null;
+    return {
+      chart: styleChart,
+      styleUrl,
+      chartUrl: charts.tileUrl(styleChart, chartSel.getLayerSel(styleChart.identifier) || undefined) || null,
+    };
+  });
+
+  /**
+   * Injects the pane's chart tile source into a resolved style for any layer
+   * source the style references but doesn't define. This means:
+   *   - style has sources.enc → use it (tile URL from style.json)
+   *   - style lacks sources.enc but chart.url is set → inject from SK
+   *   - both set → both exist (style wins for enc, SK url fills gaps)
+   * Records the injected names for later in-place WMTS layer switches.
+   * Clones the input before touching it — the mapStyles cache is shared
+   * across panes and thumbnails and must stay pristine, and MapLibre mutates
+   * styles it is handed. Cloning is this function's contract so no call site
+   * can forget it.
+   */
+  function injectChartSource(style: maplibregl.StyleSpecification, spec: StyleChartSpec): maplibregl.StyleSpecification {
+    const cloned = structuredClone(style);
+    if (!spec.chartUrl) return cloned;
+    const sources = cloned.sources;
+    const definedSources = new Set(Object.keys(sources));
+    const referencedSources = new Set(
+      cloned.layers
+        .map((l: maplibregl.LayerSpecification) => ('source' in l ? l.source : undefined))
+        .filter((s): s is string => typeof s === 'string')
+    );
+    for (const src of referencedSources) {
+      if (!definedSources.has(src)) {
+        sources[src] = {
+          type: 'vector',
+          tiles: [spec.chartUrl],
+          minzoom: spec.chart.minzoom ?? 0,
+          maxzoom: spec.chart.maxzoom ?? 22,
+        };
+        injectedStyleSources.push(src);
+      }
+    }
+    return cloned;
+  }
+
   $effect(() => {
     if (!map || !mapLoaded) return;
     const m   = map;
-    const sel = charts.selected;
+    const sel = chartSel.selected;
     const avail = charts.available;
 
-    // Find the first selected chart that provides a full MapLibre style.
-    const styleChart = Object.values(avail).find(c => sel.has(c.identifier) && !!c.style);
-    const newStyleUrl = styleChart ? charts.styleUrl(styleChart) : null;
+    const spec = styleChartSpec;
+    const newStyleUrl = spec?.styleUrl ?? null;
 
-    // If the base style needs to change, call setStyle() and wait for style.load to retrigger us.
+    // If the base style needs to change, apply it and wait for style.load to
+    // retrigger us. Style JSON is resolved by the app-level mapStyles store
+    // (shared and deduplicated across panes; owns loading/error state and
+    // retry pacing) — application here is synchronous, so a superseded switch
+    // simply never applies and no async race exists.
     if (newStyleUrl !== activeStyleUrl) {
-      mapLoaded = false;
-      chartSourceUrls.clear();
-      activeStyleUrl = newStyleUrl;
-      if (newStyleUrl) {
-        const chartUrl = styleChart ? (charts.tileUrl(styleChart) || null) : null;
-        fetchAndResolveStyle(newStyleUrl)
-          .then(resolved => {
-            // If chart.url is available, inject it as a source for any layer
-            // whose source is not already defined in the style. This means:
-            //   - style has sources.enc → use it (tile URL from style.json)
-            //   - style lacks sources.enc but chart.url is set → inject from SK
-            //   - both set → both exist (style wins for enc, SK url fills gaps)
-            if (chartUrl) {
-              const spec = resolved as maplibregl.StyleSpecification;
-              const sources = spec.sources;
-              const definedSources = new Set(Object.keys(sources));
-              const referencedSources = new Set(
-                spec.layers
-                  .map((l: maplibregl.LayerSpecification) => ('source' in l ? l.source : undefined))
-                  .filter((s): s is string => typeof s === 'string')
-              );
-              for (const src of referencedSources) {
-                if (!definedSources.has(src)) {
-                  sources[src] = {
-                    type: 'vector',
-                    tiles: [chartUrl],
-                    minzoom: styleChart?.minzoom ?? 0,
-                    maxzoom: styleChart?.maxzoom ?? 22,
-                  };
-                }
-              }
-              spec.sources = sources;
-            }
-            m.setStyle(resolved as maplibregl.StyleSpecification, { diff: false });
-          })
-          .catch((e: unknown) => {
-            console.error('[map] Failed to load style', newStyleUrl, e);
-            // setStyle() was never called, so the map's previous style is still intact.
-            // Reset both flags so the effect can retry on next trigger (e.g. chart still
-            // selected → effect re-runs because mapLoaded flipped back to true).
-            activeStyleUrl = null;
-            mapLoaded = true;
-          });
+      if (spec) {
+        const res = mapStyles.resolve(spec.styleUrl);
+        // loading: keep the previous style; this effect re-runs when the
+        // store updates. error: ditto — the store re-admits the URL after its
+        // retry delay, which re-triggers this effect for a paced retry.
+        if (res.status !== 'resolved') return;
+        mapLoaded = false;
+        chartSourceUrls.clear();
+        activeStyleUrl = newStyleUrl;
+        activeStyleChartUrl = spec.chartUrl;
+        injectedStyleSources = [];
+        m.setStyle(injectChartSource(res.style, spec), { diff: false });
       } else {
+        mapLoaded = false;
+        chartSourceUrls.clear();
+        activeStyleUrl = null;
+        activeStyleChartUrl = null;
+        injectedStyleSources = [];
         m.setStyle(DEFAULT_STYLE, { diff: false });
       }
       return;
+    }
+
+    // Same base style, different injected-chart URL — the pane switched WMTS
+    // layer. Update the injected sources' tiles in place; no style reload.
+    if (spec && spec.chartUrl !== activeStyleChartUrl) {
+      const hadUrl = activeStyleChartUrl !== null;
+      if (spec.chartUrl === null) {
+        activeStyleChartUrl = null;
+      } else if (!hadUrl) {
+        // The style was applied before the WMTS tile URL resolved (chartUrl
+        // was null), so injectChartSource had nothing to inject and setTiles
+        // has nothing to update — reapply the style with the source injected.
+        // activeStyleChartUrl is committed only on success: an unresolved
+        // style keeps the mismatch, so the store's next update retries here.
+        const res = mapStyles.resolve(spec.styleUrl);
+        if (res.status !== 'resolved') return;
+        activeStyleChartUrl = spec.chartUrl;
+        mapLoaded = false;
+        chartSourceUrls.clear();
+        injectedStyleSources = [];
+        m.setStyle(injectChartSource(res.style, spec), { diff: false });
+        return;
+      } else {
+        activeStyleChartUrl = spec.chartUrl;
+        for (const name of injectedStyleSources) {
+          const src = m.getSource(name);
+          if (src && 'setTiles' in src) (src as maplibregl.VectorTileSource).setTiles([spec.chartUrl]);
+        }
+      }
     }
 
     // Remove deselected tile-based chart layers.
@@ -2127,7 +2173,7 @@
     // Add newly selected tile-based chart layers (style-based charts are handled by setStyle).
     for (const [id, chart] of Object.entries(avail)) {
       if (!sel.has(id) || chart.style) continue;
-      const tileUrl  = charts.tileUrl(chart);
+      const tileUrl  = charts.tileUrl(chart, chartSel.getLayerSel(id) || undefined);
       if (!tileUrl) continue;
       const sourceId = `chart-${id}`;
       const layerId  = `chart-layer-${id}`;
@@ -2283,27 +2329,22 @@
     void ais.coldVersion; // register reactive dependency on cold data changes
     const now = Date.now();
 
-    // Only advance the upload timestamp when hotData itself changed (new WS batch).
-    // Cold-only updates (e.g. setInfoCache) must reuse the existing timestamp so that
-    // dead-reckoned ghost vessels don't snap back to their stored position.
-    const hotDataChanged = hotData !== _lastAisHotData;
-    _lastAisHotData = hotData;
-    const uploadTs = hotDataChanged ? now : (aisUploadTimestamp || now);
+    // The upload timestamp comes from the AIS store — set exactly when a WS
+    // batch arrives, so cold-only re-runs (e.g. setInfoCache) reuse the batch
+    // timestamp and dead-reckoned ghosts don't snap back.
+    const uploadTs = ais.uploadTimestamp || now;
 
     if (!hotData || ids.length === 0) {
       aisLayerGroup = [];
       flushLayers();
       aisHotSnapshot     = null;
-      aisIdsSnapshot     = [];
       aisUploadTimestamp = 0;
-      _lastAisHotData    = null;
       return;
     }
 
-    // Snapshot for rafTick dead-reckoning (ruler snap).
+    // Snapshot for rafTick dead-reckoning (CPA ring, DR anchor).
     aisHotSnapshot = hotData;
-    aisIdsSnapshot = ids;
-    if (hotDataChanged) aisUploadTimestamp = now;
+    aisUploadTimestamp = uploadTs;
 
     aisLayerGroup = buildAisLayers(hotData, ids, coldMap, settings.appearance.ais, uploadTs, settings.targetFps, ais.selectedIndex);
     flushLayers();
@@ -2930,9 +2971,11 @@
         // screen position. `around` triggers _calcMatrices → calcMatrices → _calcMatrices
         // infinite recursion in MapLibre's globe projection; center+offset uses
         // the same code path as the follow-mode effect and has no such issue.
+        const off = followMode.offset;
+        if (!off) return; // follow dropped mid-gesture (vessel left the viewport)
         const W   = mapContainer.clientWidth;
         const H   = mapContainer.clientHeight;
-        const offset: [number, number] = [followMode.offset!.left * W / 2, followMode.offset!.top * H / 2];
+        const offset: [number, number] = [off.left * W / 2, off.top * H / 2];
 
         map.easeTo({
           zoom:    newZoom,
@@ -3021,7 +3064,7 @@
     const state = $vesselState;
     const pos = state.position;
     const rm = rotateMode.mode;
-    const following = followMode.following;
+    const off = followMode.offset; // null = not following (or the pin was just dropped)
 
     // Compute target bearing.
     let bearing: number | undefined;
@@ -3036,12 +3079,12 @@
     if (posChanged) { _easedLon = pos.longitude; _easedLat = pos.latitude; }
     _lastRm = rm;
 
-    if (pos && following) {
+    if (pos && off) {
       const W = mapContainer.clientWidth;
       const H = mapContainer.clientHeight;
       const offset : [number, number] = [
-        followMode.offset!.left * W/2,
-        followMode.offset!.top * H/2,
+        off.left * W/2,
+        off.top * H/2,
       ];
       if (!_isInteracting && !_touchActive && (posChanged || rmChanged || rm === 'heading' || rm === 'cog')) {
         const center = map.getCenter();
@@ -3069,7 +3112,6 @@
   //     Uses rAF accumulation so rapid scroll events batch into a single easeTo per frame,
   //     matching MapLibre's native speed and feel. Two-finger trackpad scroll generates
   //     wheel events too, so this path covers it automatically.
-  //   - Zoom slider and keyboard call zoomIn/Out (anchor-aware); zoomend re-anchors all others.
   //     Touch pinch and keyboard zoom are handled by a `zoomend` listener that re-anchors
   //     the vessel to its pinned screen pixel (guarded: no re-anchor during active gestures).
   //   - Rotation (right-click drag, two-finger rotate) remains active throughout.
@@ -3123,46 +3165,113 @@
         // Use zoomTarget as base so rapid scroll accumulates correctly even while
         // a previous easeTo animation is still in flight.
         zoomTarget = (zoomTarget ?? map.getZoom()) + Math.log2(scale);
+        const off = followMode.offset;
+        if (!off) return; // follow dropped before this frame ran
         const W = mapContainer.clientWidth;
         const H = mapContainer.clientHeight;
-        const offset: [number, number] = [followMode.offset!.left * W / 2, followMode.offset!.top * H / 2];
+        const offset: [number, number] = [off.left * W / 2, off.top * H / 2];
         map.easeTo({ zoom: zoomTarget, center: [pos.longitude, pos.latitude], offset, duration: 0 });
       });
     }
 
-    // After any external zoom (scroll wheel, double-click, gesture), re-anchor
-    // the vessel to its pinned screen pixel.
+    // After any external zoom (scroll wheel, double-click, gesture) OR a pane
+    // resize (divider drag, orientation flip, split toggle, window resize),
+    // re-anchor the vessel to its pinned viewport fraction. MapLibre's resize
+    // preserves the geographic CENTER, not our pin — without this, a drastic
+    // shrink leaves the vessel at the old pixel displacement, possibly outside
+    // the pane, until the next position/zoom trigger.
     // Re-entry guard: in globe projection easeTo({ center, offset }) internally
     // adjusts zoom to compensate for globe curvature at the new latitude, which
     // fires another zoomend → infinite recursion without this flag.
     let reanchoring = false;
-    function onZoomEnd(): void {
+    function reanchorToPin(): void {
       if (scrollTimer !== null) return; // our own scroll animation is still active
       if (reanchoring) return;
       if (_isInteracting) return;       // user is mid-gesture (pinch-zoom); don't fight it
       const pos = get(vesselState).position;
       if (!pos || !map) return;
+      const off = followMode.offset;
+      if (!off) return; // follow was dropped before this queued event ran
       const W = mapContainer.clientWidth;
       const H = mapContainer.clientHeight;
-      const offset: [number, number] = [followMode.offset!.left * W / 2, followMode.offset!.top * H / 2];
+      const offset: [number, number] = [off.left * W / 2, off.top * H / 2];
       reanchoring = true;
       map.easeTo({ center: [pos.longitude, pos.latitude], offset, duration: 0 });
       reanchoring = false;
     }
 
     mapContainer.addEventListener('wheel', onWheel, { passive: false });
-    map.on('zoomend', onZoomEnd);
+    map.on('zoomend', reanchorToPin);
+    map.on('resize', reanchorToPin);
 
     return () => {
       mapContainer.removeEventListener('wheel', onWheel);
-      map?.off('zoomend', onZoomEnd);
+      map?.off('zoomend', reanchorToPin);
+      map?.off('resize', reanchorToPin);
       if (wheelRaf   !== null) cancelAnimationFrame(wheelRaf);
       if (scrollTimer !== null) clearTimeout(scrollTimer);
     };
   });
 </script>
 
-<div bind:this={mapContainer} style="width: 100%; height: 100%;"></div>
+<div class="map-pane">
+  <div bind:this={mapContainer} style="width: 100%; height: 100%;"></div>
+
+  <!-- Pane chrome: compass (top) → pin → layers (bottom), bottom-left corner.
+       Inside the pane so each pane carries its own controls in split view. -->
+  <div class="nav-stack" style="--nav-fab-size: {NAV_FAB_SIZE}px">
+    <!-- Compass: tap cycles auto modes, long-press toggles free rotation -->
+    <button
+      class="nav-fab compass-fab"
+      class:compass-fab--free={rotateMode.mode === 'manual'}
+      title={rotateMode.mode === 'manual'
+        ? 'Free rotation — tap to re-engage, hold or Shift+Enter to lock'
+        : `Rotation: ${rotateMode.label} — tap to cycle, hold or Shift+Enter for free`}
+      aria-label="Rotation mode: {rotateMode.compassLabel} — Shift+Enter toggles free rotation"
+      onpointerdown={onCompassPointerDown}
+      onpointermove={onCompassPointerMove}
+      onpointerup={onCompassPointerEnd}
+      onpointercancel={onCompassPointerEnd}
+      onpointerleave={onCompassPointerEnd}
+      onkeydown={onCompassKeyDown}
+      onclick={onCompassClick}
+    >
+      <svg width={NAV_FAB_SIZE} height={NAV_FAB_SIZE} viewBox="0 0 44 44" aria-hidden="true">
+        <circle cx="22" cy="22" r="21"
+          fill="rgba(0,0,0,0.72)"
+          stroke={rotateMode.mode === 'manual' ? '#f59e0b' : 'rgba(255,255,255,0.18)'}
+          stroke-width="1.5"/>
+        <!-- Rotating needle always points true North; label rotates with it -->
+        <g transform="rotate({-mapView.bearing}, 22, 22)">
+          <polygon points="22,5 17,23 22,20 27,23" fill="#e53e3e"/>
+          <polygon points="22,39 17,21 22,24 27,21" fill="rgba(200,200,200,0.75)"/>
+          <circle cx="22" cy="22" r="6" fill="rgba(0,0,0,0.75)"/>
+          <text x="22" y="22" text-anchor="middle" dominant-baseline="middle"
+            font-size="12" font-family="system-ui,sans-serif" font-weight="700"
+            fill={rotateMode.mode === 'manual' ? '#f59e0b' : 'white'}
+          >{rotateMode.compassLabel}</text>
+        </g>
+      </svg>
+    </button>
+
+    <!-- Position pin -->
+    <button
+      class="nav-fab"
+      class:nav-fab--active={followMode.following}
+      title={followMode.following ? 'Stop following vessel' : 'Follow vessel'}
+      disabled={!followMode.following && !$vesselState.position}
+      onclick={flyToVessel}
+    ><FaIcon icon={faLocationCrosshairs} /></button>
+
+    <!-- Chart &amp; layer picker -->
+    <button
+      class="nav-fab"
+      class:nav-fab--open={chartPickerOpen}
+      title="Charts &amp; layers"
+      onclick={onOpenChartPicker}
+    ><FaIcon icon={faLayerGroup} /></button>
+  </div>
+</div>
 
 {#if movingWaypoint}
   <div class="move-waypoint-hint">
@@ -3170,9 +3279,6 @@
     <button onclick={() => { movingWaypoint = null; mapContainer.style.cursor = ''; }}>Cancel</button>
   </div>
 {/if}
-
-
-<ZoomSlider map={map} zoom={mapZoom} onZoomIn={zoomIn} onZoomOut={zoomOut} />
 
 {#if rulerPopup}
 <div
@@ -3432,4 +3538,53 @@
     padding-left: 84px !important;
   }
 
+
+  .map-pane {
+    position: relative;
+    width: 100%;
+    height: 100%;
+  }
+
+  .nav-stack {
+    position: absolute;
+    bottom: 20px;
+    left: 16px;
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .nav-fab {
+    width: var(--nav-fab-size);
+    height: var(--nav-fab-size);
+    border-radius: 50%;
+    border: 1.5px solid rgba(255,255,255,0.18);
+    background: rgba(0,0,0,0.72);
+    color: white;
+    font-size: 20px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.45);
+    transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
+    padding: 0;
+  }
+  .nav-fab:disabled              { opacity: 0.35; cursor: default; }
+  .nav-fab--active               { background: rgba(255,255,255,0.9); color: #111827; border-color: rgba(255,255,255,0.9); }
+  .nav-fab--open                 { background: rgba(76,201,240,0.15); box-shadow: 0 0 0 2px #4cc9f0, 0 2px 12px rgba(0,0,0,0.45); }
+  @media (hover: hover) and (pointer: fine) {
+    .nav-fab:hover:not(:disabled)         { background: rgba(40,40,80,0.9); }
+    .nav-fab--active:hover:not(:disabled) { background: rgba(220,220,240,0.95); }
+    .nav-fab--open:hover                  { background: rgba(76,201,240,0.25); }
+  }
+  .nav-fab:active:not(:disabled) { transform: scale(0.94); }
+
+  /* Compass FAB: the SVG renders its own circle; the button wrapper is transparent. */
+  .compass-fab { background: none; border: none; box-shadow: none; padding: 0; }
+  @media (hover: hover) and (pointer: fine) {
+    .compass-fab:hover svg { filter: brightness(1.25); }
+  }
+  .compass-fab:active { transform: scale(0.94); }
 </style>

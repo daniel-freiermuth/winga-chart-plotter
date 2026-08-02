@@ -12,16 +12,16 @@ importers:
   .:
     dependencies:
       '@deck.gl/core':
-        specifier: ^9.1.0
+        specifier: ^9.3.7
         version: 9.3.7(patch_hash=c50f0d23d65b57d8deabafb54c5fe00256762072b51c4230617e713b7d5f2f7b)
       '@deck.gl/extensions':
-        specifier: ^9.3.2
+        specifier: ^9.3.7
         version: 9.3.7(@deck.gl/core@9.3.7(patch_hash=c50f0d23d65b57d8deabafb54c5fe00256762072b51c4230617e713b7d5f2f7b))(@luma.gl/core@9.3.6)(@luma.gl/engine@9.3.6(@luma.gl/core@9.3.6)(@luma.gl/shadertools@9.3.6(@luma.gl/core@9.3.6)))
       '@deck.gl/layers':
-        specifier: ^9.1.0
+        specifier: ^9.3.7
         version: 9.3.7(@deck.gl/core@9.3.7(patch_hash=c50f0d23d65b57d8deabafb54c5fe00256762072b51c4230617e713b7d5f2f7b))(@loaders.gl/core@4.4.3)(@luma.gl/core@9.3.6)(@luma.gl/engine@9.3.6(@luma.gl/core@9.3.6)(@luma.gl/shadertools@9.3.6(@luma.gl/core@9.3.6)))
       '@deck.gl/mapbox':
-        specifier: ^9.1.0
+        specifier: ^9.3.7
         version: 9.3.7(@deck.gl/core@9.3.7(patch_hash=c50f0d23d65b57d8deabafb54c5fe00256762072b51c4230617e713b7d5f2f7b))(@luma.gl/core@9.3.6)(@math.gl/web-mercator@4.1.0)
       '@fortawesome/fontawesome-svg-core':
         specifier: ^7.2.0

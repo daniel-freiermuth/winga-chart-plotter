@@ -273,6 +273,60 @@ If sources multiply, extract a source-selector/merger layer that receives all so
 
 ---
 
+### ADR-010: Split/dual-pane view — app vs. pane state boundary
+
+**Decision:** The screen can split along the longer viewport edge into two
+independent chart panes. The draggable divider is the only split control: it
+parks at the collapsed pane's screen edge and doubles as the drawer handle
+that opens the split. The split forced an explicit state boundary, now
+load-bearing across the whole frontend:
+
+**Litmus test:** *data about the world* (has lon/lat) is app-level and shared;
+*a way of looking at the world* (camera params, screen px) is pane-level and
+replicated.
+
+- **App (singletons):** Signal K connection/worker, AIS, own vessel, routes,
+  waypoints, tracks, rulers (geographic data — rendered in both panes), MOB,
+  settings, widgets, extensions, chart *catalog* (incl. WMTS resolution).
+- **Pane (×2, `stores/pane.svelte.ts` → `PaneState`):** camera + projection
+  (`view`), chart *selection* (`chartSel`), base layers, layer visibility,
+  rotation mode, vessel follow/pinning. Created by store factories taking an
+  `lsSuffix`; pane 0 keeps the legacy un-suffixed localStorage keys (zero
+  migration), pane 1 uses `:1`-suffixed keys. Both panes exist eagerly. A pane
+  is rendered while the layout mounts it (`split`, or the matching solo
+  layout), and a pane without a persisted camera is seeded from the other
+  pane's live camera on the layout change that first mounts it.
+
+**No active-pane concept.** Pane-scoped controls (compass, follow, chart
+picker button) are doubled *inside* each pane — the buttons carry per-pane
+state, and touch location implicitly targets a pane. App-level actions never
+need to ask "which pane": MOB is a fire-and-forget server POST whose marker
+comes back through the shared AIS data path; the extension host API cannot
+steer the camera (`map.flyTo`/`map.fitBounds` are warning no-ops — navigation
+intent comes from the user); `map.getView` returns the union bbox of both
+panes when split.
+
+**Single-writer rule for per-frame shared side effects:** ruler snap-following
+(dead-reckoned snap targets → `rulers.syncSnapped`) runs in ONE app-level rAF
+driver (`lib/rulerSnap.ts`), never in a pane's render loop; panes only read
+`currentSnapTargets()` for drag-snap hit-testing. Exception: FPS measurement
+stays in Map.svelte gated on the `fpsOwner` prop (default `pane.isPrimary`;
+the solo second pane takes over while pane 0 is collapsed), because the
+metric deliberately measures the throttled map tick rate (`targetFps`), which
+only exists inside a map's render loop.
+
+**Svelte 5 pitfall (cost a debugging session):** an object that needs
+reference identity — like a `PaneState` compared against `panes[i]` — must be
+held in `$state.raw`, never `$state`. The deep proxy breaks `===` silently and
+an effect comparing/resetting it re-fires every flush, starving all app
+reactivity with no error anywhere.
+
+**Known cost:** split view runs two MapLibre + two deck.gl WebGL contexts
+(~2× GPU load). Adaptive-quality work is deliberately deferred until real
+on-device profiling data exists.
+
+---
+
 ## Implemented Features (as of 2026-05)
 
 ### Navigation display
@@ -397,4 +451,4 @@ Tauri is packaging, not a dependency.
 
 ---
 
-*Last updated: 2026-06-28 — added ADR-009 Phase 1 completion: `skdata` module implemented, `signalk` crate dependency dropped, two latent crate bugs fixed (vessel-id truncation, strict all-or-nothing activeRoute deserialization)*
+*Last updated: 2026-08-01 — added ADR-010: split/dual-pane view, the app-vs-pane state boundary (`PaneState`), no-active-pane design, single-writer frame driver, extension camera-API removal*
