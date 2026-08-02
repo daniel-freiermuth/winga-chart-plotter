@@ -119,10 +119,12 @@
   let chartPickerOpen     = $state(false);
 
   // ── Split divider drag ────────────────────────────────────────────────────
-  // The divider doubles as the split-view control: with no split it parks at
-  // the right/bottom screen edge as a drawer handle. Dragging it inward past
-  // SPLIT_OPEN_THRESHOLD opens the second pane (at the clamped ratio); pushing
-  // it back to the edge closes the split again. No Settings toggle needed.
+  // The divider doubles as the split-view control: outside the split it parks
+  // at the collapsed pane's screen edge as a drawer handle — EITHER edge is a
+  // resting position (paneLayout names the pane that stays fullscreen).
+  // Grabbing the handle mounts the other pane and the divider follows the
+  // pointer; the release either settles into the 20-80% band or collapses a
+  // pane again. No Settings toggle needed.
   let panesEl: HTMLDivElement | undefined;
   /** Live ratio during a divider drag; null when idle or parked (persisted value applies). */
   let dragRatio = $state<number | null>(null);
@@ -130,7 +132,9 @@
   let dividerDragging = $state(false);
   const splitRatio = $derived(dragRatio ?? settings.splitRatio);
   const splitOpen  = $derived(settings.paneLayout === 'split');
-  /** Release threshold: let go with the second pane under half its minimum size and the split closes. */
+  const pane0Visible = $derived(settings.paneLayout !== 'solo1');
+  const pane1Visible = $derived(settings.paneLayout !== 'solo0');
+  /** Release threshold: let go with a pane under half its minimum size and that pane collapses. */
   const SPLIT_OPEN_THRESHOLD = SPLIT_RATIO_MIN / 2;
   // Divider orientation for screen readers — mirrors the CSS orientation media
   // query that lays out the panes: side-by-side panes (landscape) are split by
@@ -152,7 +156,7 @@
   function onDividerDown(e: PointerEvent): void {
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     dividerDragging = true;
-    // Opening gesture: mount the second pane immediately so it follows the
+    // Opening gesture: mount the collapsed pane immediately so it follows the
     // pointer out of the edge from the first moment — that is what makes
     // the drawer discoverable.
     if (!splitOpen) setPaneLayout('split');
@@ -161,20 +165,19 @@
   function onDividerMove(e: PointerEvent): void {
     if (!dividerDragging) return;
     // Follow the pointer everywhere, including outside the 20-80% band —
-    // the release below either bounces back into the band or closes.
+    // the release below either bounces back into the band or collapses a pane.
     dragRatio = Math.min(1, Math.max(0, dividerFracFromEvent(e)));
   }
   function onDividerUp(): void {
     if (!dividerDragging) return;
     dividerDragging = false;
     if (dragRatio !== null) {
-      if (1 - dragRatio < SPLIT_OPEN_THRESHOLD) {
-        // Released (almost) at the edge — close and park. The pre-drag ratio
-        // is deliberately not overwritten, so the next open restores it.
-        setPaneLayout('solo0');
-      } else {
-        settings.setSplitRatio(dragRatio); // clamps → settles back into the band
-      }
+      // Released (almost) at an edge — that pane collapses and the divider
+      // parks. The pre-drag ratio is deliberately not overwritten, so the
+      // next open restores it.
+      if (1 - dragRatio < SPLIT_OPEN_THRESHOLD)  setPaneLayout('solo0');
+      else if (dragRatio < SPLIT_OPEN_THRESHOLD) setPaneLayout('solo1');
+      else settings.setSplitRatio(dragRatio); // clamps → settles back into the band
     }
     dragRatio = null;
   }
@@ -184,15 +187,14 @@
     if (delta === 0) return;
     e.preventDefault();
     if (!splitOpen) {
-      // Parked: a step inward re-opens the split at its last persisted ratio.
-      if (delta < 0) setPaneLayout('split');
+      // Parked: a step inward (away from the parked edge) re-opens the split
+      // at its last persisted ratio.
+      if (settings.paneLayout === 'solo0' ? delta < 0 : delta > 0) setPaneLayout('split');
       return;
     }
-    if (delta > 0 && settings.splitRatio >= SPLIT_RATIO_MAX) {
-      // Already at the outer clamp — one more step closes the split.
-      setPaneLayout('solo0');
-      return;
-    }
+    // Already at a clamp — one more step outward collapses that side's pane.
+    if (delta > 0 && settings.splitRatio >= SPLIT_RATIO_MAX) { setPaneLayout('solo0'); return; }
+    if (delta < 0 && settings.splitRatio <= SPLIT_RATIO_MIN) { setPaneLayout('solo1'); return; }
     settings.setSplitRatio(settings.splitRatio + delta); // store clamps
   }
   let worker: Worker | null = null;
@@ -210,12 +212,13 @@
     // the most zoomed-out pane"), NOT a fit — a fit zoom would need a target
     // viewport, and a cross-pane union has none.
     getView: () => {
-      const v0 = mapComp?.getView();
-      // Extension asks before the primary pane's Map has mounted — degrade to
-      // the same empty view Map.getView() itself returns when it has no map.
-      if (!v0) return { center: [0, 0] as [number, number], zoom: 0, bounds: [0, 0, 0, 0] as [number, number, number, number] };
-      const v1 = splitOpen ? mapComp1?.getView() : null;
-      if (!v1) return v0;
+      // Either pane can be the solo/fullscreen one — gather whatever is mounted.
+      const v0 = pane0Visible ? mapComp?.getView() : null;
+      const v1 = pane1Visible ? mapComp1?.getView() : null;
+      // Extension asks before any pane's Map has mounted — degrade to the
+      // same empty view Map.getView() itself returns when it has no map.
+      if (!v0 && !v1) return { center: [0, 0] as [number, number], zoom: 0, bounds: [0, 0, 0, 0] as [number, number, number, number] };
+      if (!v0 || !v1) return (v0 ?? v1)!;
       const u = unionViewBounds(v0.bounds, v1.bounds);
       if (!u) return v0; // WASM not ready yet — degrade to the primary pane
       return {
@@ -591,20 +594,21 @@
     mapComp1?.closePopup();
     chartPickerComp?.open();
   }
-  // Split view off → the second pane unmounts; anything targeting it falls
-  // back to the primary pane.
+  // Solo layout → one pane unmounts; anything targeting it falls back to the
+  // pane that stays fullscreen.
   $effect(() => {
-    if (!splitOpen && pickerPane !== primaryPane) pickerPane = primaryPane;
+    const solo = panes[settings.paneLayout === 'solo1' ? 1 : 0];
+    if (!splitOpen && pickerPane !== solo) pickerPane = solo;
   });
   // Rulers are shared world data rendered in BOTH panes — only the initial
   // placement is viewport-relative. It spawns in the BIGGER pane: that is
-  // where the user has room to work, and it degrades to the primary pane
-  // when there is no split. (pickerPane tracks the chart picker, not "the
-  // last active map", so routing through it would be no less arbitrary.)
+  // where the user has room to work; outside the split that is the solo pane.
+  // (pickerPane tracks the chart picker, not "the last active map", so
+  // routing through it would be no less arbitrary.)
   function handleAddRuler(): void {
     chartPickerOpen = false;
-    const target = splitOpen && settings.splitRatio < 0.5 ? mapComp1 : mapComp;
-    target?.addRuler();
+    const useSecond = splitOpen ? settings.splitRatio < 0.5 : settings.paneLayout === 'solo1';
+    (useSecond ? mapComp1 : mapComp)?.addRuler();
   }
   function handleToggleProjection(): void {
     const target = pickerPane === panes[1] ? mapComp1 : mapComp;
@@ -640,33 +644,37 @@
 
 <div style="position: relative; width: 100%; height: 100%;">
   <div class="panes" class:panes--dragging={dividerDragging} bind:this={panesEl} style="--split: {(splitRatio * 100).toFixed(2)}%">
-    <div id="pane-primary" class="pane" class:pane--sized={splitOpen}>
-      <Map
-        bind:this={mapComp}
-        pane={panes[0]}
-        openSettings={handleOpenSettings}
-        onMapClick={() => { chartPickerOpen = false; }}
-        chartPickerOpen={chartPickerOpen && pickerPane === panes[0]}
-        onOpenChartPicker={() => { openChartPickerFor(panes[0]); }}
-      />
-    </div>
+    {#if pane0Visible}
+      <div id="pane-primary" class="pane" class:pane--sized={splitOpen}>
+        <Map
+          bind:this={mapComp}
+          pane={panes[0]}
+          openSettings={handleOpenSettings}
+          onMapClick={() => { chartPickerOpen = false; }}
+          chartPickerOpen={chartPickerOpen && pickerPane === panes[0]}
+          onOpenChartPicker={() => { openChartPickerFor(panes[0]); }}
+        />
+      </div>
+    {/if}
     <!-- WAI-ARIA "window splitter" pattern: a focusable separator with
          aria-valuenow IS the interactive variant per the ARIA spec; the
-         checker doesn't model it. The divider always exists — parked at the
-         right/bottom edge it is the handle that OPENS the split (valuenow 100
-         = second pane fully collapsed, per the collapsible-splitter pattern). -->
+         checker doesn't model it. The divider always exists — parked at a
+         screen edge it is the handle that OPENS the split (valuenow 100 =
+         second pane fully collapsed, 0 = primary pane fully collapsed, per
+         the collapsible-splitter pattern). -->
     <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
     <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
     <div
       class="split-divider"
-      class:split-divider--parked={!splitOpen}
+      class:split-divider--parked-end={settings.paneLayout === 'solo0'}
+      class:split-divider--parked-start={settings.paneLayout === 'solo1'}
       role="separator"
       tabindex="0"
       aria-label={splitOpen ? 'Resize panes' : 'Open split view'}
-      aria-controls="pane-primary"
+      aria-controls={pane0Visible ? 'pane-primary' : 'pane-second'}
       aria-orientation={isLandscape ? 'vertical' : 'horizontal'}
-      aria-valuenow={splitOpen ? Math.round(splitRatio * 100) : 100}
-      aria-valuemin={Math.round(SPLIT_RATIO_MIN * 100)}
+      aria-valuenow={splitOpen ? Math.round(splitRatio * 100) : settings.paneLayout === 'solo0' ? 100 : 0}
+      aria-valuemin={0}
       aria-valuemax={100}
       onpointerdown={onDividerDown}
       onpointermove={onDividerMove}
@@ -675,11 +683,12 @@
       onlostpointercapture={onDividerUp}
       onkeydown={onDividerKey}
     ></div>
-    {#if splitOpen}
-      <div class="pane pane--second">
+    {#if pane1Visible}
+      <div id="pane-second" class="pane pane--second">
         <Map
           bind:this={mapComp1}
           pane={panes[1]}
+          fpsOwner={!pane0Visible}
           openSettings={handleOpenSettings}
           onMapClick={() => { chartPickerOpen = false; }}
           chartPickerOpen={chartPickerOpen && pickerPane === panes[1]}
@@ -903,10 +912,12 @@
       background: linear-gradient(to bottom, #000 calc(50% - 26px), transparent calc(50% - 26px) calc(50% + 26px), #000 calc(50% + 26px));
     }
     .split-divider::before { inset: 0 -21px; }
-    /* Parked at the right edge: no line to draw, and the grab zone extends
-       inward only (the outward half would be offscreen). */
-    .split-divider--parked { background: none; }
-    .split-divider--parked::before { inset: 0 0 0 -42px; }
+    /* Parked at an edge: no line to draw, and the grab zone extends inward
+       only (the outward half would be offscreen). --parked-end = right edge
+       (pane 1 collapsed), --parked-start = left edge (pane 0 collapsed). */
+    .split-divider--parked-end, .split-divider--parked-start { background: none; }
+    .split-divider--parked-end::before   { inset: 0 0 0 -42px; }
+    .split-divider--parked-start::before { inset: 0 -42px 0 0; }
     /* 48px tall, 16px tile → exactly three dots stacked vertically. */
     .split-divider::after { width: 18px; height: 48px; background-size: 18px 16px; background-repeat: repeat-y; }
   }
@@ -917,9 +928,11 @@
       background: linear-gradient(to right, #000 calc(50% - 26px), transparent calc(50% - 26px) calc(50% + 26px), #000 calc(50% + 26px));
     }
     .split-divider::before { inset: -21px 0; }
-    /* Parked at the bottom edge: grab zone extends upward only. */
-    .split-divider--parked { background: none; }
-    .split-divider--parked::before { inset: -42px 0 0 0; }
+    /* Parked at the bottom (--parked-end, pane 1 collapsed) or top
+       (--parked-start, pane 0 collapsed) edge: grab zone extends inward only. */
+    .split-divider--parked-end, .split-divider--parked-start { background: none; }
+    .split-divider--parked-end::before   { inset: -42px 0 0 0; }
+    .split-divider--parked-start::before { inset: 0 0 -42px 0; }
     /* 48px wide, 16px tile → exactly three dots in a row. */
     .split-divider::after { width: 48px; height: 18px; background-size: 16px 18px; background-repeat: repeat-x; }
   }

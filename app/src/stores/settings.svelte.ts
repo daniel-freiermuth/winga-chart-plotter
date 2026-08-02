@@ -73,8 +73,10 @@ export interface AppearanceSettings {
   track:       TrackAppearance;
 }
 
-/** How the map area is laid out: dual-pane split, or one pane fullscreen. */
-export type PaneLayout = 'split' | 'solo0';
+/** How the map area is laid out: dual-pane split, or one pane fullscreen
+ *  ('solo0' = primary pane, 'solo1' = second pane; the divider parks at the
+ *  collapsed pane's screen edge). */
+export type PaneLayout = 'split' | 'solo0' | 'solo1';
 
 export interface SettingsData {
   signalkProtocol: 'ws' | 'wss';
@@ -198,7 +200,7 @@ function load(): SettingsData {
           ...DEFAULTS, ...p,
           ...normalizedConn,
           useGeoLocation: typeof p.useGeoLocation === 'boolean' ? p.useGeoLocation : DEFAULTS.useGeoLocation,
-          paneLayout: p.paneLayout === 'split' ? 'split' : DEFAULTS.paneLayout,
+          paneLayout: p.paneLayout === 'split' || p.paneLayout === 'solo1' ? p.paneLayout : DEFAULTS.paneLayout,
           splitRatio: typeof p.splitRatio === 'number' && p.splitRatio >= SPLIT_RATIO_MIN && p.splitRatio <= SPLIT_RATIO_MAX ? p.splitRatio : DEFAULTS.splitRatio,
           targetFps: typeof p.targetFps === 'number' && p.targetFps > 0 ? p.targetFps : DEFAULTS.targetFps,
           resourcePollIntervalSeconds: typeof p.resourcePollIntervalSeconds === 'number' && p.resourcePollIntervalSeconds > 0 ? p.resourcePollIntervalSeconds : DEFAULTS.resourcePollIntervalSeconds,

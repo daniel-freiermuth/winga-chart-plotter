@@ -293,9 +293,10 @@ replicated.
   (`view`), chart *selection* (`chartSel`), base layers, layer visibility,
   rotation mode, vessel follow/pinning. Created by store factories taking an
   `lsSuffix`; pane 0 keeps the legacy un-suffixed localStorage keys (zero
-  migration), pane 1 uses `:1`-suffixed keys. Both panes exist eagerly; pane 1
-  is only rendered while split is enabled, and is seeded from pane 0's live
-  camera on its very first enable.
+  migration), pane 1 uses `:1`-suffixed keys. Both panes exist eagerly. A pane
+  is rendered while the layout mounts it (`split`, or the matching solo
+  layout), and a pane without a persisted camera is seeded from the other
+  pane's live camera on the layout change that first mounts it.
 
 **No active-pane concept.** Pane-scoped controls (compass, follow, chart
 picker button) are doubled *inside* each pane — the buttons carry per-pane
@@ -310,9 +311,10 @@ panes when split.
 (dead-reckoned snap targets → `rulers.syncSnapped`) runs in ONE app-level rAF
 driver (`lib/rulerSnap.ts`), never in a pane's render loop; panes only read
 `currentSnapTargets()` for drag-snap hit-testing. Exception: FPS measurement
-stays in Map.svelte gated on `pane.isPrimary`, because the metric deliberately
-measures the throttled map tick rate (`targetFps`), which only exists inside a
-map's render loop.
+stays in Map.svelte gated on the `fpsOwner` prop (default `pane.isPrimary`;
+the solo second pane takes over while pane 0 is collapsed), because the
+metric deliberately measures the throttled map tick rate (`targetFps`), which
+only exists inside a map's render loop.
 
 **Svelte 5 pitfall (cost a debugging session):** an object that needs
 reference identity — like a `PaneState` compared against `panes[i]` — must be

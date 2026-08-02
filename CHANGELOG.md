@@ -5,7 +5,7 @@ All notable changes to this project are documented in this file.
 ## [Unreleased]
 
 ### Added
-- Split view: two independent chart panes. Drag the divider handle in from the right/bottom screen edge to open the second pane (it starts as a clone of the first); push it back to the edge to close.
+- Split view: two independent chart panes. Drag the divider handle in from the right/bottom screen edge to open the second pane (it starts as a clone of the first); push it back to either screen edge to close — the pane at the far side of the divider stays fullscreen.
 
 ### Fixed
 - The pinned vessel could end up outside the viewport after a drastic resize (window resize, orientation flip, split divider drag) — the pin is now re-anchored on every map resize.

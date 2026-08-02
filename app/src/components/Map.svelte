@@ -41,12 +41,15 @@
 
   const {
     pane,
+    fpsOwner = pane.isPrimary,
     openSettings = () => { /* noop */ },
     onMapClick   = () => { /* noop */ },
     chartPickerOpen = false,
     onOpenChartPicker = () => { /* noop */ },
   }: {
     pane: PaneState;
+    /** Whether this pane samples the app-wide FPS metric — exactly one mounted pane owns it (the primary when it is visible, else the solo second pane). */
+    fpsOwner?: boolean;
     openSettings?: (tab: SettingsTab) => void;
     onMapClick?:   () => void;
     /** Whether the app-level chart picker is currently open for this pane. */
@@ -914,8 +917,8 @@
     // AIS layers are self-animating — no setProps() from here for them.
     function rafTick() {
       // Measure actual FPS using a rolling window of frame timestamps.
-      // Primary pane only — one FPS metric for the app.
-      if (pane.isPrimary) {
+      // One FPS metric for the app — sampled by the designated owner pane.
+      if (fpsOwner) {
         const now = performance.now();
         _fpsSamples.push(now);
         const cutoff = now - 3000;

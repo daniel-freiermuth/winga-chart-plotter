@@ -2,9 +2,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { memStorage } from './testStorage';
 
 /**
- * Boot/seeding behavior of the pane module: pane 1 is cloned from pane 0's
- * live camera exactly once — on the first split enable (or at module init
- * when split view was already persisted as enabled).
+ * Boot/seeding behavior of the pane module: a pane about to mount without a
+ * persisted camera is cloned from the other pane exactly once — on the layout
+ * change that mounts it (or at module init when the persisted layout already
+ * mounts it). The rule is symmetric: pane 1 is the fresh one on the first
+ * split enable, pane 0 when reopening from a boot straight into 'solo1'.
  *
  * The `panes` tuple is created at module load, so every test resets the
  * module registry and re-imports with a fresh in-memory localStorage —
@@ -65,5 +67,57 @@ describe('pane seeding', () => {
     expect(panes[1].view.hasSavedView).toBe(true);
     expect(panes[1].view.center).toEqual([7.7, 54.2]);
     expect(panes[1].view.zoom).toBe(10);
+  });
+
+  it('booting with solo1 persisted seeds pane 1 at module init', async () => {
+    // solo1 mounts pane 1 (fullscreen) just like split does — a cleared pane-1
+    // camera must still be seeded before any component renders.
+    localStorage.setItem('signalk-chart-settings', JSON.stringify({ paneLayout: 'solo1' }));
+    localStorage.setItem('map-view-coords', JSON.stringify({ center: [7.7, 54.2], zoom: 10, bearing: 10, pitch: 5 }));
+    const { panes } = await import('./pane.svelte');
+
+    expect(panes[1].view.hasSavedView).toBe(true);
+    expect(panes[1].view.center).toEqual([7.7, 54.2]);
+    expect(panes[1].view.zoom).toBe(10);
+  });
+
+  it('entering split seeds a fresh pane 0 from pane 1', async () => {
+    // Mirror image of the first-split-enable case: pane 0 lost its legacy
+    // un-suffixed keys while pane 1 has a camera (boot went straight to solo1).
+    localStorage.setItem('signalk-chart-settings', JSON.stringify({ paneLayout: 'solo1' }));
+    localStorage.setItem('map-view-coords:1', JSON.stringify({ center: [24, 59], zoom: 8, bearing: 90, pitch: 0 }));
+    localStorage.setItem('map-view-projection:1', 'globe');
+    const { panes, setPaneLayout } = await import('./pane.svelte');
+    expect(panes[0].view.hasSavedView).toBe(false);
+
+    setPaneLayout('split');
+
+    expect(panes[0].view.center).toEqual([24, 59]);
+    expect(panes[0].view.zoom).toBe(8);
+    expect(panes[0].view.bearing).toBe(90);
+    expect(panes[0].view.projection).toBe('globe');
+    expect(panes[0].view.hasSavedView).toBe(true);
+  });
+
+  it('booting with split persisted seeds a fresh pane 0 from pane 1', async () => {
+    localStorage.setItem('signalk-chart-settings', JSON.stringify({ paneLayout: 'split' }));
+    localStorage.setItem('map-view-coords:1', JSON.stringify({ center: [24, 59], zoom: 8, bearing: 90, pitch: 0 }));
+    const { panes } = await import('./pane.svelte');
+
+    expect(panes[0].view.hasSavedView).toBe(true);
+    expect(panes[0].view.center).toEqual([24, 59]);
+    expect(panes[0].view.zoom).toBe(8);
+  });
+
+  it('a pane with nothing persisted is never a clone source', async () => {
+    // Fresh install, split enabled immediately: neither pane has a camera, so
+    // nothing is persisted — pane 1 stays fresh and clones pane 0's *real*
+    // camera on a later split enable instead of pinning the built-in default.
+    const { panes, setPaneLayout } = await import('./pane.svelte');
+
+    setPaneLayout('split');
+
+    expect(panes[0].view.hasSavedView).toBe(false);
+    expect(panes[1].view.hasSavedView).toBe(false);
   });
 });
