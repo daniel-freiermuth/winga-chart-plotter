@@ -2,11 +2,11 @@
 
 All notable changes to this project are documented in this file.
 
-## [Unreleased]
+## [0.21.0] - 2026-08-02
 
 ### Added
 
-- Split view: two independent chart panes. Drag the divider handle in from the right/bottom screen edge to open the second pane (it starts as a clone of the first); push it back to either screen edge to close — the pane at the far side of the divider stays fullscreen.
+- Split view: two independent chart panes. Drag the divider handle in from the right/bottom screen edge to open the second pane (it starts as a clone of the first); push it back to either screen edge to close. New rulers spawn in the bigger pane when the view is split.
 
 ### Fixed
 
@@ -15,14 +15,24 @@ All notable changes to this project are documented in this file.
 - Chart-picker thumbnails for charts crossing the antimeridian pointed at the wrong side of the planet; bounds containment and center now go through the WASM geo core.
 - Vessels rendered hollow (outline only) under globe projection: deck.gl ≥9.3.3 enables backface culling for the whole globe view by default, and the custom vessel layers' fill triangles were wound clockwise. All vessel geometry is now normalized to counter-clockwise winding (pinned by a unit test across every geometry and morph blend), so globe culling works as designed and replaces the layers' in-shader far-hemisphere discard.
 - Ruler and route-planner labels were invisible under globe projection — deck.gl's own text billboard quads fall to the same globe backface-culling default; the label layers now opt out of culling per layer (the overlay-wide opt-out stopped working in deck.gl 9.3.3).
-- The compass button's free-rotation lock (long-press) is now also reachable by keyboard via Shift+Enter.
-- The Settings toggles (Browser GPS, AIS track on click) now have accessible names for screen readers.
+- Ambiguous taps on overlapping routes now open the disambiguation menu instead of picking one arbitrarily.
+- The compass button's long-press is cancelled when the finger slides off the button (touch pointer capture kept the leave event from firing).
+- Two-finger gestures while following a vessel now match MapLibre's behavior when not following: pitch is exclusive with rotate/zoom, which is steadier in a shaky environment.
+- Toggling the rotation mode no longer resumes a mode whose sensor (heading/COG) has become unavailable in the meantime.
+- Ruler snap targets on dead-reckoned AIS vessels are now bounded by the same staleness cap as the CPA ring and dead-reckoning anchor — a vessel whose data went stale can no longer drag a snap target far from its last known position.
+- Two quick chart switches could race: the slower, already-superseded style load could overwrite the newly selected chart. Each switch now supersedes any in-flight load.
+- A fast-failing base-chart load (bad URL, CORS, DNS) was refetched in a tight loop; retries are now paced at 5 s and cancelled by a newer chart switch.
+- Corrupt persisted layer-visibility entries (non-boolean values) are ignored and fall back to defaults instead of leaking strings into runtime flags.
+- Closing the chart picker before the chart catalog had loaded (or after a chart vanished server-side) recorded a selected WMTS chart's recency under the wrong key, so its real entry silently aged out of the recently-used chart ordering.
+- Dropping the follow pin (vessel leaving the viewport) could race the wheel-zoom and two-finger gesture handlers and throw a TypeError mid-gesture while following.
+- An extension calling `map.getView` before the map finished mounting crashed the extension host; it now degrades to an empty view.
 
 ### Removed
 
 - The "Show track" toggle in Settings → Own vessel; the same toggle lives in the chart picker's layer chips.
 - The fullscreen toolbar button and its Fullscreen API integration — the installed PWA already launches fullscreen; in a browser tab the browser's own fullscreen (F11) still works.
 - Plotter extensions can no longer move the map: `map.flyTo` and `map.fitBounds` in the extension host API are ignored (with a console warning). `map.getView` still works.
+- The on-screen zoom slider.
 
 ## [0.20.1] - 2026-07-30
 
