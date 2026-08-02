@@ -6,7 +6,7 @@
   import LazyMapThumb from './LazyMapThumb.svelte';
   import type { VisibilityState } from '../stores/visibility.svelte';
   import { chartLru } from '../stores/chartLru.svelte';
-  import { panes, type PaneState } from '../stores/pane.svelte';
+  import { visiblePanesFor, type PaneState } from '../stores/pane.svelte';
   import { settings } from '../stores/settings.svelte';
 
   let {
@@ -36,8 +36,7 @@
   function close() {
     // Touch every VISIBLE pane's active charts/layers — not just the pane this
     // picker configures — so neither pane's selection ages out of the LRU.
-    const layout = settings.paneLayout;
-    const visiblePanes = layout === 'split' ? panes : [panes[layout === 'solo1' ? 1 : 0]];
+    const visiblePanes = visiblePanesFor(settings.paneLayout);
     const activeIds: string[] = [];
     for (const p of visiblePanes) {
       activeIds.push(...p.baseLayers.enabled);

@@ -69,7 +69,7 @@
   import ExtPanel from './components/ExtPanel.svelte';
   import { vesselState } from './stores/vessel';
   import { settings, SPLIT_RATIO_MIN, SPLIT_RATIO_MAX, type SettingsTab } from './stores/settings.svelte';
-  import { panes, setPaneLayout, type PaneState } from './stores/pane.svelte';
+  import { panes, setPaneLayout, visiblePanesFor, type PaneState } from './stores/pane.svelte';
   import { startRulerSnapSync } from './lib/rulerSnap';
   import { charts } from './stores/charts.svelte';
   import { ais } from './stores/ais.svelte';
@@ -129,8 +129,8 @@
   let dividerDragging = $state(false);
   const splitRatio = $derived(dragRatio ?? settings.splitRatio);
   const splitOpen  = $derived(settings.paneLayout === 'split');
-  const pane0Visible = $derived(settings.paneLayout !== 'solo1');
-  const pane1Visible = $derived(settings.paneLayout !== 'solo0');
+  const pane0Visible = $derived(visiblePanesFor(settings.paneLayout).includes(panes[0]));
+  const pane1Visible = $derived(visiblePanesFor(settings.paneLayout).includes(panes[1]));
   /** Release threshold: let go with a pane under half its minimum size and that pane collapses. */
   const SPLIT_OPEN_THRESHOLD = SPLIT_RATIO_MIN / 2;
   // Divider orientation for screen readers — mirrors the CSS orientation media

@@ -48,10 +48,15 @@ export function createPaneState(id: number): PaneState {
 
 /**
  * Both panes exist eagerly (cheap: a handful of runes + localStorage reads);
- * pane 1 is only *rendered* while split view is enabled, so no reactive pane
+ * a pane is only *rendered* while the layout mounts it, so no reactive pane
  * list is needed.
  */
 export const panes: readonly [PaneState, PaneState] = [createPaneState(0), createPaneState(1)];
+
+/** The panes a layout mounts — single source of the layout→visibility rule. */
+export function visiblePanesFor(layout: PaneLayout): readonly PaneState[] {
+  return layout === 'split' ? panes : [panes[layout === 'solo1' ? 1 : 0]];
+}
 
 /** Clone `from`'s live camera and projection into `to`. syncView() persists. */
 function seedPane(from: PaneState, to: PaneState): void {
@@ -71,8 +76,9 @@ function seedPane(from: PaneState, to: PaneState): void {
  */
 function ensureMountedPanesSeeded(layout: PaneLayout): void {
   const [p0, p1] = panes;
-  if (layout !== 'solo0' && !p1.view.hasSavedView && p0.view.hasSavedView) seedPane(p0, p1);
-  if (layout !== 'solo1' && !p0.view.hasSavedView && p1.view.hasSavedView) seedPane(p1, p0);
+  const mounted = visiblePanesFor(layout);
+  if (mounted.includes(p1) && !p1.view.hasSavedView && p0.view.hasSavedView) seedPane(p0, p1);
+  if (mounted.includes(p0) && !p0.view.hasSavedView && p1.view.hasSavedView) seedPane(p1, p0);
 }
 
 /** Switch the pane layout. Panes the layout mounts are seeded synchronously BEFORE they mount. */
