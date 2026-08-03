@@ -345,6 +345,12 @@ fn densify_by_distance(lon1: f64, lat1: f64, lon2: f64, lat2: f64) -> Vec<(f64, 
         return vec![(lon2, lat2)];
     }
     let sin_d = d.sin();
+    if sin_d.abs() < 1e-12 {
+        // Antipodal (or otherwise degenerate) endpoints: the great circle
+        // through them is undefined. Fall back to the endpoint, matching the
+        // degenerate-input behavior above rather than emitting NaN.
+        return vec![(lon2, lat2)];
+    }
     let mut out = Vec::with_capacity(n_segs);
     let mut prev_lambda = lambda1;
     for i in 1..n_segs {
@@ -1243,6 +1249,14 @@ mod tests {
                 "lon {lon} jumped out of the expected unwrapped range"
             );
         }
+    }
+
+    #[test]
+    fn densify_by_distance_antipodal_points_do_not_produce_nan() {
+        // Antipodal endpoints: the great circle between them is undefined
+        // (sin_d ≈ 0); must fall back to the endpoint, never emit NaN/Inf.
+        let pts = densify_by_distance(0.0, 0.0, 180.0, 0.0);
+        assert_eq!(pts, vec![(180.0, 0.0)]);
     }
 
     // ---- process_track_core ----
