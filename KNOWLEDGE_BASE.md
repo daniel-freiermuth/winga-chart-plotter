@@ -361,7 +361,7 @@ on-device profiling data exists.
 
 **Drop-Rust considered, rejected:** the data layer is done and working in Rust (a TS rewrite is regression-only), the Tauri phase-2 payoffs (disk tile cache, serial NMEA) are Rust-backend features, the ecosystem-library goal (ADR-002) needs the crate, and the WASM costs (~1.2 MB, precached; build pipeline) are already paid.
 
-**Known defect / planned:** `lib/trackProcessing.ts` duplicates `geo.rs` GC math (haversine, SLERP densification, antimeridian handling) — two GC implementations that can drift (ruler says X, track renders Y). Consolidate into `geo.rs`; it runs at data-change time, so a batched WASM call is the right shape. This is the *only* correctness defect in the current Rust/TS split — the boundary placement itself is right.
+**Fixed (2026-08):** `lib/trackProcessing.ts` duplicated `geo.rs` GC math (haversine, SLERP densification, antimeridian handling) — two GC implementations that could drift (ruler says X, track renders Y). Consolidated: `haversine_meters`/`densify_by_distance`/`split_at_antimeridian`/`process_track_core`/`process_route_coords_core` now live in `geo.rs`, exposed as two batched wasm exports (`processTrack`, `processRouteCoords` — one call per track/route update, matching the boundary rule above). `trackProcessing.ts` is now a thin wrapper (same shape as `wasmGeo.ts`/`wasmRest.ts`): flattens `[lon,lat][]` to a `Float64Array`, calls WASM, casts the result. Geometry correctness moved to `geo.rs`'s `mod tests` (17 cases ported 1:1 from the old `trackProcessing.test.ts`, plus 7 new: direct `densify_by_distance`/`haversine_meters` coverage and both `fade_stop` branches — matching how every other WASM-backed math module in this codebase is tested).
 
 **GPU candidates, ranked:** (1) COG predictor arcs — currently CPU-built 24-point paths re-anchored only on data upload while the hull glides in the shader; a parametric arc in a path shader (same instance attributes) would animate predictors in perfect sync — visible payoff, not just perf. (2) Wind particles — planned, inherently GPU. Not worth it: single-item anchors, easing, label placement.
 
@@ -497,4 +497,4 @@ Tauri is packaging, not a dependency.
 
 ---
 
-*Last updated: 2026-08-03 — ADR-003 status review 2026-08 (Tauri reaffirmed, iOS costs, readiness audit: five seams); new ADR-011: compute placement GPU/TS/WASM, WASM boundary rule, drop-Rust rejection, trackProcessing→geo.rs consolidation planned, own-vessel no-DR rationale*
+*Last updated: 2026-08-03 — ADR-011 trackProcessing→geo.rs consolidation shipped (haversine/SLERP-densify/antimeridian-split moved to Rust, 24 geo.rs tests: 17 ported + 7 new, WASM boundary marshaling verified against real output); ADR-003 status review 2026-08 (Tauri reaffirmed, iOS costs, readiness audit: five seams); ADR-011: compute placement GPU/TS/WASM, WASM boundary rule, drop-Rust rejection, own-vessel no-DR rationale*

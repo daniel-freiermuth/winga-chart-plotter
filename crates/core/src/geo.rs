@@ -5,6 +5,7 @@
 //! in TypeScript. Each public `gc_*` function has a pure, host-testable
 //! core (no wasm dependency) plus a thin `#[wasm_bindgen]` wrapper.
 
+use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
 /// Meters per degree of latitude (WGS-84 mean meridian).
@@ -297,6 +298,212 @@ pub fn gc_compute_cpa(
         tgt_sog_ms,
         rot,
     )
+}
+
+// ---------------------------------------------------------------------------
+// Track / route coordinate processing
+//
+// Ported from `app/src/lib/trackProcessing.ts` (ADR-011 in `KNOWLEDGE_BASE.md`:
+// batched at data-change frequency — called once per track/route update, never
+// per animation frame). `buildTrackGradient` stays in TS: it builds a MapLibre
+// style expression, not geo math.
+// ---------------------------------------------------------------------------
+
+/// Haversine distance in metres between two points.
+fn haversine_meters(lon_a: f64, lat_a: f64, lon_b: f64, lat_b: f64) -> f64 {
+    const R_M: f64 = 6_371_000.0;
+    let phi1 = lat_a.to_radians();
+    let phi2 = lat_b.to_radians();
+    let d_phi = (lat_b - lat_a).to_radians();
+    let d_lambda = (lon_b - lon_a).to_radians();
+    let h = (d_phi / 2.0).sin().powi(2) + phi1.cos() * phi2.cos() * (d_lambda / 2.0).sin().powi(2);
+    2.0 * R_M * h.min(1.0).sqrt().asin()
+}
+
+/// GC-densify a segment between two points, one point per ~50 km of arc.
+///
+/// Returns intermediate points (excluding the start) plus the exact endpoint; for
+/// segments under ~50 km this is a cheap no-op returning just `[(lon2, lat2)]`.
+/// Longitude continuity is maintained via progressive unwrapping from `lon1`.
+///
+/// Accepts longitudes outside `[-180, 180]` provided `|lon2 - lon1| <= 180°` (both
+/// endpoints on the same side of any antimeridian crossing — callers pre-split at
+/// crossings via [`split_at_antimeridian`]).
+///
+/// Uses spherical SLERP so intermediate points are exactly on the great circle.
+/// The exact endpoint is pushed last to prevent floating-point drift accumulation.
+fn densify_by_distance(lon1: f64, lat1: f64, lon2: f64, lat2: f64) -> Vec<(f64, f64)> {
+    const R_M: f64 = 6_371_000.0;
+    let phi1 = lat1.to_radians();
+    let lambda1 = lon1.to_radians();
+    let phi2 = lat2.to_radians();
+    let lambda2 = lon2.to_radians();
+    let cos_d = phi1.sin() * phi2.sin() + phi1.cos() * phi2.cos() * (lambda2 - lambda1).cos();
+    let d = cos_d.clamp(-1.0, 1.0).acos();
+    let n_segs = ((d * R_M / 50_000.0).ceil() as usize).max(1);
+    if n_segs == 1 || d < 1e-9 {
+        return vec![(lon2, lat2)];
+    }
+    let sin_d = d.sin();
+    let mut out = Vec::with_capacity(n_segs);
+    let mut prev_lambda = lambda1;
+    for i in 1..n_segs {
+        let f = i as f64 / n_segs as f64;
+        let a = ((1.0 - f) * d).sin() / sin_d;
+        let b = (f * d).sin() / sin_d;
+        let x = a * phi1.cos() * lambda1.cos() + b * phi2.cos() * lambda2.cos();
+        let y = a * phi1.cos() * lambda1.sin() + b * phi2.cos() * lambda2.sin();
+        let z = a * phi1.sin() + b * phi2.sin();
+        let phi_i = z.atan2((x * x + y * y).sqrt());
+        let lambda_i_raw = y.atan2(x);
+        // Unwrap relative to the previous intermediate point so longitude stays continuous.
+        let diff = lambda_i_raw - prev_lambda;
+        let lambda_i = prev_lambda + diff
+            - (diff / (2.0 * std::f64::consts::PI)).round() * 2.0 * std::f64::consts::PI;
+        prev_lambda = lambda_i;
+        out.push((lambda_i.to_degrees(), phi_i.to_degrees()));
+    }
+    out.push((lon2, lat2)); // exact endpoint — avoids floating-point drift accumulation
+    out
+}
+
+/// Split raw `[-180, 180]` coordinates at antimeridian crossings.
+///
+/// A crossing is detected when `|lon[i] - lon[i-1]| > 180°`. At each crossing the
+/// pre-crossing point is duplicated into the new segment, shifted ±360° to place it
+/// on the far side of the antimeridian. This handover keeps adjacent segments
+/// visually connected at the crossing.
+///
+/// Precondition: input coordinates are in `[-180, 180]` (as Signal K provides
+/// them). Postcondition: all output coordinates lie within `[-360, 360]`.
+/// Consecutive points within each segment differ by ≤ 180°, so
+/// [`densify_by_distance`] follows the correct short great-circle path without
+/// crossing the antimeridian.
+///
+/// Returns segments ordered oldest-first. Segments with fewer than 2 points are
+/// dropped (a crossing at the very first pair leaves a single pre-crossing point
+/// that cannot form a valid line).
+fn split_at_antimeridian(pts: &[(f64, f64)]) -> Vec<Vec<(f64, f64)>> {
+    if pts.is_empty() {
+        return Vec::new();
+    }
+    let mut segs: Vec<Vec<(f64, f64)>> = Vec::new();
+    let mut seg: Vec<(f64, f64)> = vec![pts[0]];
+    let (mut prev_lon, mut prev_lat) = pts[0];
+    for &(lon, lat) in &pts[1..] {
+        if (lon - prev_lon).abs() > 180.0 {
+            segs.push(std::mem::take(&mut seg));
+            let handover_lon = prev_lon + if lon < prev_lon { -360.0 } else { 360.0 };
+            seg = vec![(handover_lon, prev_lat)];
+        }
+        seg.push((lon, lat));
+        prev_lon = lon;
+        prev_lat = lat;
+    }
+    segs.push(seg);
+    segs.into_iter().filter(|s| s.len() >= 2).collect()
+}
+
+/// GC-densify a segment whose consecutive pairs have `|Δlon| ≤ 180°`.
+fn densify_track_segment(pts: &[(f64, f64)]) -> Vec<(f64, f64)> {
+    if pts.len() < 2 {
+        return pts.to_vec();
+    }
+    let mut out = Vec::with_capacity(pts.len() * 2);
+    out.push(pts[0]);
+    let (mut prev_lon, mut prev_lat) = pts[0];
+    for &(lon, lat) in &pts[1..] {
+        out.extend(densify_by_distance(prev_lon, prev_lat, lon, lat));
+        prev_lon = lon;
+        prev_lat = lat;
+    }
+    out
+}
+
+/// `(coords, overflow_segments, fade_stop)` returned by [`process_track_core`].
+type TrackSegments = (Vec<(f64, f64)>, Vec<Vec<(f64, f64)>>, f64);
+
+/// Split raw track at antimeridian crossings, GC-densify each segment, and compute
+/// the line-gradient fade-stop fraction.
+///
+/// Returns `(coords, overflow_segments, fade_stop)`:
+/// `coords` — most recent segment, carries the line-gradient.
+/// `overflow_segments` — older segments, rendered as solid lines.
+/// `fade_stop` — fade distance = `min(0.5 nm, 10% of coords' length)`,
+/// expressed as a fraction of `coords`' total length (`0` when zero-length).
+fn process_track_core(raw: &[(f64, f64)]) -> TrackSegments {
+    if raw.len() < 2 {
+        return (raw.to_vec(), Vec::new(), 0.0);
+    }
+    let mut segs: Vec<Vec<(f64, f64)>> = split_at_antimeridian(raw)
+        .into_iter()
+        .map(|s| densify_track_segment(&s))
+        .collect();
+    let coords = segs.pop().unwrap_or_else(|| raw.to_vec());
+    let overflow_segments = segs;
+    let mut total = 0.0;
+    for w in coords.windows(2) {
+        total += haversine_meters(w[0].0, w[0].1, w[1].0, w[1].1);
+    }
+    let fade_stop = if total > 0.0 {
+        ((0.5 * 1852.0_f64).min(total * 0.1) / total).min(1.0)
+    } else {
+        0.0
+    };
+    (coords, overflow_segments, fade_stop)
+}
+
+/// Split raw route or two-point line at antimeridian crossings and GC-densify each
+/// segment. Returns one densified segment per antimeridian-bounded piece, all
+/// within `[-360, 360]`.
+fn process_route_coords_core(raw: &[(f64, f64)]) -> Vec<Vec<(f64, f64)>> {
+    if raw.len() < 2 {
+        return Vec::new();
+    }
+    split_at_antimeridian(raw)
+        .into_iter()
+        .map(|s| densify_track_segment(&s))
+        .collect()
+}
+
+/// Unpack a flat `[lon0, lat0, lon1, lat1, …]` array (as passed from a JS
+/// `Float64Array`) into coordinate pairs.
+fn pairs_from_flat(flat: &[f64]) -> Vec<(f64, f64)> {
+    flat.chunks_exact(2).map(|c| (c[0], c[1])).collect()
+}
+
+/// Result of [`process_track_core`], camelCase for JS.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProcessTrackResult {
+    coords: Vec<(f64, f64)>,
+    overflow_segments: Vec<Vec<(f64, f64)>>,
+    fade_stop: f64,
+}
+
+/// Split raw track (flat `[lon0, lat0, lon1, lat1, …]`) at antimeridian crossings,
+/// GC-densify each segment, and compute the line-gradient fade-stop fraction. One
+/// batched call per track update — see [`process_track_core`].
+#[wasm_bindgen(js_name = processTrack)]
+pub fn process_track(flat: &[f64]) -> Result<JsValue, JsValue> {
+    let raw = pairs_from_flat(flat);
+    let (coords, overflow_segments, fade_stop) = process_track_core(&raw);
+    let result = ProcessTrackResult {
+        coords,
+        overflow_segments,
+        fade_stop,
+    };
+    serde_wasm_bindgen::to_value(&result).map_err(|e| JsValue::from_str(&e.to_string()))
+}
+
+/// Split raw route/line coords (flat `[lon0, lat0, lon1, lat1, …]`) at antimeridian
+/// crossings and GC-densify each segment. One batched call per route update — see
+/// [`process_route_coords_core`].
+#[wasm_bindgen(js_name = processRouteCoords)]
+pub fn process_route_coords(flat: &[f64]) -> Result<JsValue, JsValue> {
+    let raw = pairs_from_flat(flat);
+    let segs = process_route_coords_core(&raw);
+    serde_wasm_bindgen::to_value(&segs).map_err(|e| JsValue::from_str(&e.to_string()))
 }
 
 /// Normalize a longitude to `[-180, 180)`.
@@ -914,5 +1121,280 @@ mod tests {
         let c = bounds_center(-180.0, -90.0, 180.0, 90.0);
         assert_eq!(c[1], 0.0);
         assert!((-180.0..180.0).contains(&c[0]));
+    }
+
+    // ---- split_at_antimeridian (ported from trackProcessing.test.ts) ----
+
+    #[test]
+    fn split_at_antimeridian_empty_input() {
+        assert_eq!(split_at_antimeridian(&[]), Vec::<Vec<(f64, f64)>>::new());
+    }
+
+    #[test]
+    fn split_at_antimeridian_no_crossings_returns_one_segment() {
+        let pts = vec![(-170.0, 10.0), (0.0, 10.0), (170.0, 10.0)];
+        assert_eq!(split_at_antimeridian(&pts), vec![pts]);
+    }
+
+    #[test]
+    fn split_at_antimeridian_two_point_eastward_crossing() {
+        // 170°E → -170°W: crosses the antimeridian. The pre-crossing side has only
+        // one point, so it is dropped (not a valid line). The output is a single
+        // segment starting at the handover point.
+        let pts = vec![(170.0, 10.0), (-170.0, 10.0)];
+        let segs = split_at_antimeridian(&pts);
+        assert_eq!(segs.len(), 1);
+        // Handover: 170 - 360 = -190, followed by the raw post-crossing point.
+        assert_eq!(segs[0][0].0, -190.0);
+        assert_eq!(segs[0][1].0, -170.0);
+    }
+
+    #[test]
+    fn split_at_antimeridian_two_point_westward_crossing() {
+        // -170°W → 170°E: crosses the antimeridian.
+        let pts = vec![(-170.0, 10.0), (170.0, 10.0)];
+        let segs = split_at_antimeridian(&pts);
+        assert_eq!(segs.len(), 1);
+        // Handover: -170 + 360 = 190, followed by the raw post-crossing point.
+        assert_eq!(segs[0][0].0, 190.0);
+        assert_eq!(segs[0][1].0, 170.0);
+    }
+
+    #[test]
+    fn split_at_antimeridian_all_output_within_360() {
+        // 8 antimeridian crossings (westward 3°/step, 500 points).
+        let raw: Vec<(f64, f64)> = (0..500)
+            .map(|i| (wrap180(-3.0 * f64::from(i)), 10.0))
+            .collect();
+        for seg in split_at_antimeridian(&raw) {
+            for (lon, _) in seg {
+                assert!((-360.0..=360.0).contains(&lon), "lon {lon} out of range");
+            }
+        }
+    }
+
+    #[test]
+    fn split_at_antimeridian_multi_circumnavigation_multiple_segments() {
+        let raw: Vec<(f64, f64)> = (0..500)
+            .map(|i| (wrap180(-3.0 * f64::from(i)), 10.0))
+            .collect();
+        assert!(split_at_antimeridian(&raw).len() > 4);
+    }
+
+    #[test]
+    fn split_at_antimeridian_step_within_new_segment_is_short_path() {
+        // Eastward crossing with 3+ points so both segments are valid.
+        let pts = vec![(160.0, 10.0), (170.0, 10.0), (-170.0, 10.0), (-160.0, 10.0)];
+        let segs = split_at_antimeridian(&pts);
+        assert_eq!(segs.len(), 2);
+        let seg2 = &segs[1];
+        // Step from handover (170 - 360 = -190) to first raw point (-170).
+        assert!((seg2[1].0 - seg2[0].0).abs() <= 180.0);
+    }
+
+    // ---- densify_by_distance / haversine_meters (direct) ----
+
+    #[test]
+    fn haversine_meters_one_degree_latitude() {
+        // 1° of latitude along a meridian ≈ 111.195 km (matches R_M = 6,371,000 m).
+        let d = haversine_meters(0.0, 0.0, 0.0, 1.0);
+        assert!((d - 111_195.0).abs() < 50.0, "expected ~111,195 m, got {d}");
+    }
+
+    #[test]
+    fn densify_by_distance_short_segment_is_endpoint_only() {
+        // Under ~50 km: no intermediate points, just the endpoint.
+        let pts = densify_by_distance(0.0, 0.0, 0.1, 0.0); // ~11 km
+        assert_eq!(pts, vec![(0.1, 0.0)]);
+    }
+
+    #[test]
+    fn densify_by_distance_long_segment_spacing_is_about_50km() {
+        // 10° of longitude at the equator ≈ 1,113 km — expect ~23 points spaced ~50 km apart.
+        let pts = densify_by_distance(0.0, 0.0, 10.0, 0.0);
+        assert!(
+            pts.len() > 15,
+            "expected many intermediate points, got {}",
+            pts.len()
+        );
+        let mut prev = (0.0, 0.0);
+        for &p in &pts {
+            let d = haversine_meters(prev.0, prev.1, p.0, p.1);
+            assert!(d < 60_000.0, "spacing {d} m exceeds ~50 km target");
+            prev = p;
+        }
+    }
+
+    #[test]
+    fn densify_by_distance_ends_at_exact_endpoint() {
+        let pts = densify_by_distance(0.0, 0.0, 10.0, 5.0);
+        assert_eq!(*pts.last().unwrap(), (10.0, 5.0));
+    }
+
+    #[test]
+    fn densify_by_distance_preserves_longitude_continuity_from_shifted_start() {
+        // Start from a handover longitude past ±180° (as split_at_antimeridian
+        // produces) — intermediate points must stay unwrapped, not jump back
+        // into [-180, 180].
+        let pts = densify_by_distance(-190.0, 10.0, -170.0, 10.0);
+        for &(lon, _) in &pts {
+            assert!(
+                (-200.0..=-160.0).contains(&lon),
+                "lon {lon} jumped out of the expected unwrapped range"
+            );
+        }
+    }
+
+    // ---- process_track_core ----
+
+    #[test]
+    fn process_track_empty_and_single_point_no_overflow() {
+        let (coords, overflow, _) = process_track_core(&[]);
+        assert!(coords.is_empty());
+        assert!(overflow.is_empty());
+        let (coords, overflow, _) = process_track_core(&[(0.0, 10.0)]);
+        assert_eq!(coords, vec![(0.0, 10.0)]);
+        assert!(overflow.is_empty());
+    }
+
+    #[test]
+    fn process_track_no_overflow_for_simple_non_crossing_track() {
+        let raw = vec![(0.0, 10.0), (10.0, 10.0), (20.0, 10.0)];
+        let (_, overflow, _) = process_track_core(&raw);
+        assert!(overflow.is_empty());
+    }
+
+    #[test]
+    fn process_track_splits_into_overflow_and_coords_on_single_crossing() {
+        let raw = vec![(170.0, 10.0), (175.0, 10.0), (-175.0, 10.0), (-170.0, 10.0)];
+        let (coords, overflow, _) = process_track_core(&raw);
+        assert_eq!(overflow.len(), 1);
+        for seg in std::iter::once(&coords).chain(overflow.iter()) {
+            for &(lon, _) in seg {
+                assert!((-360.0..=360.0).contains(&lon), "lon {lon} out of range");
+            }
+        }
+    }
+
+    #[test]
+    fn process_track_within_360_westward_multi_circumnavigation() {
+        let raw: Vec<(f64, f64)> = (0..500)
+            .map(|i| (wrap180(-3.0 * f64::from(i)), 10.0))
+            .collect();
+        let (coords, overflow, _) = process_track_core(&raw);
+        for seg in std::iter::once(&coords).chain(overflow.iter()) {
+            for &(lon, _) in seg {
+                assert!((-360.0..=360.0).contains(&lon), "lon {lon} out of range");
+            }
+        }
+        assert!(overflow.len() > 1);
+    }
+
+    #[test]
+    fn process_track_within_360_eastward_multi_circumnavigation() {
+        let raw: Vec<(f64, f64)> = (0..500)
+            .map(|i| (wrap180(3.0 * f64::from(i)), 10.0))
+            .collect();
+        let (coords, overflow, _) = process_track_core(&raw);
+        for seg in std::iter::once(&coords).chain(overflow.iter()) {
+            for &(lon, _) in seg {
+                assert!((-360.0..=360.0).contains(&lon), "lon {lon} out of range");
+            }
+        }
+        assert!(overflow.len() > 1);
+    }
+
+    #[test]
+    fn process_track_coords_is_the_last_segment() {
+        // Track going eastward past the antimeridian: last raw point at -170°.
+        // coords should contain that final point, unchanged by densification.
+        let raw = vec![(170.0, 10.0), (175.0, 10.0), (-175.0, 10.0), (-170.0, 10.0)];
+        let (coords, _, _) = process_track_core(&raw);
+        let (lon, lat) = *coords.last().unwrap();
+        assert!((lon - -170.0).abs() < 1e-5);
+        assert!((lat - 10.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn process_track_fade_stop_uses_ten_percent_for_short_tracks() {
+        // Two ~1113 m segments (0.01° lon at the equator ≈ 1113 m): total stays
+        // under the 0.5 nm (926 m) cap threshold (total*0.1 < 926 m needs
+        // total < 9260 m), so the 10%-of-length branch applies.
+        let raw = vec![(0.0, 0.0), (0.01, 0.0), (0.02, 0.0)];
+        let (coords, _, fade_stop) = process_track_core(&raw);
+        let total: f64 = coords
+            .windows(2)
+            .map(|w| haversine_meters(w[0].0, w[0].1, w[1].0, w[1].1))
+            .sum();
+        assert!(
+            total < 9260.0,
+            "fixture must stay under the cap threshold, got {total}"
+        );
+        assert!(
+            (fade_stop - 0.1).abs() < 1e-9,
+            "expected exactly 10%, got {fade_stop}"
+        );
+    }
+
+    #[test]
+    fn process_track_fade_stop_caps_at_half_nm_for_long_tracks() {
+        // 10° longitude segments at lat 10° are ~1096 km each — total length is
+        // orders of magnitude past the 0.5 nm cap threshold.
+        let raw = vec![(0.0, 10.0), (10.0, 10.0), (20.0, 10.0)];
+        let (coords, _, fade_stop) = process_track_core(&raw);
+        let total: f64 = coords
+            .windows(2)
+            .map(|w| haversine_meters(w[0].0, w[0].1, w[1].0, w[1].1))
+            .sum();
+        assert!(
+            total > 9260.0,
+            "fixture must exceed the cap threshold, got {total}"
+        );
+        let expected = (0.5 * 1852.0) / total;
+        assert!(
+            (fade_stop - expected).abs() < 1e-9,
+            "expected {expected}, got {fade_stop}"
+        );
+    }
+
+    // ---- process_route_coords_core ----
+
+    #[test]
+    fn process_route_coords_empty_and_single_point() {
+        assert!(process_route_coords_core(&[]).is_empty());
+        assert!(process_route_coords_core(&[(0.0, 10.0)]).is_empty());
+    }
+
+    #[test]
+    fn process_route_coords_one_segment_no_crossing() {
+        let raw = vec![(-100.0, 10.0), (0.0, 10.0), (100.0, 10.0)];
+        assert_eq!(process_route_coords_core(&raw).len(), 1);
+    }
+
+    #[test]
+    fn process_route_coords_one_valid_segment_two_point_crossing() {
+        // Pre-crossing side has 1 point → filtered out.
+        let raw = vec![(170.0, 10.0), (-170.0, 10.0)];
+        let segs = process_route_coords_core(&raw);
+        assert_eq!(segs.len(), 1);
+        for seg in &segs {
+            assert!(seg.len() >= 2);
+            for &(lon, _) in seg {
+                assert!((-360.0..=360.0).contains(&lon), "lon {lon} out of range");
+            }
+        }
+    }
+
+    #[test]
+    fn process_route_coords_two_segments_multi_point_crossing() {
+        let raw = vec![(160.0, 10.0), (170.0, 10.0), (-170.0, 10.0), (-160.0, 10.0)];
+        let segs = process_route_coords_core(&raw);
+        assert_eq!(segs.len(), 2);
+        for seg in &segs {
+            assert!(seg.len() >= 2);
+            for &(lon, _) in seg {
+                assert!((-360.0..=360.0).contains(&lon), "lon {lon} out of range");
+            }
+        }
     }
 }
