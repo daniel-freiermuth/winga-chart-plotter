@@ -49,8 +49,11 @@ jobs:
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
 
-      - name: Install wasm-pack
-        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+      # Pinned to the exact v0.13.1 GitHub release asset — see ci.yml for rationale.
+      - name: Install wasm-pack (pinned v0.13.1)
+        run: |
+          curl -fsSL https://github.com/rustwasm/wasm-pack/releases/download/v0.13.1/wasm-pack-v0.13.1-x86_64-unknown-linux-musl.tar.gz | tar xz -C /tmp
+          install -m 755 /tmp/wasm-pack-v0.13.1-x86_64-unknown-linux-musl/wasm-pack "$HOME/.cargo/bin/wasm-pack"
 
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
