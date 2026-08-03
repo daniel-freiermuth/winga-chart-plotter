@@ -9,7 +9,7 @@ A professional sea chart plotting application for sailing, built on Signal K.
 
 ## Architecture
 
-- **Rust/WASM core** — all navigation math, Signal K data model, AIS processing, coordinate transforms, routing. No navigation decisions in TypeScript (compute placement: ADR-011 in `KNOWLEDGE_BASE.md`).
+- **Rust/WASM core** — event- and batch-frequency AIS/navigation processing, Signal K data model, coordinate transforms, routing. Per-frame rendering math lives in shaders (with permitted TypeScript CPU mirrors) — see ADR-011 in `KNOWLEDGE_BASE.md`. No navigation decisions in TypeScript.
 - **MapLibre GL JS** — chart rendering (WebGL). Globe projection by default.
 - **deck.gl** — AIS vessel layers, vessel tracks, wind particle overlays (on top of MapLibre).
 - **Svelte + TypeScript** — UI shell only (menus, panels, settings). Minimal, no map math.
@@ -17,7 +17,7 @@ A professional sea chart plotting application for sailing, built on Signal K.
 
 ## Key conventions
 
-- All coordinate math goes through the `Projection` trait in Rust — never raw lon/lat arithmetic.
+- CRS/map transforms (screen ↔ world) go through the `Projection` trait in Rust — never raw lon/lat arithmetic. Geodesic math (bearing, distance, great-circle line/densification — `geo.rs`) operates directly on normalized WGS84 `[lon, lat]` pairs; it is not a CRS transform and does not go through `Projection`.
 - No hardcoded `EPSG:3857` in business logic.
 - Tile sources always use the `{z}/{x}/{y}` URL interface regardless of backend (remote, cached, local server).
 - Compute placement (ADR-011): per-frame × per-entity math lives in shaders (e.g. `VesselMorphLayer` dead reckoning); TS may hold small CPU mirrors of shader math and per-frame scalar glue; everything batchable or event-frequency (Signal K parsing, GC math, CPA, routing) goes through WASM.
