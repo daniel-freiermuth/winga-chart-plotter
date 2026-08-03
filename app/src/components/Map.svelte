@@ -385,6 +385,11 @@
     return p;
   }
 
+  // UUID of the all-routes-line route whose popup is currently open, if any —
+  // read by the appearance effect below to paint that one route in the
+  // configurable highlight color instead of the plain all-routes color.
+  let popupHighlightRouteUuid = $state<string | null>(null);
+
   // Waypoint being relocated: next map click sets its new position.
   let movingWaypoint: { uuid: string; name: string } | null = $state(null);
 
@@ -1934,6 +1939,8 @@
           </div>
         </div>`)
       ).addTo(map);
+    popupHighlightRouteUuid = uuid || null;
+    popup.on('close', () => { popupHighlightRouteUuid = null; });
     popup.getElement().addEventListener('click', (ev) => {
       const el = ev.target as HTMLElement;
       const settingsBtn = el.closest<HTMLElement>('[data-settings]');
@@ -2509,7 +2516,15 @@
     map.setPaintProperty('vessel-track-overflow-line', 'line-dasharray',
       ap.track.style !== 'solid' ? dashArray(ap.track.style, ap.track.width) ?? undefined : undefined);
     // Route appearance — kept here so it never fires on 60 Hz heading ticks.
-    map.setPaintProperty('all-routes-line', 'line-color',     ra.allRoutes.color);
+    // line-color special-cases the route whose popup is open (popupHighlightRouteUuid,
+    // set/cleared by showAllRoutesPopup) into ra.highlightColor — low-frequency
+    // user-interaction state, not a settings value, but cheap enough to fold into
+    // this effect rather than fight it for ownership of the same paint property.
+    map.setPaintProperty('all-routes-line', 'line-color',
+      popupHighlightRouteUuid
+        ? ['case', ['==', ['get', 'uuid'], popupHighlightRouteUuid], ra.highlightColor, ra.allRoutes.color]
+        : ra.allRoutes.color,
+    );
     map.setPaintProperty('all-routes-line', 'line-width',     ra.allRoutes.width);
     map.setPaintProperty('all-routes-line', 'line-opacity',   0.55);
     map.setPaintProperty('all-routes-line', 'line-dasharray', dashArray(ra.allRoutes.style, ra.allRoutes.width) ?? undefined);

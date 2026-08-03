@@ -542,6 +542,10 @@
           </select>
         </div>
       </div>
+      <div class="row">
+        <span class="field-label">Highlight (popup open)</span>
+        <div class="field"><ColorInput bind:value={settings.appearance.route.highlightColor} oninput={applyAppearance} /></div>
+      </div>
 
       <p class="section-title">Route planner</p>
       <div class="row">
