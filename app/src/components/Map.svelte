@@ -1905,11 +1905,24 @@
     const name = (f.properties['name'] as string | null | undefined) ?? '';
     const uuid = (f.properties['uuid'] as string | null | undefined) ?? '';
     const canAct = auth.isLoggedIn && uuid !== '';
+    // Distance is computed from the FULL route's original coordinates, not the
+    // tapped feature — antimeridian-crossing routes render as multiple map
+    // features (one per processRouteCoords segment), so the tapped segment
+    // alone would under-report the total.
+    const fullRoute = routes.entries.find(r => r.uuid === uuid);
+    let distanceNm = 0;
+    if (fullRoute) {
+      const coords = fullRoute.geometry.geometry.coordinates as [number, number][];
+      for (let i = 1; i < coords.length; i++) {
+        distanceNm += gcDistanceNm(coords[i - 1]![0], coords[i - 1]![1], coords[i]![0], coords[i]![1]);
+      }
+    }
     const popup = openPopup(new maplibregl.Popup({ closeButton: false, offset: 10, maxWidth: 'none' })
       .setLngLat(lngLat)
       .setHTML(`
         <div class="ais-popup">
           ${name ? `<div class="ais-popup-title">${name}</div>` : ''}
+          ${fullRoute ? `<div class="ais-popup-meta">${distanceNm < 10 ? distanceNm.toFixed(2) : distanceNm.toFixed(1)} NM</div>` : ''}
           <div class="ais-links" style="margin-top:0">
             <button class="popup-settings-btn activate-route-btn"
               ${canAct ? `data-uuid="${uuid}"` : 'disabled title="Login required to activate route"'}>Activate route</button>
@@ -3498,6 +3511,12 @@
   :global(.ais-popup-coords) {
     font-family: monospace;
     font-size: 11px;
+    color: #9ca3af;
+    margin-bottom: 8px;
+    text-align: center;
+  }
+  :global(.ais-popup-meta) {
+    font-size: 12px;
     color: #9ca3af;
     margin-bottom: 8px;
     text-align: center;
