@@ -98,6 +98,8 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
 
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
@@ -119,6 +121,17 @@ jobs:
 
       - name: cargo test
         run: cargo test
+
+      # trackProcessing.ts (and every other WASM-backed TS module) statically
+      # imports app/src/wasm/signalk_chart_core.js — a gitignored build
+      # artifact. Vitest needs it on disk before any test file that
+      # transitively imports a WASM-backed module can even resolve, or the
+      # whole suite fails at module-graph-build time (not a test failure).
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Build WASM (dev) for testing
+        run: wasm-pack build crates/core --target web --dev --out-dir ../../app/src/wasm
 
       - name: vitest
         run: cd app && pnpm test
