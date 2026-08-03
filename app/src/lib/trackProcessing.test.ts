@@ -1,177 +1,53 @@
-import { describe, expect, it } from 'vitest';
-import { processRouteCoords, processTrack, splitAtAntimeridian } from './trackProcessing';
+import { describe, expect, it, vi } from 'vitest';
+import { processRouteCoords, processTrack } from './trackProcessing';
 
-/** Wrap a longitude into [-180, 180] (what Signal K / the track store provides). */
-function wrap(lon: number): number {
-  return ((lon + 180) % 360 + 360) % 360 - 180;
-}
+// Keep WASM readiness permanently pending so the `!ready` fallback branch is
+// deterministic. Without this, CI now builds the wasm artifact before vitest
+// (see ci.yml) — `wasmInit.ts`'s `__wbg_init()` promise could settle before
+// these synchronous assertions run, silently switching them onto the
+// real-WASM code path and making the fallback untested depending on timing.
+vi.mock('./wasmInit', () => ({ ready: new Promise<never>(() => undefined) }));
 
-// Output coordinates are guaranteed within [-360, 360] (within MapLibre's ±540° limit).
-const SEGMENT_RANGE = 360;
-
-describe('splitAtAntimeridian', () => {
-  it('returns empty for empty input', () => {
-    expect(splitAtAntimeridian([])).toEqual([]);
-  });
-
-  it('returns one segment when there are no crossings', () => {
-    const pts: [number, number][] = [[-170, 10], [0, 10], [170, 10]];
-    expect(splitAtAntimeridian(pts)).toEqual([pts]);
-  });
-
-  it('returns one valid segment for a two-point eastward crossing', () => {
-    // 170°E → -170°W: crosses the antimeridian. The pre-crossing side has only
-    // one point, so it is dropped (not a valid LineString). The output is a single
-    // segment starting at the handover point.
-    const pts: [number, number][] = [[170, 10], [-170, 10]];
-    const segs = splitAtAntimeridian(pts);
-    expect(segs.length).toBe(1);
-    // Handover: 170 - 360 = -190, followed by the raw post-crossing point.
-    expect(segs[0]![0]![0]).toBe(-190);
-    expect(segs[0]![1]![0]).toBe(-170);
-  });
-
-  it('returns one valid segment for a two-point westward crossing', () => {
-    // -170°W → 170°E: crosses the antimeridian.
-    const pts: [number, number][] = [[-170, 10], [170, 10]];
-    const segs = splitAtAntimeridian(pts);
-    expect(segs.length).toBe(1);
-    // Handover: -170 + 360 = 190, followed by the raw post-crossing point.
-    expect(segs[0]![0]![0]).toBe(190);
-    expect(segs[0]![1]![0]).toBe(170);
-  });
-
-  it('all output coordinates are within [-360, 360]', () => {
-    // 8 antimeridian crossings (westward 3°/step, 500 points).
-    const raw: [number, number][] = [];
-    for (let i = 0; i < 500; i++) raw.push([wrap(-3 * i), 10]);
-    for (const seg of splitAtAntimeridian(raw)) {
-      for (const [lon] of seg) {
-        expect(lon).toBeGreaterThanOrEqual(-SEGMENT_RANGE);
-        expect(lon).toBeLessThanOrEqual(SEGMENT_RANGE);
-      }
-    }
-  });
-
-  it('produces multiple segments for a multi-circumnavigation track', () => {
-    // 500 points × 3°/step westward: crosses the antimeridian roughly every 60 steps.
-    const raw: [number, number][] = [];
-    for (let i = 0; i < 500; i++) raw.push([wrap(-3 * i), 10]);
-    const segs = splitAtAntimeridian(raw);
-    expect(segs.length).toBeGreaterThan(4);
-  });
-
-  it('step within new segment is the short path (≤ 180°) after handover', () => {
-    // Eastward crossing with 3+ points so both segments are valid.
-    const pts: [number, number][] = [[160, 10], [170, 10], [-170, 10], [-160, 10]];
-    const segs = splitAtAntimeridian(pts);
-    expect(segs.length).toBe(2);
-    const seg2 = segs[1]!;
-    // Step from handover (170 - 360 = -190) to first raw point (-170).
-    expect(Math.abs(seg2[1]![0] - seg2[0]![0])).toBeLessThanOrEqual(180);
-  });
-});
-
+/**
+ * Antimeridian-splitting and GC-densification correctness is tested Rust-side
+ * (`crates/core/src/geo.rs`, `mod tests` — `split_at_antimeridian_*`,
+ * `process_track_*`, `process_route_coords_*`), matching the convention for every
+ * other WASM-backed math module in this codebase (`wasmGeo.ts`, `wasmRest.ts`).
+ *
+ * These tests cover only the pure-TS contract that runs before any WASM call:
+ * the short-input early-return guards, exercised identically whether or not WASM
+ * has finished loading.
+ */
 describe('processTrack', () => {
-  it('returns raw coords and no overflow for empty/single input', () => {
-    expect(processTrack([])).toMatchObject({ overflowSegments: [] });
-    expect(processTrack([[0, 10]])).toMatchObject({ overflowSegments: [] });
+  it('returns raw coords and no overflow for empty input', () => {
+    expect(processTrack([])).toEqual({ coords: [], overflowSegments: [], fadeStop: 0 });
   });
 
-  it('produces no overflow for a simple non-crossing track', () => {
-    const raw: [number, number][] = [[0, 10], [10, 10], [20, 10]];
-    const { overflowSegments } = processTrack(raw);
-    expect(overflowSegments).toHaveLength(0);
+  it('returns raw coords and no overflow for single-point input', () => {
+    const raw: [number, number][] = [[0, 10]];
+    expect(processTrack(raw)).toEqual({ coords: raw, overflowSegments: [], fadeStop: 0 });
   });
 
-  it('splits into overflow + coords on a single antimeridian crossing', () => {
-    // Simple westward-crossing track: three points crossing the antimeridian.
-    const raw: [number, number][] = [[170, 10], [175, 10], [-175, 10], [-170, 10]];
-    const { coords, overflowSegments } = processTrack(raw);
-    expect(overflowSegments).toHaveLength(1);
-    // All coordinates within [-360, 360].
-    for (const seg of [coords, ...overflowSegments]) {
-      for (const [lon] of seg) {
-        expect(lon).toBeGreaterThanOrEqual(-SEGMENT_RANGE);
-        expect(lon).toBeLessThanOrEqual(SEGMENT_RANGE);
-      }
-    }
-  });
-
-  it('keeps all segments within [-360, 360] for a westward multi-circumnavigation track', () => {
-    const raw: [number, number][] = [];
-    for (let i = 0; i < 500; i++) raw.push([wrap(-3 * i), 10]);
-    const { coords, overflowSegments } = processTrack(raw);
-    for (const seg of [coords, ...overflowSegments]) {
-      for (const [lon] of seg) {
-        expect(lon).toBeGreaterThanOrEqual(-SEGMENT_RANGE);
-        expect(lon).toBeLessThanOrEqual(SEGMENT_RANGE);
-      }
-    }
-    expect(overflowSegments.length).toBeGreaterThan(1);
-  });
-
-  it('keeps all segments within [-360, 360] for an eastward multi-circumnavigation track', () => {
-    const raw: [number, number][] = [];
-    for (let i = 0; i < 500; i++) raw.push([wrap(3 * i), 10]);
-    const { coords, overflowSegments } = processTrack(raw);
-    for (const seg of [coords, ...overflowSegments]) {
-      for (const [lon] of seg) {
-        expect(lon).toBeGreaterThanOrEqual(-SEGMENT_RANGE);
-        expect(lon).toBeLessThanOrEqual(SEGMENT_RANGE);
-      }
-    }
-    expect(overflowSegments.length).toBeGreaterThan(1);
-  });
-
-  it('coords is the last (most recent) segment', () => {
-    // Track going eastward past the antimeridian: last raw point at -170°.
-    // coords should contain that final point.
-    const raw: [number, number][] = [[170, 10], [175, 10], [-175, 10], [-170, 10]];
-    const { coords } = processTrack(raw);
-    const lastCoord = coords[coords.length - 1]!;
-    // After densification, the last point is the last raw point unchanged.
-    expect(lastCoord[0]).toBeCloseTo(-170, 5);
-    expect(lastCoord[1]).toBeCloseTo(10, 5);
+  it('returns raw coords undensified while WASM is not ready (2-point input, distinct guard branch)', () => {
+    // `wasmInit.ready` is mocked above to never resolve — this exercises the
+    // `!ready` fallback deterministically, distinct from the `raw.length < 2`
+    // guard above (2 points takes a different branch).
+    const raw: [number, number][] = [[170, 10], [-170, 10]];
+    expect(processTrack(raw)).toEqual({ coords: raw, overflowSegments: [], fadeStop: 0 });
   });
 });
 
 describe('processRouteCoords', () => {
-  it('returns no segments for empty or single-point input', () => {
+  it('returns no segments for empty input', () => {
     expect(processRouteCoords([])).toEqual([]);
+  });
+
+  it('returns no segments for single-point input', () => {
     expect(processRouteCoords([[0, 10]])).toEqual([]);
   });
 
-  it('returns one segment for a route with no antimeridian crossing', () => {
-    const raw: [number, number][] = [[-100, 10], [0, 10], [100, 10]];
-    const segs = processRouteCoords(raw);
-    expect(segs).toHaveLength(1);
-  });
-
-  it('returns one valid segment for a two-point route crossing the antimeridian', () => {
-    // Two-point crossing: pre-crossing side has 1 point → filtered out.
+  it('returns raw coords as one unsplit segment while WASM is not ready (2-point input)', () => {
     const raw: [number, number][] = [[170, 10], [-170, 10]];
-    const segs = processRouteCoords(raw);
-    expect(segs).toHaveLength(1);
-    for (const seg of segs) {
-      expect(seg.length).toBeGreaterThanOrEqual(2);
-      for (const [lon] of seg) {
-        expect(lon).toBeGreaterThanOrEqual(-SEGMENT_RANGE);
-        expect(lon).toBeLessThanOrEqual(SEGMENT_RANGE);
-      }
-    }
-  });
-
-  it('returns two segments for a multi-point route crossing the antimeridian', () => {
-    const raw: [number, number][] = [[160, 10], [170, 10], [-170, 10], [-160, 10]];
-    const segs = processRouteCoords(raw);
-    expect(segs).toHaveLength(2);
-    for (const seg of segs) {
-      expect(seg.length).toBeGreaterThanOrEqual(2);
-      for (const [lon] of seg) {
-        expect(lon).toBeGreaterThanOrEqual(-SEGMENT_RANGE);
-        expect(lon).toBeLessThanOrEqual(SEGMENT_RANGE);
-      }
-    }
+    expect(processRouteCoords(raw)).toEqual([raw]);
   });
 });

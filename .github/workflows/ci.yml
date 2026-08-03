@@ -50,9 +50,14 @@ jobs:
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
 
-      # Download the pre-built wasm-pack binary — much faster than cargo install.
-      - name: Install wasm-pack
-        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+      # Pinned to the exact v0.13.1 GitHub release asset (immutable once
+      # published) rather than the auto-updating installer script — the
+      # installer fetches from a mutable page that could point at a newer
+      # version without any change to this repo.
+      - name: Install wasm-pack (pinned v0.13.1)
+        run: |
+          curl -fsSL https://github.com/rustwasm/wasm-pack/releases/download/v0.13.1/wasm-pack-v0.13.1-x86_64-unknown-linux-musl.tar.gz | tar xz -C /tmp
+          install -m 755 /tmp/wasm-pack-v0.13.1-x86_64-unknown-linux-musl/wasm-pack "$HOME/.cargo/bin/wasm-pack"
 
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
@@ -98,6 +103,8 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
 
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
@@ -119,6 +126,19 @@ jobs:
 
       - name: cargo test
         run: cargo test
+
+      # trackProcessing.ts (and every other WASM-backed TS module) statically
+      # imports app/src/wasm/signalk_chart_core.js — a gitignored build
+      # artifact. Vitest needs it on disk before any test file that
+      # transitively imports a WASM-backed module can even resolve, or the
+      # whole suite fails at module-graph-build time (not a test failure).
+      - name: Install wasm-pack (pinned v0.13.1)
+        run: |
+          curl -fsSL https://github.com/rustwasm/wasm-pack/releases/download/v0.13.1/wasm-pack-v0.13.1-x86_64-unknown-linux-musl.tar.gz | tar xz -C /tmp
+          install -m 755 /tmp/wasm-pack-v0.13.1-x86_64-unknown-linux-musl/wasm-pack "$HOME/.cargo/bin/wasm-pack"
+
+      - name: Build WASM (dev) for testing
+        run: wasm-pack build crates/core --target web --dev --out-dir ../../app/src/wasm
 
       - name: vitest
         run: cd app && pnpm test
