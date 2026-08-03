@@ -130,4 +130,4 @@ Chrome on Android doesn't seem to like the shaders of deck.gl. After closing the
 
 ## Roadmap
 
-- Tauri packaging (Android)
+- Tauri packaging

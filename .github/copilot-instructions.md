@@ -9,18 +9,19 @@ A professional sea chart plotting application for sailing, built on Signal K.
 
 ## Architecture
 
-- **Rust/WASM core** — all navigation math, Signal K data model, AIS processing, coordinate transforms, routing. No navigation logic in TypeScript.
+- **Rust/WASM core** — all navigation math, Signal K data model, AIS processing, coordinate transforms, routing. No navigation decisions in TypeScript (compute placement: ADR-011 in `KNOWLEDGE_BASE.md`).
 - **MapLibre GL JS** — chart rendering (WebGL). Globe projection by default.
 - **deck.gl** — AIS vessel layers, vessel tracks, wind particle overlays (on top of MapLibre).
 - **Svelte + TypeScript** — UI shell only (menus, panels, settings). Minimal, no map math.
-- **Tauri 2** — native packaging for Android and Windows. The web app must work standalone in Firefox at all times; Tauri is packaging, not a dependency.
+- **Tauri 2** — native packaging for Android and Windows (iOS feasible later). The web app must work standalone in Firefox at all times; Tauri is packaging, not a dependency.
 
 ## Key conventions
 
 - All coordinate math goes through the `Projection` trait in Rust — never raw lon/lat arithmetic.
 - No hardcoded `EPSG:3857` in business logic.
 - Tile sources always use the `{z}/{x}/{y}` URL interface regardless of backend (remote, cached, local server).
-- TypeScript calls into WASM for any computation involving geo data, Signal K values, or routing.
+- Compute placement (ADR-011): per-frame × per-entity math lives in shaders (e.g. `VesselMorphLayer` dead reckoning); TS may hold small CPU mirrors of shader math and per-frame scalar glue; everything batchable or event-frequency (Signal K parsing, GC math, CPA, routing) goes through WASM.
+- Cross the JS↔WASM boundary in batches at data-change frequency — never per-item inside per-frame loops.
 - Make sure that all the checkers and linters are green
 
 ## Code style
@@ -47,7 +48,7 @@ A professional sea chart plotting application for sailing, built on Signal K.
 
 ## What NOT to do
 
-- Do not put navigation math, coordinate transforms, or Signal K parsing in TypeScript/Svelte.
+- Do not put navigation math, coordinate transforms, or Signal K parsing in TypeScript/Svelte (sole exception: the small per-frame CPU mirrors defined by ADR-011).
 - Do not hardcode Web Mercator — use the projection abstraction.
 - Do not design for Freeboard-SK compatibility — that would inherit its architectural constraints.
 - Do not make Tauri a hard dependency — the app must run in a plain browser.
