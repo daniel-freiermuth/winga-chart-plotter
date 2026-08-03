@@ -34,6 +34,9 @@ export interface HitTarget {
   readonly kind: string;
   /** If present, pointer-down immediately initiates a drag operation. */
   readonly drag?: DragBehavior;
+  /** Human-readable name shown in the disambiguation popup (e.g. vessel name, waypoint name).
+   *  Empty string for elements whose kind label alone is sufficient (own vessel). */
+  readonly label: string;
   /** Short tap: press + release without significant movement. */
   onTap(lngLat: maplibregl.LngLat, clientX: number, clientY: number): void;
   /** Right-click or OS context-menu event. */
@@ -48,8 +51,8 @@ export type DragTarget = HitTarget & { drag: DragBehavior };
 /** An interactive layer that knows how to hit-test itself and produce a HitTarget.
  *  One instance per interactive element; added to INTERACTIONS in priority order. */
 export interface Interactable {
-  /** Returns the HitTarget at canvas position (x, y), or null if nothing is hit. */
-  pick(x: number, y: number): HitTarget | null;
+  /** Returns one HitTarget, multiple (e.g. several overlapping AIS vessels), or null. */
+  pick(x: number, y: number): HitTarget | HitTarget[] | null;
 }
 
 // -- Gesture types ----------------------------------------------------------------

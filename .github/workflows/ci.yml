@@ -1,0 +1,144 @@
+# .github/workflows/ci.yml
+#
+# CI pipeline for winga-chart-plotter-signalk
+#
+# Runs on every push and pull request.
+# Jobs run in parallel for fast feedback:
+#   lint — cargo fmt, cargo clippy, svelte-check, eslint
+#   test — cargo test, vitest
+#
+# Concurrency: in-progress runs for the same branch/PR are cancelled when a
+# newer push arrives, so stale check results never block a PR.
+
+name: CI
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Incremental compilation is counterproductive in CI — each job starts fresh.
+  CARGO_INCREMENTAL: '0'
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # lint — Rust + TypeScript static analysis
+  # Needs wasm-pack to generate app/src/wasm/ bindings before svelte-check can
+  # resolve WASM imports. Uses the dev profile so the build is faster than
+  # release but produces identical JS/TS type declarations.
+  # ---------------------------------------------------------------------------
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+          targets: wasm32-unknown-unknown
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+
+      # Pinned to the exact v0.13.1 GitHub release asset (immutable once
+      # published) rather than the auto-updating installer script — the
+      # installer fetches from a mutable page that could point at a newer
+      # version without any change to this repo.
+      - name: Install wasm-pack (pinned v0.13.1)
+        run: |
+          curl -fsSL https://github.com/rustwasm/wasm-pack/releases/download/v0.13.1/wasm-pack-v0.13.1-x86_64-unknown-linux-musl.tar.gz | tar xz -C /tmp
+          install -m 755 /tmp/wasm-pack-v0.13.1-x86_64-unknown-linux-musl/wasm-pack "$HOME/.cargo/bin/wasm-pack"
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: '11.3.0'
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+          cache-dependency-path: app/pnpm-lock.yaml
+
+      - name: Install frontend dependencies
+        run: cd app && pnpm install --frozen-lockfile
+
+      - name: cargo fmt
+        run: cargo fmt --check
+
+      - name: cargo clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      # Build WASM with the dev profile so svelte-check can resolve the
+      # generated bindings in app/src/wasm/ without waiting for a release build.
+      - name: Build WASM (dev) for type-checking
+        run: wasm-pack build crates/core --target web --dev --out-dir ../../app/src/wasm
+
+      - name: svelte-check
+        run: cd app && pnpm exec svelte-check --tsconfig tsconfig.json
+
+      - name: ESLint
+        run: cd app && pnpm exec eslint src
+
+  # ---------------------------------------------------------------------------
+  # test — Rust unit tests + Vitest
+  # ---------------------------------------------------------------------------
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: '11.3.0'
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+          cache-dependency-path: app/pnpm-lock.yaml
+
+      - name: Install frontend dependencies
+        run: cd app && pnpm install --frozen-lockfile
+
+      - name: cargo test
+        run: cargo test
+
+      # trackProcessing.ts (and every other WASM-backed TS module) statically
+      # imports app/src/wasm/signalk_chart_core.js — a gitignored build
+      # artifact. Vitest needs it on disk before any test file that
+      # transitively imports a WASM-backed module can even resolve, or the
+      # whole suite fails at module-graph-build time (not a test failure).
+      - name: Install wasm-pack (pinned v0.13.1)
+        run: |
+          curl -fsSL https://github.com/rustwasm/wasm-pack/releases/download/v0.13.1/wasm-pack-v0.13.1-x86_64-unknown-linux-musl.tar.gz | tar xz -C /tmp
+          install -m 755 /tmp/wasm-pack-v0.13.1-x86_64-unknown-linux-musl/wasm-pack "$HOME/.cargo/bin/wasm-pack"
+
+      - name: Build WASM (dev) for testing
+        run: wasm-pack build crates/core --target web --dev --out-dir ../../app/src/wasm
+
+      - name: vitest
+        run: cd app && pnpm test

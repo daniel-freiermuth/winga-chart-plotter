@@ -117,7 +117,7 @@ A professional, high-quality sea chart plotting application for sailing — desi
 - Chart tile cache management
 - S-57 parsing (future)
 
-**TypeScript role:** UI shell only — event handling, DOM, settings panels. Some geo math (GC line densification, bearing, haversine distance) lives in `app/src/lib/geoMath.ts` for rendering convenience; no navigation decisions or Signal K parsing in TS.
+**TypeScript role:** UI shell plus thin rendering glue — event handling, DOM, settings panels. GC/navigation math lives in the Rust `geo` module (surfaced via `app/src/lib/wasmGeo.ts`); the only math TS owns is per-frame CPU mirrors and accessor glue under the placement rule in ADR-011. No navigation decisions or Signal K parsing in TS.
 
 ---
 
@@ -136,6 +136,22 @@ A professional, high-quality sea chart plotting application for sailing — desi
 1. Firefox (dev) → Service Worker tile cache
 2. Tauri (production) → Rust-managed disk cache, hardware access
 3. Android APK + Windows EXE from same source
+
+**Status review (2026-08): decision reaffirmed.**
+
+- **Expectation correction:** Tauri does *not* buy native rendering speed. Rendering stays MapLibre + deck.gl WebGL inside the system webview (Android System WebView / Windows WebView2 — both Chromium-class), so frame rates ≈ Chrome today. The Rust core already runs near-native as WASM. What Tauri actually buys: distribution (APK/EXE, no browser chrome), **unbounded disk tile cache** (browser quota eviction is the enemy of offline charts), serial/Bluetooth hardware via the Rust backend, reliable keep-awake, reliable local GPS.
+- **Alternatives re-checked:** Electron (no Android — out), Capacitor (JS/Kotlin backend — forfeits the Rust leverage for cache/serial), Flutter/Compose (rewrite — out). PWA-only is the honest fallback (already shipped) but capped by storage eviction and no serial access.
+- **iOS:** first-class Tauri 2 target (`tauri ios init`, WKWebView shell), same codebase. Extra costs: macOS + Xcode required to build (CI macOS runner; Linux cannot produce an IPA), Apple Developer Program + signing + review. Networking specifics (verified against Apple's TN3179 + ATS docs): direct `WKWebView` traffic to the boat's `ws://` server does **not** trigger the iOS Local Network privacy prompt — that's `NSAllowsLocalNetworking` (ATS) territory, and on **iOS 17+ that alone is insufficient for IP-address endpoints**; each boat-server IP/CIDR range needs an explicit entry in `NSExceptionDomains`. The Local Network *prompt* + `NSLocalNetworkUsageDescription`/`NSBonjourServices` are needed only if mDNS/Bonjour *discovery* is added (separate from the WKWebView connection itself). For this app's Tauri config specifically, WKWebView has no Service Worker support in-app and no `navigator.wakeLock` — both need verifying against the actual `http://tauri.localhost` origin on a target iOS version before shipping, not assumed as a general WKWebView rule. Sequence iOS *last* — Android + Windows validate the shell first. To make iOS fall out for free: use official Tauri plugins (geolocation, keep-awake) rather than hand-rolled per-platform code.
+- **Dev caveat:** Tauri on Linux = WebKitGTK, with documented WebGL performance problems (upstream: v2.tauri.app/develop/debug/linux-graphics). Firefox remains the dev loop; never judge map performance in `tauri dev` on Linux.
+- **First milestone when wiring starts:** map perf smoke test on real Windows + Android hardware — the go/no-go gate before any feature work (scattered reports of WebView2 WebGL lag in release builds, tauri#8020).
+
+**Readiness audit (2026-08):** the app is Tauri-clean — no Tauri dependency anywhere, `base: './'` bundle, tile sources behind the `{z}/{x}/{y}` URL interface, all nav math in the Rust crate. Five integration seams remain, each config/plugin work, none structural:
+
+1. `detectSignalkOrigin()` (`settings.svelte.ts`) defaults the SK endpoint from `window.location` — meaningless under `tauri.localhost`. Settings override already exists; needs a first-run server-config flow (or mDNS discovery) in the Tauri build.
+2. Webview scheme must stay `http://tauri.localhost` (not the https option) or plain `ws://` to boat SK servers gets mixed-content-blocked. Pin this deliberately; verify on Android.
+3. Service Worker precache (VitePWA) is redundant inside Tauri and SW support under webview schemes is spotty — gate registration off in Tauri builds.
+4. Geolocation (`App.svelte` watchPosition) needs `@tauri-apps/plugin-geolocation` on Android (native permission plumbing).
+5. `lib/wakeLock.ts` swallows failure silently — on Android/iOS webviews the API may be absent → screen sleeps mid-navigation with zero signal. Needs the keep-awake plugin (`FLAG_KEEP_SCREEN_ON` / `isIdleTimerDisabled`).
 
 ---
 
@@ -169,7 +185,7 @@ pub trait Projection {
 ```
 
 - `proj` crate provides access to 6000+ EPSG codes when needed
-- All geo math goes through this interface — never raw lon/lat arithmetic
+- CRS/map transforms go through this interface. Geodesic helpers (bearing, distance, GC line/densification, antimeridian splitting — `geo.rs`) operate directly on normalized WGS84 `[lon, lat]` pairs and do not use `Projection` — they're not a CRS transform. Same distinction as `.github/copilot-instructions.md`'s Key Conventions.
 
 ---
 
@@ -213,8 +229,8 @@ S-57 (.000) → Rust parser → GeoJSON/MVT → MapLibre
 | Chart rendering | MapLibre GL JS | WebGL, vector + raster, globe + mercator |
 | AIS / overlays | deck.gl | GPU layers on top of MapLibre |
 | Business logic | Rust → WASM | Signal K parsing, AIS management, coordinate math |
-| UI shell | Svelte 5 + TypeScript | Minimal; geo math helpers in `lib/geoMath.ts` |
-| Native shell | Tauri 2 | Android + Windows packaging (not yet wired) |
+| UI shell | Svelte 5 + TypeScript | Minimal; geo math via WASM (`lib/wasmGeo.ts`); compute placement per ADR-011 |
+| Native shell | Tauri 2 | Android + Windows packaging, iOS feasible (not yet wired; see ADR-003 status 2026-08) |
 | Data protocol | Signal K | WebSocket delta stream + REST resources API |
 | Offline charts | Service Worker tile cache | PWA; Rust/Tauri disk cache planned |
 | Projections | MapLibre Globe + Mercator | Globe for correctness; Rust proj crate ready for future EPSG support |
@@ -269,7 +285,93 @@ If sources multiply, extract a source-selector/merger layer that receives all so
 - Also fixed in the rewrite (both real, both found while building the fixture corpus, neither in the original bug report): (1) vessel-id truncation — the old crate's `V1FullFormat::apply_delta` splits the whole context on `.` and keeps only the segment right after `"vessels"`, silently truncating any id with a dotted suffix (e.g. an AIS-relay id ending `...XX`); `skdata` strips only the literal `"vessels."` prefix and keeps the rest of the id intact. (2) the old crate's `V1CourseApiActiveRouteModel` deserializes `activeRoute` as one strict, all-or-nothing struct (a missing field like `pointTotal` — which the app never reads — silently drops the *entire* active route); `skdata` extracts each `activeRoute` field independently with explicit defaults, so an incomplete/non-canonical payload degrades gracefully instead of vanishing.
 - `$source` is now captured per navigation leaf internally (`Navigation::{position,cog,sog,heading}_source` in `skdata.rs`) — fixing the structural unavailability noted above — but deliberately **not** surfaced on the public `VesselState`/`AisTarget` yet: no UI/diagnostics consumer asks for it. Surface it when one does, not speculatively.
 - Verification: `crates/core/tests/fixtures/` holds 6 captured/spec-verified real wire-delta fixtures (provenance in `fixtures/README.md`) used as a dual-run parity harness against the old `signalk`-crate path during development (now-deleted `tests/parity.rs`; all fixtures matched except the one designed to diverge — the accuracy-sibling bug itself, where only the fix is correct). Repurposed post-cutover as `crates/core/tests/fixtures_test.rs`, a permanent regression suite pinning `skdata` against real wire bytes. 32 Rust tests total (26 unit + 6 fixture), `cargo clippy --all-targets --all-features` clean on both host and `wasm32-unknown-unknown`, full `just check-all` green, runtime-smoke-tested in a real browser (wasm module loads, `SignalKClient`/`Position`/`VesselState` construct correctly, geo functions unaffected).
-- Phase 2 (v2 REST client in Rust) and Phase 3 (`geoMath.ts` → Rust `geo` module) are separate, not started by this pass; see the plan artifact this ADR's decision was drawn from (`agent://SignalKDataLayerPlan`) for scope.
+- Phase 2 (v2 REST client in Rust) and Phase 3 (`geoMath.ts` → Rust `geo` module) are separate, not started by this pass; see the plan artifact this ADR's decision was drawn from (`agent://SignalKDataLayerPlan`) for scope. *(Status 2026-08: both since shipped — `crates/core/src/skrest/` and `crates/core/src/geo.rs`, TS bridge in `app/src/lib/wasmGeo.ts`.)*
+
+---
+
+### ADR-010: Split/dual-pane view — app vs. pane state boundary
+
+**Decision:** The screen can split along the longer viewport edge into two
+independent chart panes. The draggable divider is the only split control: it
+parks at the collapsed pane's screen edge and doubles as the drawer handle
+that opens the split. The split forced an explicit state boundary, now
+load-bearing across the whole frontend:
+
+**Litmus test:** *data about the world* (has lon/lat) is app-level and shared;
+*a way of looking at the world* (camera params, screen px) is pane-level and
+replicated.
+
+- **App (singletons):** Signal K connection/worker, AIS, own vessel, routes,
+  waypoints, tracks, rulers (geographic data — rendered in both panes), MOB,
+  settings, widgets, extensions, chart *catalog* (incl. WMTS resolution).
+- **Pane (×2, `stores/pane.svelte.ts` → `PaneState`):** camera + projection
+  (`view`), chart *selection* (`chartSel`), base layers, layer visibility,
+  rotation mode, vessel follow/pinning. Created by store factories taking an
+  `lsSuffix`; pane 0 keeps the legacy un-suffixed localStorage keys (zero
+  migration), pane 1 uses `:1`-suffixed keys. Both panes exist eagerly. A pane
+  is rendered while the layout mounts it (`split`, or the matching solo
+  layout), and a pane without a persisted camera is seeded from the other
+  pane's live camera on the layout change that first mounts it.
+
+**No active-pane concept.** Pane-scoped controls (compass, follow, chart
+picker button) are doubled *inside* each pane — the buttons carry per-pane
+state, and touch location implicitly targets a pane. App-level actions never
+need to ask "which pane": MOB is a fire-and-forget server POST whose marker
+comes back through the shared AIS data path; the extension host API cannot
+steer the camera (`map.flyTo`/`map.fitBounds` are warning no-ops — navigation
+intent comes from the user); `map.getView` returns the union bbox of both
+panes when split.
+
+**Single-writer rule for per-frame shared side effects:** ruler snap-following
+(dead-reckoned snap targets → `rulers.syncSnapped`) runs in ONE app-level rAF
+driver (`lib/rulerSnap.ts`), never in a pane's render loop; panes only read
+`currentSnapTargets()` for drag-snap hit-testing. Exception: FPS measurement
+stays in Map.svelte gated on the `fpsOwner` prop (default `pane.isPrimary`;
+the solo second pane takes over while pane 0 is collapsed), because the
+metric deliberately measures the throttled map tick rate (`targetFps`), which
+only exists inside a map's render loop.
+
+**Svelte 5 pitfall (cost a debugging session):** an object that needs
+reference identity — like a `PaneState` compared against `panes[i]` — must be
+held in `$state.raw`, never `$state`. The deep proxy breaks `===` silently and
+an effect comparing/resetting it re-fires every flush, starving all app
+reactivity with no error anywhere.
+
+**Known cost:** split view runs two MapLibre + two deck.gl WebGL contexts
+(~2× GPU load). Adaptive-quality work is deliberately deferred until real
+on-device profiling data exists.
+
+---
+
+### ADR-011: Compute placement — GPU / TypeScript / WASM (2026-08)
+
+**Context:** Reviewed whether more math should move from TS to Rust — and whether Rust pays off at all ("maximal shell" question).
+
+**Decision: Rust stays; three-tier placement rule.** Work goes to the tier matching its frequency × cardinality:
+
+| Tier | Owns | Examples |
+|---|---|---|
+| GPU (shaders) | per-frame × per-entity | AIS dead reckoning: `VesselMorphLayer` vertex shader computes the full arc/straight DR + heading extrapolation from instance attributes + a `timeSinceUpload` uniform. Attributes upload only on AIS data change; per-frame cost = one uniform write |
+| TypeScript | per-frame scalar glue + CPU mirrors of shader math | selected-target ring/popup anchors, ruler snap ghosts, CPA ghost endpoints (`lib/deadReckoning.ts`) |
+| Rust/WASM | data layer + event/batch math | delta parsing (`skdata`), REST (`skrest`), CPA solver, GC line/bearing/distance, dateline-aware bounds (`geo.rs`) |
+
+**Boundary rule:** cross the JS↔WASM boundary in **batches at event/data-change frequency, never per-item inside per-frame loops**. No profiling data backs a specific per-call cost figure for this codebase — the rule is architectural, not a measured performance claim: per-item calls inside a 60fps×N-entity loop don't scale, batched calls (one call per update, working on whole buffers) do. So "more Rust" is an economics/correctness question, not a perf rescue — the AIS hot store is already a flat `Float64Array`, the exact layout for a future zero-copy batch call if one is ever warranted. If per-call overhead is ever load-bearing for a decision, profile it first (per the project's own performance-optimization rule) rather than estimating.
+
+**CPU mirror is structural, not debt:** once the GPU owns per-frame math, a CPU copy of that math is unavoidable — deck.gl picking follows the shader automatically, but snap targets, CPA logic, and popup anchors need CPU-side positions. The GLSL + CPU pair is permanent; "one canonical implementation" is impossible here. Keep the mirror small and cross-tested (`deadReckoning.test.ts` covers the CPU side; a shared test-vector file asserting GLSL ≡ CPU at reference points is the open correctness win). Moving the mirror TS → Rust would not reduce the copy count, only change its language.
+
+**Drop-Rust considered, rejected:** the data layer is done and working in Rust (a TS rewrite is regression-only), the Tauri phase-2 payoffs (disk tile cache, serial NMEA) are Rust-backend features, the ecosystem-library goal (ADR-002) needs the crate, and the WASM costs are already paid — measured 2026-08 via `vite build` output: `signalk_chart_core_bg.wasm` is 373 KB raw / 153 KB gzip (release `wasm-pack` build, wasm-opt'd), part of a 2.6 MB total PWA precache.
+
+**Fixed (2026-08):** `lib/trackProcessing.ts` duplicated `geo.rs` GC math (haversine, SLERP densification, antimeridian handling) — two GC implementations that could drift (ruler says X, track renders Y). Consolidated: `haversine_meters`/`densify_by_distance`/`split_at_antimeridian`/`process_track_core`/`process_route_coords_core` now live in `geo.rs`, exposed as two batched wasm exports (`processTrack`, `processRouteCoords` — one call per track/route update, matching the boundary rule above). `trackProcessing.ts` is now a thin wrapper (same shape as `wasmGeo.ts`/`wasmRest.ts`): flattens `[lon,lat][]` to a `Float64Array`, calls WASM, casts the result. Geometry correctness moved to `geo.rs`'s `mod tests` (17 cases ported 1:1 from the old `trackProcessing.test.ts`, plus 7 new: direct `densify_by_distance`/`haversine_meters` coverage and both `fade_stop` branches — matching how every other WASM-backed math module in this codebase is tested).
+
+**Also fixed (2026-08), separately:** `densify_by_distance` inherited an unguarded antipodal-endpoint edge case from the original TS `gcDensifySegment` (SLERP weights divide by `sin_d`, which → 0 as the endpoints approach antipodal — a pre-existing defect, not introduced by the port). Route legs between antipodal waypoints are real user input, not just tracks. Falls back to the endpoint, same as the existing degenerate-input guard.
+
+**GPU candidates, ranked:** (1) COG predictor arcs — currently CPU-built 24-point paths re-anchored only on data upload while the hull glides in the shader; a parametric arc in a path shader (same instance attributes) would animate predictors in perfect sync — visible payoff, not just perf. (2) Wind particles — planned, inherently GPU. Not worth it: single-item anchors, easing, label placement.
+
+**Own vessel deliberately NOT dead-reckoned** (`buildOwnVesselLayers` zeroes `getSog`/`getRot`, `selfAnimate: false` — the shader's DR branch computes a zero offset):
+- Own GPS is ~1 Hz — at 5 kn the inter-fix gap is ~2.5 m, sub-pixel except at harbor zooms (AIS gaps are 2–10 s+, hence DR there).
+- Own position is ground truth; extrapolating it fabricates precision on the one vessel used for close-quarters decisions.
+- Follow/pin camera eases toward *fixes* — a DR'd icon would glide off the pinned screen position and rubber-band back each fix. Animating the icon requires feeding the same extrapolation into the camera math.
+- **Prerequisite if ever enabled:** the own-vessel staleness indicator must land *first* (a gliding icon on stale GPS reads as "GPS alive" — dangerous), then a small `drCapSeconds` (seconds, not AIS's 180) plus residual blending so fixes correct by easing, not snapping.
 
 ---
 
@@ -336,7 +438,7 @@ If sources multiply, extract a source-selector/merger layer that receives all so
 
 ## Open Questions
 - [ ] S-52 symbology: implement IHO standard symbols, or start with simplified/custom nautical style?
-- [ ] Signal K connection: direct WebSocket from browser, or proxied through Tauri Rust backend?
+- [ ] Signal K connection: direct WebSocket from browser, or proxied through Tauri Rust backend? Still open — no Tauri wiring exists yet to test either path. Preference, not a decision: direct WS, because it keeps the browser and native code paths identical (Tauri stays packaging-only). Resolves once Tauri wiring lands and direct WS is verified against a real SK server from inside the webview (mixed-content/ATS behavior per ADR-003).
 - [ ] AIS source: from Signal K only, or also direct UDP/TCP NMEA input?
 - [ ] Wind data source: Signal K instruments only, or also GRIB file import?
 - [ ] Radar: georeferenced overlay on MapLibre ImageSource, or separate canvas panel, or both?
@@ -397,4 +499,4 @@ Tauri is packaging, not a dependency.
 
 ---
 
-*Last updated: 2026-06-28 — added ADR-009 Phase 1 completion: `skdata` module implemented, `signalk` crate dependency dropped, two latent crate bugs fixed (vessel-id truncation, strict all-or-nothing activeRoute deserialization)*
+*Last updated: 2026-08-03 — ADR-011 trackProcessing→geo.rs consolidation shipped (haversine/SLERP-densify/antimeridian-split moved to Rust, 25 geo.rs tests: 17 ported + 8 new, WASM boundary marshaling verified against real output) plus a separate fix for an inherited antipodal-endpoint NaN bug (one of the 8 new tests covers it); ADR-003 status review 2026-08 (Tauri reaffirmed, iOS costs, readiness audit: five seams); ADR-011: compute placement GPU/TS/WASM, WASM boundary rule, drop-Rust rejection, own-vessel no-DR rationale*

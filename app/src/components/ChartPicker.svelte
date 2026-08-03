@@ -2,19 +2,29 @@
   import type { StyleSpecification } from 'maplibre-gl';
   import { cubicOut } from 'svelte/easing';
   import { charts, type Chart, type WmtsLayerInfo } from '../stores/charts.svelte';
-  import { baseLayers, BASE_LAYERS, type BaseLayer } from '../stores/baseLayers.svelte';
+  import { BASE_LAYERS, type BaseLayer } from '../stores/baseLayers.svelte';
   import LazyMapThumb from './LazyMapThumb.svelte';
-  import { visibility, type VisibilityState } from '../stores/visibility.svelte';
-  import { chartLru } from '../stores/chartLru.svelte';
-  import { mapView } from '../stores/mapView.svelte';
+  import type { VisibilityState } from '../stores/visibility.svelte';
+  import { chartLru, touchVisibleSelections } from '../stores/chartLru.svelte';
+  import type { PaneState } from '../stores/pane.svelte';
 
   let {
-    isOpen = $bindable(false),
+    pane,
+    onClose,
     onToggleProjection,
   }: {
-    isOpen?: boolean;
+    pane: PaneState;
+    /** The picker is mounted only while open — closing = asking the app to unmount it. */
+    onClose: () => void;
     onToggleProjection?: () => void;
   } = $props();
+
+  // Pane-scoped stores — the picker configures exactly one pane; the chart
+  // *catalog* (charts store) stays app-level.
+  const mapView    = $derived(pane.view);
+  const visibility = $derived(pane.visibility);
+  const baseLayers = $derived(pane.baseLayers);
+  const chartSel   = $derived(pane.chartSel);
 
   // Sheet height in dvh units.  Starts at 52; grows via drag or scroll wheel.
   let sheetHeight = $state(52);
@@ -22,19 +32,9 @@
   let isDragging  = $state(false);
   let _dragY = 0;
 
-  export function open() { isOpen = true; sheetHeight = 52; }
   function close() {
-    const activeIds: string[] = [...baseLayers.enabled];
-    for (const cid of charts.selected) {
-      if (charts.available[cid]?.type === 'WMTS') {
-        const layerId = charts.getLayerSel(cid);
-        if (layerId) activeIds.push(`${cid}:${layerId}`);
-      } else {
-        activeIds.push(cid);
-      }
-    }
-    chartLru.touch(activeIds);
-    isOpen = false;
+    touchVisibleSelections(); // keep every visible pane's active charts in the LRU
+    onClose();
   }
 
   // ── Handle drag ── live height tracking, snap on release ─────────────────
@@ -162,14 +162,16 @@
   }
 
 
-  function clickWmts(chartId: string, layerId: string, layerTileUrl: string) {
+  function clickWmts(chartId: string, layerId: string) {
     // No-op if this exact layer is already active (never deactivates).
-    if (charts.selected.has(chartId) && charts.getLayerSel(chartId) === layerId) return;
+    if (chartSel.selected.has(chartId) && chartSel.getLayerSel(chartId) === layerId) return;
     baseLayers.deselectAll();
-    if (!charts.selected.has(chartId)) charts.toggle(chartId);
-    // activateLayer is synchronous: writes wmtsResolved + wmtsLayerSel in the same
-    // turn as toggle(), so Svelte batches everything into one render — no wrong-layer flash.
-    charts.activateLayer(chartId, layerId, layerTileUrl);
+    if (!chartSel.selected.has(chartId)) chartSel.toggle(chartId);
+    // Layer selection is pane state. The tile URL is derived synchronously
+    // from the catalog's resolved capabilities (already loaded — the layer
+    // cards come from them), so the switch renders in the same turn — no
+    // wrong-layer flash.
+    chartSel.activateLayer(chartId, layerId);
   }
 
   // Slide-up entrance / slide-down exit
@@ -245,7 +247,6 @@
   );
 </script>
 
-{#if isOpen}
   <div class="sheet" class:dragging={isDragging}
        style="height: {String(Math.round(sheetHeight))}dvh; border-radius: {sheetHeight >= 99 ? '0' : '14px 14px 0 0'}"
        transition:slideUp>
@@ -348,27 +349,27 @@
               class="card"
               class:selected={baseLayers.enabled.has(item.id)}
               aria-pressed={baseLayers.enabled.has(item.id)}
-              onclick={() => { charts.deselectAll(); baseLayers.toggle(item.id); close(); }}
+              onclick={() => { chartSel.deselectAll(); baseLayers.toggle(item.id); close(); }}
             >
               <div class="card-preview">
-                <LazyMapThumb style={rasterStyle(item.layer.tileUrl)} />
+                <LazyMapThumb style={rasterStyle(item.layer.tileUrl)} view={pane.view} />
               </div>
               <div class="card-label">{item.layer.name}</div>
             </button>
           {/if}
           {#if item.kind === 'chart'}
             {@const styleUrl = charts.styleUrl(item.chart)}
-            {@const tileUrl  = charts.tileUrl(item.chart)}
+            {@const tileUrl  = charts.tileUrl(item.chart, chartSel.getLayerSel(item.id) || undefined)}
             {#if styleUrl}
               <!-- Vector / style-based -->
               <button
                 class="card"
-                class:selected={charts.selected.has(item.id)}
-                aria-pressed={charts.selected.has(item.id)}
-                onclick={() => { baseLayers.deselectAll(); charts.toggle(item.id); close(); }}
+                class:selected={chartSel.selected.has(item.id)}
+                aria-pressed={chartSel.selected.has(item.id)}
+                onclick={() => { baseLayers.deselectAll(); chartSel.toggle(item.id); close(); }}
               >
                 <div class="card-preview">
-                  <LazyMapThumb style={styleUrl} bounds={item.chart.bounds} />
+                  <LazyMapThumb style={styleUrl} bounds={item.chart.bounds} view={pane.view} />
                 </div>
                 <div class="card-label">{item.chart.name}</div>
               </button>
@@ -376,13 +377,13 @@
               <!-- Raster tile chart (tilelayer, WMS, pbf …) -->
               <button
                 class="card"
-                class:selected={charts.selected.has(item.id)}
-                aria-pressed={charts.selected.has(item.id)}
-                onclick={() => { baseLayers.deselectAll(); charts.toggle(item.id); close(); }}
+                class:selected={chartSel.selected.has(item.id)}
+                aria-pressed={chartSel.selected.has(item.id)}
+                onclick={() => { baseLayers.deselectAll(); chartSel.toggle(item.id); close(); }}
               >
                 <div class="card-preview">
                   {#if tileUrl}
-                    <LazyMapThumb style={rasterStyle(tileUrl)} bounds={item.chart.bounds} />
+                    <LazyMapThumb style={rasterStyle(tileUrl)} bounds={item.chart.bounds} view={pane.view} />
                   {/if}
                 </div>
                 <div class="card-label">{item.chart.name}</div>
@@ -390,16 +391,16 @@
             {/if}
           {/if}
           {#if item.kind === 'wmts'}
-            {@const isActive = charts.selected.has(item.chartId) && charts.getLayerSel(item.chartId) === item.wmtsLayer.id}
+            {@const isActive = chartSel.selected.has(item.chartId) && chartSel.getLayerSel(item.chartId) === item.wmtsLayer.id}
             <button
               class="card"
               class:selected={isActive}
               aria-pressed={isActive}
-              onclick={() => { clickWmts(item.chartId, item.wmtsLayer.id, item.wmtsLayer.tileUrl); close(); }}
+              onclick={() => { clickWmts(item.chartId, item.wmtsLayer.id); close(); }}
             >
               <div class="card-preview">
                 {#if item.wmtsLayer.tileUrl}
-                  <LazyMapThumb style={rasterStyle(item.wmtsLayer.tileUrl)} bounds={item.chart.bounds} />
+                  <LazyMapThumb style={rasterStyle(item.wmtsLayer.tileUrl)} bounds={item.chart.bounds} view={pane.view} />
                 {:else}
                   <div class="card-preview--pulse" style="width:100%;height:100%"></div>
                 {/if}
@@ -443,7 +444,6 @@
       </div>
     </div>
   </div>
-{/if}
 
 <style>
   /* ── Sheet (bottom drawer) ───────────────────────────────────────────── */

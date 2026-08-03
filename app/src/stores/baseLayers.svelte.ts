@@ -1,4 +1,6 @@
 import { SvelteSet } from 'svelte/reactivity';
+import { resolveEnabledIds } from '../lib/baseLayerPrefs';
+import { loadJSON, saveJSON } from './paneStorage';
 
 export interface BaseLayer {
   id: string;
@@ -25,39 +27,35 @@ export const BASE_LAYERS: BaseLayer[] = [
 
 const LS_BASE_LAYERS_KEY = 'base-layers-enabled';
 
-function loadEnabledIds(): string[] {
-  try {
-    const raw = localStorage.getItem(LS_BASE_LAYERS_KEY);
-    if (raw) {
-      // Filter to known IDs — handles migration from the old two-entry format.
-      const known = new Set(BASE_LAYERS.map(l => l.id));
-      return (JSON.parse(raw) as string[]).filter(id => known.has(id));
-    }
-  } catch { /* ignore corrupt storage */ }
-  return BASE_LAYERS.map(l => l.id);
+/** Per-pane base layer selection (exclusive — at most one active). */
+export interface BaseLayersStore {
+  readonly enabled: SvelteSet<string>;
+  /** Activate a layer. No-op if already active (never deactivates). */
+  toggle(id: string): void;
+  /** Clear all active base layers (called when a chart is selected). */
+  deselectAll(): void;
 }
 
-function createBaseLayersStore() {
-  const enabled = new SvelteSet<string>(loadEnabledIds());
+/** `lsSuffix` namespaces the localStorage key per pane ('' = primary pane, legacy key). */
+export function createBaseLayersStore(lsSuffix = ''): BaseLayersStore {
+  const key = LS_BASE_LAYERS_KEY + lsSuffix;
+
+  const enabled = new SvelteSet<string>(resolveEnabledIds(loadJSON(key), BASE_LAYERS.map(l => l.id)));
 
   return {
     get enabled(): SvelteSet<string> { return enabled; },
 
-    /** Activate a layer. No-op if already active (never deactivates). */
     toggle(id: string) {
       if (enabled.has(id)) return; // already active — clicking again is a no-op
       enabled.clear();             // exclusive: only one base layer at a time
       enabled.add(id);
-      localStorage.setItem(LS_BASE_LAYERS_KEY, JSON.stringify([...enabled]));
+      saveJSON(key, [...enabled]);
     },
 
-    /** Clear all active base layers (called when a chart is selected). */
     deselectAll() {
       if (enabled.size === 0) return;
       enabled.clear();
-      localStorage.setItem(LS_BASE_LAYERS_KEY, JSON.stringify([]));
+      saveJSON(key, []);
     },
   };
 }
-
-export const baseLayers = createBaseLayersStore();

@@ -1,0 +1,105 @@
+# .github/workflows/deploy.yml
+#
+# Build and deploy the app to GitHub Pages on every push to main.
+#
+# Prerequisites (one-time GitHub repository setup):
+#   Settings → Pages → Source: "GitHub Actions"
+#
+# The Vite build uses base:'./' (relative asset paths), so the bundle works
+# at any subpath without a rebuild.  For a project repo the Pages URL is:
+#   https://daniel-freiermuth.github.io/winga-chart-plotter/
+#
+# Concurrency: a second push to main while a deploy is running queues the new
+# run but does NOT cancel the in-flight deploy (cancel-in-progress: false),
+# avoiding a torn deployment.
+
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+# Allow only one deployment at a time; queue rather than cancel.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_INCREMENTAL: '0'
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # build — compile Rust core to WASM, then bundle with Vite
+  # ---------------------------------------------------------------------------
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+
+      # Pinned to the exact v0.13.1 GitHub release asset — see ci.yml for rationale.
+      - name: Install wasm-pack (pinned v0.13.1)
+        run: |
+          curl -fsSL https://github.com/rustwasm/wasm-pack/releases/download/v0.13.1/wasm-pack-v0.13.1-x86_64-unknown-linux-musl.tar.gz | tar xz -C /tmp
+          install -m 755 /tmp/wasm-pack-v0.13.1-x86_64-unknown-linux-musl/wasm-pack "$HOME/.cargo/bin/wasm-pack"
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: '11.3.0'
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+          cache-dependency-path: app/pnpm-lock.yaml
+
+      - name: Install frontend dependencies
+        run: cd app && pnpm install --frozen-lockfile
+
+      # Release build — same target used for Signal K package publishing.
+      # --out-dir is relative to crates/core, so ../../app/src/wasm is correct.
+      - name: Build WASM
+        run: wasm-pack build crates/core --target web --out-dir ../../app/src/wasm
+
+      - name: Build frontend
+        run: cd app && pnpm run build
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: app/dist
+
+  # ---------------------------------------------------------------------------
+  # deploy — publish the Pages artifact produced by the build job
+  # ---------------------------------------------------------------------------
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+
+    permissions:
+      pages: write
+      id-token: write
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

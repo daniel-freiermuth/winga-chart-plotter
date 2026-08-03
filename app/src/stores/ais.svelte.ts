@@ -90,6 +90,12 @@ function createAisStore() {
   let hotData = $state<Float64Array | null>(null);
   /** Vessel IDs in the same order as rows in hotData. */
   let ids = $state<string[]>([]);
+  /**
+   * Date.now() at the moment the last hot batch arrived from the worker.
+   * Plain (non-reactive) field — consumers read it inside rAF ticks or effects
+   * that already depend on `hotData`; a hot batch is what advances it.
+   */
+  let uploadTimestamp = 0;
   /** Persistent cold metadata map — patched on each batch, never fully replaced. */
   const coldMap = new SvelteMap<string, AisColdData>();
   /**
@@ -104,6 +110,7 @@ function createAisStore() {
   return {
     get hotData(): Float64Array | null { return hotData; },
     get ids(): string[] { return ids; },
+    get uploadTimestamp(): number { return uploadTimestamp; },
     get coldMap(): Map<string, AisColdData> { return coldMap; },
     get coldVersion(): number { return coldVersion; },
     get count(): number { return ids.length; },
@@ -120,6 +127,7 @@ function createAisStore() {
     ) {
       hotData = new Float64Array(hot);
       ids = newIds;
+      uploadTimestamp = Date.now();
       for (const c of cold) {
         const existing = coldMap.get(c.id);
         coldMap.set(c.id, {
