@@ -746,6 +746,7 @@
             type="text"
             placeholder="Route name…"
             bind:value={routePlanner.name}
+            onkeydown={(e) => { if (e.key === 'Enter' && !e.isComposing && !plannerSaving && routePlanner.name.trim()) void handleSaveRoute(); }}
             style="
               flex: 1; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.25);
               border-radius: 6px; color: white; padding: 5px 8px; font-size: 13px; outline: none;
