@@ -11,12 +11,18 @@ if (!target) throw new Error('No #app element found');
 const bootStatus = document.getElementById('boot-status');
 ready
   .then(() => {
-    bootStatus?.remove();
+    // Mount first: if mount() throws (e.g. a runtime error during initial
+    // component construction), #boot-status must stay attached and visible
+    // instead of a blank screen — the very silent failure this boot gate
+    // exists to avoid.
     mount(App, { target });
+    bootStatus?.remove();
   })
   .catch((err: unknown) => {
-    console.error('App failed to boot — WASM init error:', err);
+    console.error('App failed to boot:', err);
     if (bootStatus) {
+      bootStatus.setAttribute('role', 'alert');
+      bootStatus.setAttribute('aria-live', 'assertive');
       bootStatus.dataset['state'] = 'error';
       bootStatus.textContent = 'Failed to load. Please reload the page.';
     }
