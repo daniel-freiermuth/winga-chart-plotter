@@ -217,7 +217,6 @@
       if (!v0 && !v1) return { center: [0, 0] as [number, number], zoom: 0, bounds: [0, 0, 0, 0] as [number, number, number, number] };
       if (!v0 || !v1) return (v0 ?? v1)!;
       const u = unionViewBounds(v0.bounds, v1.bounds);
-      if (!u) return v0; // WASM not ready yet — degrade to the primary pane
       return {
         center: u.center,
         zoom: Math.min(v0.zoom, v1.zoom),

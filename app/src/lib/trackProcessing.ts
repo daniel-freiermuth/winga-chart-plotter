@@ -10,7 +10,7 @@
  * Geometry correctness is tested Rust-side (`crates/core/src/geo.rs`, `mod tests`),
  * matching the convention for every other WASM-backed math module in this codebase
  * (`wasmGeo.ts`, `wasmRest.ts` — neither has TS-side math tests either). Only the
- * pure-TS guard/degrade behavior below is covered by `trackProcessing.test.ts`.
+ * pure-TS guard/assert behavior below is covered by `trackProcessing.test.ts`.
  *
  * `buildTrackGradient` stays pure TS: it builds a MapLibre style expression, not
  * geo math.
@@ -29,6 +29,18 @@ void wasmReady
   .catch(() => {
     // Already logged by wasmInit.ts.
   });
+
+/**
+ * Throws if called before `main.ts`'s boot gate resolved `wasmInit.ready` —
+ * see `wasmGeo.ts` for the invariant this enforces.
+ */
+function assertReady(): void {
+  if (!ready) {
+    throw new Error(
+      'trackProcessing: called before WASM finished loading — main.ts must await wasmInit.ready before mounting App',
+    );
+  }
+}
 
 export interface ProcessedTrack {
   coords: [number, number][];
@@ -54,13 +66,10 @@ function toFlat(pts: [number, number][]): Float64Array {
  * `overflowSegments` — older segments, rendered as solid lines.
  *
  * Fade distance = min(0.5 nm, 10 % of total track length).
- *
- * Before WASM finishes loading (boot only), returns `raw` unsplit and
- * undensified rather than a fabricated answer — a coarser render, not a wrong one.
  */
 export function processTrack(raw: [number, number][]): ProcessedTrack {
   if (raw.length < 2) return { coords: raw, overflowSegments: [], fadeStop: 0 };
-  if (!ready) return { coords: raw, overflowSegments: [], fadeStop: 0 };
+  assertReady();
   return wasmProcessTrack(toFlat(raw)) as ProcessedTrack;
 }
 
@@ -68,13 +77,10 @@ export function processTrack(raw: [number, number][]): ProcessedTrack {
  * Split raw route or two-point line at antimeridian crossings and GC-densify each
  * segment. Returns one densified segment per antimeridian-bounded piece, all within
  * [-360, 360].
- *
- * Before WASM finishes loading (boot only), returns `raw` as a single unsplit,
- * undensified segment rather than a fabricated answer.
  */
 export function processRouteCoords(raw: [number, number][]): [number, number][][] {
   if (raw.length < 2) return [];
-  if (!ready) return [raw];
+  assertReady();
   return wasmProcessRouteCoords(toFlat(raw)) as [number, number][][];
 }
 
