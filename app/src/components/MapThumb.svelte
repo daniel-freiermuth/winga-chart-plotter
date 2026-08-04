@@ -45,9 +45,8 @@
       // true for bounds crossing the antimeridian, and the naive (w+e)/2
       // center lands on the wrong side of the planet.
       const inside = chartBoundsContain(bounds, lon, lat);
-      if (inside === null) return [lon, lat]; // WASM not ready yet — keep live center
       if (inside) return [lon, lat];
-      return chartBoundsCenter(bounds) ?? [lon, lat];
+      return chartBoundsCenter(bounds);
     }
     return [lon, lat];
   });

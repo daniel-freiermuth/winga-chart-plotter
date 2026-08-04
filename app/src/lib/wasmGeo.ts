@@ -6,10 +6,12 @@
  * per-JS-realm, not shared across the Worker boundary.
  *
  * Per project convention: no raw lon/lat arithmetic in TypeScript — this
- * module only forwards to WASM exports and degrades to a safe placeholder
- * until the module finishes loading (fire-and-forget init at import time;
- * by the time a user interacts with rulers/routes, it is essentially
- * always ready).
+ * module only forwards to WASM exports. `main.ts` gates app boot on
+ * `wasmInit.ready` (the module is 1.2 MB, precached, loads once), so by the
+ * time any component calling these functions has mounted, WASM is
+ * guaranteed ready. `assertReady()` turns a violation of that invariant
+ * into a loud failure instead of a silently wrong nav value (fail-fast per
+ * project values) — it should never actually throw in production.
  */
 import {
   gcBearingDeg as wasmGcBearingDeg,
@@ -31,15 +33,24 @@ void wasmReady
     // Already logged by wasmInit.ts.
   });
 
+/** Throws if called before `main.ts`'s boot gate resolved `wasmInit.ready`. */
+function assertReady(): void {
+  if (!ready) {
+    throw new Error(
+      'wasmGeo: called before WASM finished loading — main.ts must await wasmInit.ready before mounting App',
+    );
+  }
+}
+
 /** Great-circle bearing from A to B, in degrees [0, 360). */
 export function gcBearingDeg(lonA: number, latA: number, lonB: number, latB: number): number {
-  if (!ready) return 0;
+  assertReady();
   return wasmGcBearingDeg(lonA, latA, lonB, latB);
 }
 
 /** Great-circle distance between two points, in nautical miles. */
 export function gcDistanceNm(lonA: number, latA: number, lonB: number, latB: number): number {
-  if (!ready) return 0;
+  assertReady();
   return wasmGcDistanceNm(lonA, latA, lonB, latB);
 }
 
@@ -53,7 +64,7 @@ export function gcLine(
   lonB: number, latB: number,
   segments = 64,
 ): [number, number][] {
-  if (!ready) return [[lonA, latA], [lonB, latB]];
+  assertReady();
   return wasmGcLine(lonA, latA, lonB, latB, segments) as [number, number][];
 }
 
@@ -84,13 +95,13 @@ export interface CpaResult {
 /**
  * Compute CPA between own vessel (linear track) and a target (arc track via RoT).
  * All angles in radians; SOG in m/s; RoT in rad/s (pass NaN if unknown).
- * Returns null when WASM is not ready or inputs are invalid (own/target pos/COG/SOG NaN).
+ * Returns null when inputs are invalid (own/target pos/COG/SOG NaN).
  */
 export function computeCpa(
   ownLon: number, ownLat: number, ownCog: number, ownSog: number,
   tgtLon: number, tgtLat: number, tgtCog: number, tgtSog: number, tgtRot: number,
 ): CpaResult | null {
-  if (!ready) return null;
+  assertReady();
   const r = wasmGcComputeCpa(ownLon, ownLat, ownCog, ownSog, tgtLon, tgtLat, tgtCog, tgtSog, tgtRot);
   const cpa_nm = r.cpa_nm;
   if (isNaN(cpa_nm)) { r.free(); return null; }
@@ -129,13 +140,13 @@ export interface UnionedView {
  * Union of two viewport bounds treated as arcs on the circle: merges across
  * the antimeridian when that gap is smaller, where a naive min/max union
  * would span the globe through Greenwich with a center on the wrong side of
- * the planet. Returns null when WASM is not ready.
+ * the planet.
  */
 export function unionViewBounds(
   b0: [number, number, number, number],
   b1: [number, number, number, number],
-): UnionedView | null {
-  if (!ready) return null;
+): UnionedView {
+  assertReady();
   const r = wasmUnionViewBounds(b0[0], b0[1], b0[2], b0[3], b1[0], b1[1], b1[2], b1[3]);
   return {
     bounds: [r[0]!, r[1]!, r[2]!, r[3]!],
@@ -147,26 +158,25 @@ export function unionViewBounds(
  * Dateline-aware chart-bounds containment. Bounds are `[west, south, east,
  * north]`; `west > east` reads as an arc crossing the antimeridian (e.g.
  * `[170, -170]` is the 20° Pacific strip, which a naive interval test can
- * never satisfy). Returns null when WASM is not ready.
+ * never satisfy).
  */
 export function chartBoundsContain(
   b: [number, number, number, number],
   lon: number,
   lat: number,
-): boolean | null {
-  if (!ready) return null;
+): boolean {
+  assertReady();
   return wasmChartBoundsContain(b[0], b[1], b[2], b[3], lon, lat);
 }
 
 /**
  * Center of chart bounds — same convention as {@link chartBoundsContain};
- * lon is canonical, normalized to [-180, 180). Returns null when WASM is
- * not ready.
+ * lon is canonical, normalized to [-180, 180).
  */
 export function chartBoundsCenter(
   b: [number, number, number, number],
-): [number, number] | null {
-  if (!ready) return null;
+): [number, number] {
+  assertReady();
   const r = wasmChartBoundsCenter(b[0], b[1], b[2], b[3]);
   return [r[0]!, r[1]!];
 }
