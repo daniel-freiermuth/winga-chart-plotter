@@ -2,6 +2,21 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.22.0] - 2026-08-08
+
+### Added
+
+- App boot now waits for the WASM core to finish loading before mounting: a splash screen shows while it loads, and a fatal-error message (instead of a silent blank screen) if WASM init itself fails.
+- Route popup now shows the route's total length.
+- A route is highlighted on the chart while its popup is open (color configurable in Settings → Routes).
+
+### Fixed
+
+- A mount failure right after boot could write the error message into an already-removed boot-status element, leaving a blank screen; the boot splash also now announces loading/error state to assistive tech via aria-live.
+- Pressing Enter in the route name field now saves the route, not just clicking Save.
+- Saving or deleting a route/waypoint could be silently overwritten moments later by a slower, stale background reload response — the newest response now always wins.
+- Route legs between near-antipodal waypoints could produce NaN/broken coordinates; they now fall back to the endpoint, like the existing degenerate-input cases.
+
 ## [0.21.0] - 2026-08-02
 
 ### Added
