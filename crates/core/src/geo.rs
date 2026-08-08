@@ -1259,6 +1259,27 @@ mod tests {
         assert_eq!(pts, vec![(180.0, 0.0)]);
     }
 
+    #[test]
+    fn densify_by_distance_antipodal_guard_fires_at_nonzero_latitude() {
+        // At certain nonzero latitudes, sin²(phi) + cos²(phi) rounds to
+        // 1 ULP below 1.0 in f64, so the exactly-antipodal cos_d formula
+        // lands 1 ULP above -1.0 instead of clamping — sin_d ≈ 1.49e-8,
+        // which is above the guard threshold.  The SLERP then collapses
+        // the 20 000 km leg into two clustered dots with a midpoint jump
+        // instead of falling back to the endpoint.
+        //
+        // lat = ±0.002° is the smallest value that reliably exhibits this
+        // on x86-64 with the standard libm.
+        let pts = densify_by_distance(0.0, 0.002, 180.0, -0.002);
+        // Must fall back to the endpoint, same as the equatorial case.
+        assert_eq!(
+            pts,
+            vec![(180.0, -0.002)],
+            "antipodal guard must fire at nonzero latitude; got {} points instead of fallback",
+            pts.len()
+        );
+    }
+
     // ---- process_track_core ----
 
     #[test]
