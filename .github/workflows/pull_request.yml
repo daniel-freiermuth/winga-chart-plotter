@@ -1,0 +1,35 @@
+# .github/workflows/pull_request.yml
+#
+# Checks whether an open pull request can be fast-forward merged into its
+# target branch. Runs on every PR open/reopen/push and posts a PR comment
+# indicating whether a rebase is needed. The action fails (blocking merge
+# via required status checks) when the target branch can't be fast-forwarded.
+#
+# See https://github.com/marketplace/actions/fast-forward-merge
+
+name: pull-request
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+
+jobs:
+  check-fast-forward:
+    name: Check fast-forward
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      # Both pull-requests and issues write permission are needed to post a
+      # comment to a pull request.
+      pull-requests: write
+      issues: write
+
+    steps:
+      - name: Checking if fast forwarding is possible
+        uses: sequoia-pgp/fast-forward@v1
+        with:
+          merge: false
+          # Only post a comment when the check fails; the result is always
+          # available in the step's summary regardless.
+          comment: on-error
