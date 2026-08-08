@@ -345,10 +345,16 @@ fn densify_by_distance(lon1: f64, lat1: f64, lon2: f64, lat2: f64) -> Vec<(f64, 
         return vec![(lon2, lat2)];
     }
     let sin_d = d.sin();
-    if sin_d.abs() < 1e-12 {
-        // Antipodal (or otherwise degenerate) endpoints: the great circle
-        // through them is undefined. Fall back to the endpoint, matching the
-        // degenerate-input behavior above rather than emitting NaN.
+    if sin_d.abs() < 1e-6 {
+        // Near-antipodal or exactly antipodal: the great circle is undefined
+        // or the SLERP division by sin_d amplifies rounding error beyond the
+        // signal (at sin_d ≈ 1e-8, the ~1e8 amplification factor collapses
+        // intermediate points into two endpoint clusters). 1e-6 corresponds
+        // to ~0.6 m of arc — any real route leg shorter than that is
+        // effectively a point and the straight fallback is fine; any
+        // near-antipodal leg where sin_d < 1e-6 due to floating-point
+        // rounding of the cos_d sum (see the nonzero-latitude test) is
+        // caught here instead of producing garbage SLERP output.
         return vec![(lon2, lat2)];
     }
     let mut out = Vec::with_capacity(n_segs);
