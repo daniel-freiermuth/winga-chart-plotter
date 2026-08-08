@@ -1,0 +1,34 @@
+# .github/workflows/fast-forward.yml
+#
+# Fast-forward merges a pull request when an authorized user comments
+# "/fast-forward" on it. This is the equivalent of `git merge --ff-only`,
+# preserving commit hashes and signatures — unlike GitHub's "Rebase and
+# merge", which rewrites every commit's committer field.
+#
+# See https://github.com/marketplace/actions/fast-forward-merge
+
+name: fast-forward
+
+on:
+  issue_comment:
+    types: [created, edited]
+
+jobs:
+  fast-forward:
+    name: Fast forward
+    # Only run for the /fast-forward command on a pull request.
+    if: ${{ contains(github.event.comment.body, '/fast-forward')
+            && github.event.issue.pull_request }}
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+
+    steps:
+      - name: Fast forwarding
+        uses: sequoia-pgp/fast-forward@v1
+        with:
+          merge: true
+          comment: always
