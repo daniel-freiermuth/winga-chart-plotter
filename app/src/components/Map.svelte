@@ -192,7 +192,7 @@
   // Suppress programmatic camera moves while the user is interacting (drag, pinch, scroll).
   // movestart fires for both user gestures and programmatic easeTo/flyTo; originalEvent is only
   // present for gestures. moveend always fires, resetting the flag.
-  let _isInteracting = false;
+  let _isInteracting = $state(false);
   // True when the preceding camera move was started by a user gesture (set in movestart,
   // consumed and cleared in moveend). Distinct from _isInteracting so moveend can still
   // read it after _isInteracting has been cleared.
@@ -202,7 +202,12 @@
   // the vessel-follow easeTo from firing in the touchstart→movestart gap, where a
   // competing camera movestart confuses MapLibre's DragPanHandler and silently
   // drops the pending drag — the "panning fails every ~1 s in follow mode" bug.
-  let _touchActive = false;
+  let _touchActive = $state(false);
+  // Live visual debug aid: true whenever follow mode is nominally on but the interaction
+  // guard is currently suppressing the camera move (mid drag/pinch/touch — expected — or,
+  // if it never clears, the stuck-guard bug under investigation). Surfaced on the follow FAB
+  // (see markup below) so the stuck case is visible on the device itself, no devtools needed.
+  const followBlockedByInteraction = $derived(followMode.following && (_isInteracting || _touchActive));
   // True once the user has panned/zoomed/rotated the map by hand (gesture, not programmatic
   // easeTo/flyTo) — for the lifetime of this page load, never reset. Gates the one-shot
   // auto-fly-to-vessel below: once the user has shown intent to look elsewhere, never yank
@@ -829,6 +834,22 @@
     fpsStore.set(0);
     _scheduleRafTick?.();
   });
+
+  // Independent correctness fix, not a diagnosed cause: once the document is hidden the
+  // browser stops delivering further pointer/touch events for whatever gesture was in
+  // flight, and per the Page Visibility/Touch Events specs that gesture does not resume when
+  // the page becomes visible again — so at the instant `document.hidden` flips true there is,
+  // by construction, no live gesture left for these flags to be protecting. Clearing them then
+  // is safe regardless of why they were set. Deliberately NOT mirrored on `window blur`: a
+  // desktop drag holds pointer capture, and capture can keep delivering pointermove/up to the
+  // element across a focus change — clearing the guard there could let a programmatic easeTo
+  // fight an actually-still-live drag, which is the exact hazard these flags exist to prevent.
+  function onVisibilityChange(): void {
+    if (!document.hidden) return;
+    _isInteracting = false;
+    _touchActive = false;
+    _wasUserPan = false;
+  }
 
   onMount(() => {
     // Seed the camera from the pane's persisted view (Oslo is only used the
@@ -1512,6 +1533,8 @@
       if (map?.hasImage(e.id)) return; // already added (re-entrant guard)
       map?.addImage(e.id, { width: 1, height: 1, data: new Uint8Array(4) });
     });
+
+    document.addEventListener('visibilitychange', onVisibilityChange);
   });
 
   onDestroy(() => {
@@ -1523,6 +1546,7 @@
     mapContainer.removeEventListener('pointermove',   onPointerMove,   { capture: true });
     mapContainer.removeEventListener('pointerup',     onPointerUp,     { capture: true });
     mapContainer.removeEventListener('pointercancel', onPointerCancel, { capture: true });
+    document.removeEventListener('visibilitychange', onVisibilityChange);
     map?.remove();
   });
 
@@ -3286,7 +3310,10 @@
     <button
       class="nav-fab"
       class:nav-fab--active={followMode.following}
-      title={followMode.following ? 'Stop following vessel' : 'Follow vessel'}
+      class:nav-fab--blocked={followBlockedByInteraction}
+      title={followBlockedByInteraction
+        ? 'Following, but paused — a touch/drag guard is active'
+        : followMode.following ? 'Stop following vessel' : 'Follow vessel'}
       disabled={!followMode.following && !$vesselState.position}
       onclick={flyToVessel}
     ><FaIcon icon={faLocationCrosshairs} /></button>
@@ -3607,6 +3634,11 @@
   }
   .nav-fab:disabled              { opacity: 0.35; cursor: default; }
   .nav-fab--active               { background: rgba(255,255,255,0.9); color: #111827; border-color: rgba(255,255,255,0.9); }
+  /* Live debug aid (see followBlockedByInteraction) — dark ring layered over --active when
+     following is nominally on but the interaction guard is currently suppressing the camera
+     move. Expected to flash briefly during a real drag/pinch/touch; if it stays on after the
+     gesture ends, that's the stuck-guard bug rendered visible on-device. */
+  .nav-fab--blocked              { box-shadow: 0 0 0 3px #111827, 0 2px 12px rgba(0,0,0,0.45); }
   .nav-fab--open                 { background: rgba(76,201,240,0.15); box-shadow: 0 0 0 2px #4cc9f0, 0 2px 12px rgba(0,0,0,0.45); }
   @media (hover: hover) and (pointer: fine) {
     .nav-fab:hover:not(:disabled)         { background: rgba(40,40,80,0.9); }
