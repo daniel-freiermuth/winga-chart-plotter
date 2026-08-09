@@ -216,6 +216,12 @@
   // One-shot guard: fires at most once per page load, the first time a real Signal K
   // position arrives while the user hasn't touched the map yet.
   let _didAutoFlyToFirstFix = false;
+  // Snapshot BEFORE any moveend this session can mutate it: true only if this pane's
+  // camera was already persisted from a *previous* page load. Gates the auto-fly-to-vessel
+  // effect below — a deliberately saved/panned-away view must never be overridden just
+  // because the boat now has a position; only the untouched first-run default (Oslo) gets
+  // corrected.
+  const _hadSavedViewOnLoad = untrack(() => mapView.hasSavedView);
   // One-shot guard: the restored rotation mode (from localStorage) must not be collapsed
   // by ensureAvailable() just because cog/heading/route haven't arrived yet on a fresh
   // page load — that data starting out null means "not received yet", not "lost".
@@ -3098,16 +3104,19 @@
     };
   });
 
-  // One-shot: fly to the vessel's first real position fix, but only if the user hasn't
-  // already panned/zoomed/rotated the map by hand and isn't already in follow mode. Center
-  // only (no zoom change) — same camera move as clicking "center on vessel" once, but never
-  // engages follow mode itself ("not lock"), so the user can immediately pan away again.
-  // Persisted-view restore (loadSavedView() in onMount) already avoided the old Oslo flash;
-  // this corrects that persisted/stale view to the boat's actual position once we know it.
+  // One-shot: fly to the vessel's first real position fix, but only on a pane that never
+  // had a persisted camera (fresh install / cleared storage) — the default view is Oslo,
+  // which has nothing to do with the boat, so once we know the real position we correct
+  // it. If a view was already saved from a previous session, it reflects a deliberate
+  // pan/zoom the user made and must survive reloads untouched, even before the user
+  // interacts again this session — so `_hadSavedViewOnLoad` also gates this, in addition
+  // to `_userHasInteracted` (this-session panning) and follow mode. Center only (no zoom
+  // change) — same camera move as clicking "center on vessel" once, but never engages
+  // follow mode itself ("not lock"), so the user can immediately pan away again.
   $effect(() => {
     const pos = $vesselPosition;
     if (!map || !mapLoaded || !pos) return;
-    if (_didAutoFlyToFirstFix || _userHasInteracted || followMode.following) return;
+    if (_didAutoFlyToFirstFix || _userHasInteracted || _hadSavedViewOnLoad || followMode.following) return;
     _didAutoFlyToFirstFix = true;
     map.flyTo({ center: [pos.longitude, pos.latitude] });
   });
