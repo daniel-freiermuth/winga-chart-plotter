@@ -863,7 +863,7 @@
   .split-divider {
     flex: 0 0 2px;
     position: relative;
-    z-index: 11; /* extended hit area must win over pane content */
+    z-index: 5; /* wins over bare pane content (map canvas) but stays below chrome UI (toolbar, nav-stack, popups all z-index >= 10) so it never swallows their clicks */
     touch-action: none;
     outline-offset: 2px;
   }
