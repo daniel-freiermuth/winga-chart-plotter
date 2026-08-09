@@ -1623,10 +1623,6 @@
   }
 
   let aisAgeTimer: ReturnType<typeof setInterval> | null = null;
-  // ID of the vessel whose AIS detail popup is currently open in THIS pane (null = none).
-  // Used to guard the popup's close handler against clearing a *different* vessel's
-  // selection when the popup is removed reactively by the cross-pane effect below.
-  let aisPopupVesselId: string | null = null;
 
   function formatAge(posMs: number): string {
     const ageSec = Math.round((Date.now() - posMs) / 1000);
@@ -1695,8 +1691,6 @@
       .setLngLat([anchorPos?.longitude ?? t.position.longitude, anchorPos?.latitude ?? t.position.latitude])
       .setHTML(buildAisPopupHtml(t))
     ).addTo(map);
-    const popupVesselId = t.id;
-    aisPopupVesselId = popupVesselId;
     const timerId = setInterval(() => {
       const el = document.getElementById('ais-age');
       if (!el) { clearInterval(timerId); aisAgeTimer = null; return; }
@@ -1704,13 +1698,21 @@
       el.textContent = `(${formatAge(posMs)})`;
     }, 1000);
     aisAgeTimer = timerId;
-    popup.on('close', () => {
+    // --- close handler: only fires for user-initiated close (X button, map
+    // click-away). Programmatic disposal via claimPopup detaches this first.
+    const closeHandler = () => {
       if (aisAgeTimer !== null) { clearInterval(aisAgeTimer); aisAgeTimer = null; }
-      if (aisPopupVesselId === popupVesselId) aisPopupVesselId = null;
-      // Only clear the shared selection if it still belongs to THIS popup's vessel.
-      // When a different vessel is selected in the other pane, the reactive effect
-      // removes this popup but the new selection must not be wiped.
-      if (ais.selectedId === popupVesselId) ais.clear();
+      ais.releasePopup();
+      ais.clear(); // triggers reactive cleanup of track + CPA label + layers
+    };
+    popup.on('close', closeHandler);
+    // Register a dispose callback with the store so that `highlight(differentId)`
+    // or `clear()` can remove this popup synchronously — enforcing the "at most
+    // one AIS popup" invariant at the point of state change, not reactively.
+    ais.claimPopup(() => {
+      popup.off('close', closeHandler); // detach → popup.remove() won't call ais.clear()
+      if (aisAgeTimer !== null) { clearInterval(aisAgeTimer); aisAgeTimer = null; }
+      popup.remove();
     });
     popup.getElement().addEventListener('click', (ev) => {
       const el = ev.target as HTMLElement;
@@ -2414,17 +2416,6 @@
     cpaLayerGroup = [];
     flushLayers();
     if (aisAgeTimer !== null) { clearInterval(aisAgeTimer); aisAgeTimer = null; }
-  });
-
-  // Cross-pane AIS popup invariant: at most one popup across all panes.
-  // When a different vessel is selected (possibly from the other split-view pane),
-  // close THIS pane's stale popup so two popups can't coexist. The guarded close
-  // handler above avoids wiping the new selection.
-  $effect(() => {
-    const sel = ais.selectedId;
-    if (aisPopupVesselId !== null && sel !== aisPopupVesselId) {
-      activePopup?.remove();
-    }
   });
 
   // Bounded-staleness refresh for the CPA effect below: own vessel state is read

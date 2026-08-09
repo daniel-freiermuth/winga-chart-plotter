@@ -107,6 +107,13 @@ function createAisStore() {
   let selectedId = $state<string | null>(null);
   /** Selection phase: 'highlighted' on first click, 'popup' on second. */
   let selectionPhase = $state<AisSelectionPhase | null>(null);
+  /**
+   * Dispose callback for the currently-open AIS popup. Registered by the
+   * Map component that owns the popup via `claimPopup()`. Called by
+   * `highlight()` (on vessel change) and `clear()` so the store—not a
+   * reactive effect—enforces the "at most one popup" invariant.
+   */
+  let popupDispose: (() => void) | null = null;
   return {
     get hotData(): Float64Array | null { return hotData; },
     get ids(): string[] { return ids; },
@@ -173,16 +180,39 @@ function createAisStore() {
     // -----------------------------------------------------------------------
 
     /** Highlight a vessel on first click. */
-    highlight(id: string) { selectedId = id; selectionPhase = 'highlighted'; },
+    highlight(id: string) {
+      // Dispose any existing popup when switching to a different vessel.
+      // The dispose callback detaches the close handler before removing the
+      // popup, so `ais.clear()` is NOT called — the new selection survives.
+      if (selectedId !== id) { popupDispose?.(); popupDispose = null; }
+      selectedId = id;
+      selectionPhase = 'highlighted';
+    },
 
     /** Elevate highlighted vessel to popup state on second click. */
     elevateToPopup() { if (selectedId) selectionPhase = 'popup'; },
 
     /** Clear selection, track, and CPA overlays. */
-    clear() { selectedId = null; selectionPhase = null; },
+    clear() {
+      popupDispose?.(); popupDispose = null;
+      selectedId = null; selectionPhase = null;
+    },
 
     get selectedId(): string | null { return selectedId; },
     get selectionPhase(): AisSelectionPhase | null { return selectionPhase; },
+
+    /**
+     * Register a dispose callback for the popup that is about to open.
+     * Disposes any previously-registered popup first (enforces the
+     * "at most one AIS popup across all panes" invariant at the point
+     * of state change, not reactively).
+     */
+    claimPopup(dispose: () => void) { popupDispose?.(); popupDispose = dispose; },
+
+    /** De-register the current popup dispose (called from the close handler
+     *  so that a subsequent `clear()` doesn't redundantly remove an
+     *  already-closed popup). */
+    releasePopup() { popupDispose = null; },
 
     /**
      * Index of the selected vessel in the current `ids` array, or null.
