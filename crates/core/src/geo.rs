@@ -350,7 +350,7 @@ fn densify_by_distance(lon1: f64, lat1: f64, lon2: f64, lat2: f64) -> Vec<(f64, 
         // or the SLERP division by sin_d amplifies rounding error beyond the
         // signal (at sin_d ≈ 1e-8, the ~1e8 amplification factor collapses
         // intermediate points into two endpoint clusters). 1e-6 corresponds
-        // to ~0.6 m of arc — any real route leg shorter than that is
+        // to ~6.4 m of arc — any real route leg shorter than that is
         // effectively a point and the straight fallback is fine; any
         // near-antipodal leg where sin_d < 1e-6 due to floating-point
         // rounding of the cos_d sum (see the nonzero-latitude test) is
@@ -1269,13 +1269,14 @@ mod tests {
     fn densify_by_distance_antipodal_guard_fires_at_nonzero_latitude() {
         // At certain nonzero latitudes, sin²(phi) + cos²(phi) rounds to
         // 1 ULP below 1.0 in f64, so the exactly-antipodal cos_d formula
-        // lands 1 ULP above -1.0 instead of clamping — sin_d ≈ 1.49e-8,
-        // which is above the guard threshold.  The SLERP then collapses
-        // the 20 000 km leg into two clustered dots with a midpoint jump
-        // instead of falling back to the endpoint.
+        // lands 1 ULP above -1.0 instead of clamping — sin_d ≈ 1.49e-8.
+        // The former 1e-12 guard missed this (1.49e-8 >> 1e-12), letting
+        // the SLERP collapse the 20 000 km leg into two clustered dots
+        // with a midpoint jump.  The raised 1e-6 guard catches it
+        // (1.49e-8 < 1e-6) and falls back to the endpoint.
         //
-        // lat = ±0.002° is the smallest value that reliably exhibits this
-        // on x86-64 with the standard libm.
+        // lat = ±0.002° is the smallest value that reliably exhibits the
+        // 1-ULP rounding on x86-64 with the standard libm.
         let pts = densify_by_distance(0.0, 0.002, 180.0, -0.002);
         // Must fall back to the endpoint, same as the equatorial case.
         assert_eq!(
