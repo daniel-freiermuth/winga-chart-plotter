@@ -64,4 +64,20 @@ describe('popup ownership lifecycle', () => {
     expect(dispose).not.toHaveBeenCalled();
     expect(ais.selectedId).toBe('v1');
   });
+
+  it('highlight(sameId) disposes when selectionPhase is popup (cross-pane tap)', () => {
+    const dispose = vi.fn();
+    ais.highlight('v1');
+    ais.elevateToPopup();
+    ais.claimPopup(dispose);
+    expect(ais.selectionPhase).toBe('popup');
+
+    // Simulate tapping the same vessel in the other pane: highlight(sameId)
+    // while a popup is live. The popup must be disposed.
+    ais.highlight('v1');
+
+    expect(dispose).toHaveBeenCalledOnce();
+    expect(ais.selectedId).toBe('v1');
+    expect(ais.selectionPhase).toBe('highlighted');
+  });
 });
