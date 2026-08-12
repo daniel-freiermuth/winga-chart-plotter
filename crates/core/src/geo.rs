@@ -32,8 +32,9 @@ fn distance_nm(lon_a: f64, lat_a: f64, lon_b: f64, lat_b: f64) -> f64 {
     let phi2 = lat_b.to_radians();
     let delta_phi = (lat_b - lat_a).to_radians();
     let delta_lambda = (lon_b - lon_a).to_radians();
-    let a = (delta_phi / 2.0).sin().powi(2)
-        + phi1.cos() * phi2.cos() * (delta_lambda / 2.0).sin().powi(2);
+    let a = ((delta_phi / 2.0).sin().powi(2)
+        + phi1.cos() * phi2.cos() * (delta_lambda / 2.0).sin().powi(2))
+    .min(1.0);
     2.0 * a.sqrt().atan2((1.0 - a).sqrt()) * R_NM
 }
 
