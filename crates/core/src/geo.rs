@@ -767,6 +767,19 @@ mod tests {
     }
 
     #[test]
+    fn distance_nm_antipodal_nonzero_lat_is_finite() {
+        // Near-antipodal at nonzero latitude: float rounding can push the
+        // haversine intermediate `a` a ULP above 1.0, making (1-a).sqrt() NaN.
+        // Same class as densify_by_distance_antipodal_guard_fires_at_nonzero_latitude.
+        // lat=0.015 reliably triggers on x86-64 with standard libm (3406 of
+        // 90000 latitudes produce NaN in a brute-force scan on this toolchain).
+        let d = distance_nm(0.0, 0.015, 180.0, -0.015);
+        assert!(d.is_finite(), "expected finite distance, got {d}");
+        // Should be roughly half the Earth circumference ≈ 10800 nm.
+        assert!(d > 10_700.0 && d < 10_900.0, "expected ~10800 nm, got {d}");
+    }
+
+    #[test]
     fn line_degenerate_same_point_returns_endpoints_only() {
         let coords = line_coords(10.0, 50.0, 10.0, 50.0, 64);
         assert_eq!(coords, vec![(10.0, 50.0), (10.0, 50.0)]);
