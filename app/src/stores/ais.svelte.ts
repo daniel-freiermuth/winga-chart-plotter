@@ -181,10 +181,10 @@ function createAisStore() {
 
     /** Highlight a vessel on first click. */
     highlight(id: string) {
-      // Dispose any existing popup when switching to a different vessel.
-      // The dispose callback detaches the close handler before removing the
-      // popup, so `ais.clear()` is NOT called — the new selection survives.
-      if (selectedId !== id) { popupDispose?.(); popupDispose = null; }
+      // Dispose any existing popup when switching to a different vessel, or
+      // when re-highlighting the same vessel that already has a popup (e.g.
+      // tapping the same vessel in the other split-view pane).
+      if (selectedId !== id || selectionPhase === 'popup') { popupDispose?.(); popupDispose = null; }
       selectedId = id;
       selectionPhase = 'highlighted';
     },
