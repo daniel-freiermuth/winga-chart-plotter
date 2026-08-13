@@ -1,5 +1,5 @@
-import { HostConnection, windowPort, RpcError } from 'signalk-plotterext-bus/host';
-import type { HandshakeContext, MethodHandler } from 'signalk-plotterext-bus/host';
+import { HostConnection, windowPort, RpcError, BUS_ID, EVENT_READY } from 'signalk-plotterext-bus/host';
+import type { BusPort, HandshakeContext, MethodHandler } from 'signalk-plotterext-bus/host';
 import { plotterExtensions } from '../stores/plotterExtensions.svelte';
 import { settings } from '../stores/settings.svelte';
 import { auth } from '../stores/auth.svelte';
@@ -27,6 +27,23 @@ export interface PanelControl {
   toggleConfigPanel(extensionId: string, instanceId: string, widgetId: string): void;
 }
 
+/** A live host↔extension connection plus the resources it owns. */
+export interface ExtensionHost {
+  readonly conn: HostConnection;
+  /**
+   * Close the bus endpoint *and* release every Signal K subscription made
+   * through it. Closing the endpoint alone would leave the relay fanning
+   * values out to a dead connection and keep the paths subscribed upstream
+   * for the rest of the session.
+   */
+  close(): void;
+}
+
+export interface HostConnectionHooks {
+  /** Called whenever the frame announces itself with `bus.ready`. */
+  onReady?: () => void;
+}
+
 // ── Internal constants ───────────────────────────────────────────────────────
 
 const HOST_CAPABILITIES = [
@@ -34,19 +51,52 @@ const HOST_CAPABILITIES = [
   'signalk.put', 'units', 'map', 'ui',
 ] as const;
 
+/** Network budget for host-side REST calls made on an extension's behalf.
+ *  Comfortably under the bus's own 10 s call timeout, so the extension sees a
+ *  proper JSON-RPC error instead of a timeout it cannot explain. */
+const PUT_TIMEOUT_MS = 8_000;
+
+/**
+ * A `bus.ready` arriving this long after the previous one marks a new document
+ * rather than a retry: the extension client re-announces every 250 ms until it
+ * is answered, then goes quiet for good. Anything past this gap means the frame
+ * navigated (reload, self-navigation) and the previous document's Signal K
+ * subscriptions are orphaned.
+ */
+const READY_EPOCH_GAP_MS = 1_000;
+
 // ── Factory ──────────────────────────────────────────────────────────────────
 
 export function createHostConnection(
-  iframe: HTMLIFrameElement,
+  peer: Window,
   extensionId: string,
   context: HandshakeContext,
   relay: SkRelay,
   mapControl: MapControl,
   panelControl: PanelControl,
-): HostConnection {
+  hooks: HostConnectionHooks = {},
+): ExtensionHost {
   let seq = 0;
   const subMap = new Map<string, string[]>();
   const defaultScope = context.kind === 'background' ? 'extension' : 'instance';
+
+  function releaseAllSubscriptions(): void {
+    for (const relayIds of subMap.values()) {
+      for (const id of relayIds) relay.unsubscribe(id);
+    }
+    subMap.clear();
+  }
+
+  /** Instance-scoped calls are only meaningful for widget/panel contexts. */
+  function requireInstanceId(): string {
+    const instanceId = context.instanceId;
+    if (typeof instanceId !== 'string' || instanceId === '') {
+      throw new RpcError('No widget instance is bound to this context', {
+        code: -32602, reason: 'no_instance',
+      });
+    }
+    return instanceId;
+  }
 
   // Methods that do NOT need access to the HostConnection itself.
   const staticMethods: Record<string, MethodHandler> = {
@@ -62,15 +112,30 @@ export function createHostConnection(
     async 'signalk.put'(params) {
       const { path, value } = params as { path: string; value: unknown };
       const url = `${settings.signalkHttpUrl}/signalk/v1/api/vessels/self/${path.replace(/\./g, '/')}`;
-      const res = await fetch(url, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json', ...auth.authHeaders },
-        body: JSON.stringify({ value }),
-      });
+      let res: Response;
+      try {
+        res = await fetch(url, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', ...auth.authHeaders },
+          body: JSON.stringify({ value }),
+          // An unreachable or wedged server must fail the call, not hang it:
+          // without this the promise outlives the bus's own call timeout and
+          // the extension is told "timeout" with no idea what went wrong.
+          signal: AbortSignal.timeout(PUT_TIMEOUT_MS),
+        });
+      } catch (err) {
+        throw new RpcError(
+          `PUT unreachable: ${err instanceof Error ? err.message : String(err)}`,
+          { code: -32000, reason: 'put_unreachable' },
+        );
+      }
       if (!res.ok) {
         throw new RpcError(
           `PUT failed: ${String(res.status)} ${res.statusText}`,
-          { code: -32000, reason: 'put_failed' },
+          {
+            code: -32000,
+            reason: res.status === 401 || res.status === 403 ? 'unauthorized' : 'put_failed',
+          },
         );
       }
     },
@@ -79,8 +144,7 @@ export function createHostConnection(
       const { scope: rawScope, keys } = (params ?? {}) as { scope?: 'instance' | 'extension'; keys?: string[] };
       const scope = rawScope ?? defaultScope;
       if (scope === 'extension') return { values: plotterExtensions.getExtState(extensionId, keys) };
-      const instanceId = context.instanceId ?? '';
-      return { values: plotterExtensions.getInstanceState(extensionId, instanceId, keys) };
+      return { values: plotterExtensions.getInstanceState(extensionId, requireInstanceId(), keys) };
     },
 
     'units.get'(_params) {
@@ -112,16 +176,36 @@ export function createHostConnection(
     'ui.closePanel'(_params) { panelControl.closePanel(); },
 
     'ui.openConfigPanel'(_params) {
-      panelControl.openConfigPanel(extensionId, context.instanceId!, context.id);
+      panelControl.openConfigPanel(extensionId, requireInstanceId(), context.id);
     },
 
     'ui.toggleConfigPanel'(_params) {
-      panelControl.toggleConfigPanel(extensionId, context.instanceId!, context.id);
+      panelControl.toggleConfigPanel(extensionId, requireInstanceId(), context.id);
     },
   };
 
+  // Sniff inbound traffic for `bus.ready` before the connection sees it: it is
+  // the only signal the host gets that a *new* document is live in the frame.
+  const basePort = windowPort(peer, { origin: '*' });
+  let lastReadyAt = Number.NEGATIVE_INFINITY;
+  const port: BusPort = {
+    post: (data) => { basePort.post(data); },
+    listen: (handler) => basePort.listen((data) => {
+      if (isReadyEnvelope(data)) {
+        const now = Date.now();
+        // New document — its predecessor's subscriptions can never be
+        // unsubscribed by anyone else, so drop them before the fresh document
+        // registers its own and the relay ends up fanning out twice.
+        if (now - lastReadyAt > READY_EPOCH_GAP_MS) releaseAllSubscriptions();
+        lastReadyAt = now;
+        hooks.onReady?.();
+      }
+      handler(data);
+    }),
+  };
+
   const conn = new HostConnection({
-    port: windowPort(iframe.contentWindow!, { origin: '*' }),
+    port,
     hostInfo: {
       host: 'signalk-chart-rs',
       hostVersion: '0.1.0',
@@ -154,8 +238,7 @@ export function createHostConnection(
     if (scope === 'extension') {
       plotterExtensions.setExtState(extensionId, values);
     } else {
-      const instanceId = context.instanceId ?? '';
-      plotterExtensions.setInstanceState(extensionId, instanceId, values);
+      plotterExtensions.setInstanceState(extensionId, requireInstanceId(), values);
     }
     conn.publish('state.changed', {
       scope,
@@ -164,5 +247,20 @@ export function createHostConnection(
     });
   });
 
-  return conn;
+  return {
+    conn,
+    close(): void {
+      conn.close();
+      releaseAllSubscriptions();
+    },
+  };
+}
+
+/** True for `{bus: 'plotterExt/1', msg: {method: 'bus.ready', …}}` envelopes. */
+function isReadyEnvelope(data: unknown): boolean {
+  if (typeof data !== 'object' || data === null) return false;
+  const env = data as { bus?: unknown; msg?: unknown };
+  if (env.bus !== BUS_ID) return false;
+  if (typeof env.msg !== 'object' || env.msg === null) return false;
+  return (env.msg as { method?: unknown }).method === EVENT_READY;
 }

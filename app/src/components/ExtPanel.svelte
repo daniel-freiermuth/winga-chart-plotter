@@ -30,8 +30,10 @@
 
   $effect(() => {
     if (!iframe || !panelState || !panelDef) return;
-    const conn = createHostConnection(
-      iframe,
+    const win = iframe.contentWindow;
+    if (!win) return;
+    const host = createHostConnection(
+      win,
       panelState.extensionId,
       {
         kind: 'panel',
@@ -44,7 +46,7 @@
       mapControl,
       panelControl,
     );
-    return () => { conn.close(); };
+    return () => { host.close(); };
   });
 </script>
 

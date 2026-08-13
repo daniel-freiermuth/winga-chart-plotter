@@ -260,7 +260,14 @@ impl SignalKClient {
     ///
     /// Calling `close()` on an already-closed socket is a no-op per the spec,
     /// so this is safe to call even when the previous connection has already dropped.
+    ///
+    /// The outgoing socket is muted *before* it is closed. Its `onclose` fires
+    /// asynchronously, so a socket that was still open would otherwise report
+    /// `Disconnected` after the replacement had already reported `Connected` —
+    /// leaving the app convinced it is offline while data flows, and kicking
+    /// off a reconnect loop that closes the healthy socket all over again.
     pub fn reconnect(&mut self, url: &str) -> Result<(), JsValue> {
+        self.detach_handlers();
         let _ = self.ws.close();
         self.ws = WebSocket::new(url)?;
         self.ws
@@ -275,8 +282,20 @@ impl SignalKClient {
     }
 
     /// Close the underlying WebSocket connection.
+    ///
+    /// Handlers are detached first: an explicit close is not a connection
+    /// failure, and must not surface as one after the caller has moved on.
     pub fn close(&self) {
+        self.detach_handlers();
         let _ = self.ws.close();
+    }
+
+    /// Stop the current socket from reporting anything further.
+    fn detach_handlers(&self) {
+        self.ws.set_onopen(None);
+        self.ws.set_onmessage(None);
+        self.ws.set_onerror(None);
+        self.ws.set_onclose(None);
     }
 
     /// Send a raw text message over the WebSocket (e.g. SK subscribe/unsubscribe).
