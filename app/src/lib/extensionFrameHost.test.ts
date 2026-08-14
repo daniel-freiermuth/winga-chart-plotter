@@ -1,7 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { memStorage } from '../stores/testStorage';
+import {
+  busHarness, envelope, noopMapControl, noopPanelControl, recordingRelay,
+  type BusHarness,
+} from './testExtensionBus';
 import type { SkRelay } from './sk-relay';
-import type { MapControl, PanelControl } from './plotterext-host';
 import type { FrameState } from './extensionFrame';
 
 /**
@@ -11,38 +14,16 @@ import type { FrameState } from './extensionFrame';
  * reconnect, and release everything on detach.
  */
 
-const BUS = 'plotterExt/1';
+const FRAME_URL = 'http://ext.local/w.html';
 
-function envelope(msg: Record<string, unknown>): unknown {
-  return { bus: BUS, msg: { jsonrpc: '2.0', ...msg } };
-}
-
-/** Message pump `windowPort` listens on, plus a peer window standing in for
- *  the frame's browsing context. */
-function harness() {
-  const listeners: ((ev: unknown) => void)[] = [];
-  vi.stubGlobal('addEventListener', (type: string, fn: (ev: unknown) => void) => {
-    if (type === 'message') listeners.push(fn);
-  });
-  vi.stubGlobal('removeEventListener', (_type: string, fn: (ev: unknown) => void) => {
-    const i = listeners.indexOf(fn);
-    if (i >= 0) listeners.splice(i, 1);
-  });
-
-  const replace = vi.fn();
-  const peer = { postMessage: vi.fn(), location: { replace } };
-  const deliver = (data: unknown): void => {
-    for (const fn of [...listeners]) fn({ source: peer, origin: 'http://ext.local', data });
-  };
-  return { peer, replace, deliver };
-}
+let bus: BusHarness;
 
 function fakeFrame(contentWindow: unknown) {
   const handlers = new Map<string, Set<() => void>>();
   return {
     contentWindow,
     isConnected: true,
-    src: 'http://ext.local/w.html',
+    src: FRAME_URL,
     addEventListener(type: string, fn: () => void) {
       let set = handlers.get(type);
       if (!set) { set = new Set(); handlers.set(type, set); }
@@ -54,28 +35,6 @@ function fakeFrame(contentWindow: unknown) {
   };
 }
 
-function recordingRelay() {
-  const unsubscribed: string[] = [];
-  let seq = 0;
-  const relay: SkRelay = {
-    feed: () => { /* unused */ },
-    subscribe: () => `r${String(++seq)}`,
-    unsubscribe: (id) => { unsubscribed.push(id); },
-    resubscribe: () => { /* unused */ },
-  };
-  return { relay, unsubscribed };
-}
-
-const noopMap: MapControl = {
-  getView: () => ({ center: [0, 0], zoom: 0, bounds: [0, 0, 0, 0] }),
-  flyTo: () => { /* noop */ }, fitBounds: () => { /* noop */ },
-};
-const noopPanels: PanelControl = {
-  openPanel: () => { /* noop */ }, togglePanel: () => { /* noop */ },
-  closePanel: () => { /* noop */ }, openConfigPanel: () => { /* noop */ },
-  toggleConfigPanel: () => { /* noop */ },
-};
-
 async function attach(
   frame: ReturnType<typeof fakeFrame>,
   relay: SkRelay,
@@ -84,12 +43,12 @@ async function attach(
   const { attachExtensionFrame } = await import('./extensionFrameHost');
   return attachExtensionFrame({
     frame: frame as unknown as HTMLIFrameElement,
-    url: 'http://ext.local/w.html',
+    url: FRAME_URL,
     extensionId: 'ext-a',
     context: { kind: 'widget', id: 'w', instanceId: 'i1' },
     relay,
-    mapControl: noopMap,
-    panelControl: noopPanels,
+    mapControl: noopMapControl,
+    panelControl: noopPanelControl,
     watchInstanceState: true,
     ...(onState ? { onState } : {}),
     supervision: { handshakeTimeoutMs: 1000, retryBaseMs: 100, maxAutoAttempts: 2 },
@@ -101,82 +60,112 @@ beforeEach(() => {
   vi.resetModules();
   vi.stubGlobal('localStorage', memStorage());
   vi.stubGlobal('window', { location: new URL('http://localhost:5173/') });
+  bus = busHarness();
 });
 
 afterEach(() => {
+  bus.restore();
   vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
 describe('extension frame attachment', () => {
   it('is listening before the document announces itself', async () => {
-    const { peer, deliver } = harness();
     const { relay } = recordingRelay();
-    const frame = fakeFrame(peer);
+    const frame = fakeFrame(bus.peer);
     const states: FrameState[] = [];
     const handle = await attach(frame, relay, (s) => states.push(s));
 
     // No `load` event yet — the document is still fetching its subresources,
     // but it has already started announcing.
-    deliver(envelope({ method: 'bus.ready' }));
+    bus.deliver(envelope({ method: 'bus.ready' }));
 
     expect(handle?.state.phase).toBe('live');
     expect(states.at(-1)?.phase).toBe('live');
   });
 
   it('reloads a frame that never announces itself', async () => {
-    const { peer, replace } = harness();
     const { relay } = recordingRelay();
-    const frame = fakeFrame(peer);
+    const frame = fakeFrame(bus.peer);
     const handle = await attach(frame, relay);
 
     vi.advanceTimersByTime(1000 + 100);
 
-    expect(replace).toHaveBeenCalledWith('http://ext.local/w.html');
+    expect(bus.reloads).toEqual([FRAME_URL]);
     expect(handle?.state.attempt).toBe(1);
   });
 
   it('grants a fresh grace period when a slow document finally loads', async () => {
-    const { peer, replace } = harness();
     const { relay } = recordingRelay();
-    const frame = fakeFrame(peer);
+    const frame = fakeFrame(bus.peer);
     await attach(frame, relay);
 
     vi.advanceTimersByTime(900);
     frame.fire('load');
     vi.advanceTimersByTime(900);
 
-    expect(replace).not.toHaveBeenCalled();
+    expect(bus.reloads).toEqual([]);
   });
 
   it('retries a stalled frame on reconnect but leaves a live one alone', async () => {
-    const { peer, replace, deliver } = harness();
     const { relay } = recordingRelay();
-    const frame = fakeFrame(peer);
+    const frame = fakeFrame(bus.peer);
     const handle = await attach(frame, relay);
 
     // Exhaust the automatic attempts.
     for (let i = 0; i < 3; i++) vi.advanceTimersByTime(1000 + 200);
     expect(handle?.state.phase).toBe('stalled');
-    const reloadsWhileStalled = replace.mock.calls.length;
+    const whileStalled = bus.reloads.length;
 
     handle?.noteReconnect();
-    expect(replace.mock.calls.length).toBe(reloadsWhileStalled + 1);
+    expect(bus.reloads.length).toBe(whileStalled + 1);
 
-    deliver(envelope({ method: 'bus.ready' }));
+    bus.deliver(envelope({ method: 'bus.ready' }));
     expect(handle?.state.phase).toBe('live');
 
     handle?.noteReconnect();
-    expect(replace.mock.calls.length).toBe(reloadsWhileStalled + 1); // untouched
+    expect(bus.reloads.length).toBe(whileStalled + 1); // untouched
+  });
+
+  it('republishes instance state written elsewhere, and stops on detach', async () => {
+    const { plotterExtensions } = await import('../stores/plotterExtensions.svelte');
+    // Wrap the real registration so the disposer itself is observable: once
+    // the endpoint is closed, publishing is a no-op either way, so the leak
+    // this guards against is the *store* listener outliving the frame.
+    const realWatch = plotterExtensions.onInstanceStateChanged.bind(plotterExtensions);
+    const disposed = vi.fn();
+    vi.spyOn(plotterExtensions, 'onInstanceStateChanged').mockImplementation((ext, inst, handler) => {
+      const dispose = realWatch(ext, inst, handler);
+      return () => { disposed(); dispose(); };
+    });
+
+    const { relay } = recordingRelay();
+    const frame = fakeFrame(bus.peer);
+    const handle = await attach(frame, relay);
+
+    // A config panel's write only reaches the widget if it asked for the event.
+    bus.deliver(envelope({ id: '1', method: 'events.subscribe', params: { patterns: ['state.changed'] } }));
+    await Promise.resolve();
+
+    plotterExtensions.setInstanceState('ext-a', 'i1', { units: 'kn' });
+    const changed = () => bus.posted.filter(
+      (p) => (p as { msg?: { method?: string } }).msg?.method === 'state.changed',
+    ).length;
+    expect(changed()).toBe(1);
+
+    handle?.detach();
+    expect(disposed).toHaveBeenCalledTimes(1);
+
+    plotterExtensions.setInstanceState('ext-a', 'i1', { units: 'm/s' });
+    expect(changed()).toBe(1); // nothing published into the dead frame
   });
 
   it('releases the frame, its listener and its subscriptions on detach', async () => {
-    const { peer, replace, deliver } = harness();
     const { relay, unsubscribed } = recordingRelay();
-    const frame = fakeFrame(peer);
+    const frame = fakeFrame(bus.peer);
     const handle = await attach(frame, relay);
 
-    deliver(envelope({ id: '1', method: 'signalk.subscribe', params: { paths: ['nav.x'] } }));
+    bus.deliver(envelope({ id: '1', method: 'signalk.subscribe', params: { paths: ['nav.x'] } }));
     await Promise.resolve();
 
     handle?.detach();
@@ -184,11 +173,10 @@ describe('extension frame attachment', () => {
     expect(unsubscribed).toEqual(['r1']);
     expect(frame.listenerCount('load')).toBe(0);
     vi.advanceTimersByTime(60_000);
-    expect(replace).not.toHaveBeenCalled();  // no supervisor timers survive
+    expect(bus.reloads).toEqual([]);  // no supervisor timers survive
   });
 
   it('declines a frame with no browsing context', async () => {
-    harness();
     const { relay } = recordingRelay();
 
     expect(await attach(fakeFrame(null), relay)).toBeNull();
