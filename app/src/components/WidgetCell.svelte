@@ -1,7 +1,7 @@
 <script lang="ts">
-  import { createHostConnection, type MapControl, type PanelControl } from '../lib/plotterext-host';
-  import { createFrameSupervisor, reloadFrame, type FrameState } from '../lib/extensionFrame';
-  import { plotterExtensions } from '../stores/plotterExtensions.svelte';
+  import type { MapControl, PanelControl } from '../lib/plotterext-host';
+  import { attachExtensionFrame, type AttachedExtensionFrame } from '../lib/extensionFrameHost';
+  import type { FrameState } from '../lib/extensionFrame';
   import { connection } from '../stores/connection.svelte';
   import type { SkRelay } from '../lib/sk-relay';
 
@@ -23,10 +23,9 @@
 
   let iframe = $state<HTMLIFrameElement | null>(null);
   let frame = $state<FrameState>({ phase: 'connecting', attempt: 0 });
-  // Deliberately not $state: the supervisor pushes its state out through
-  // `onChange` (into `frame`), and nothing should re-run merely because the
-  // handle was swapped.
-  let supervisor: ReturnType<typeof createFrameSupervisor> | null = null;
+  // Deliberately not $state: the controller pushes what the UI needs through
+  // `onState`, and nothing should re-run merely because the handle was swapped.
+  let attached: AttachedExtensionFrame | null = null;
 
   $effect(() => {
     const el = iframe;
@@ -34,57 +33,30 @@
     // a new context, not a reload of this one.
     const src = url;
     if (!el) return;
-    // The frame's WindowProxy is created with the element and survives every
-    // navigation it makes, so it can be bound once, up front.
-    const win = el.contentWindow;
-    if (!win) return;
 
-    frame = { phase: 'connecting', attempt: 0 };
-
-    const sup = createFrameSupervisor({
-      reload: () => { reloadFrame(el, src); },
-      onChange: (state) => { frame = state; },
-    });
-
-    // Connect *before* the extension document runs. The host answers
-    // `bus.ready`, so a connection created later — on the frame's `load` event,
-    // as this used to do — can miss the announcement of a document whose
-    // subresources are slow, and the extension then renders its own permanent
-    // "timed out waiting for host handshake" error.
-    const host = createHostConnection(
-      win,
+    const handle = attachExtensionFrame({
+      frame: el,
+      url: src,
       extensionId,
-      { kind: 'widget', id: widgetId, instanceId },
+      context: { kind: 'widget', id: widgetId, instanceId },
       relay,
       mapControl,
       panelControl,
-      { onReady: () => { sup.noteReady(); } },
-    );
-
-    supervisor = sup;
-    sup.start();
-
-    const onLoad = (): void => { sup.noteLoad(); };
-    el.addEventListener('load', onLoad);
-
-    // When a config panel saves per-instance state, republish state.changed
-    // to this widget's connection so it can reload its configuration.
-    const unsubState = plotterExtensions.onInstanceStateChanged(extensionId, instanceId, (keys) => {
-      host.conn.publish('state.changed', { scope: 'instance', instanceId, keys });
+      watchInstanceState: true,
+      onState: (state) => { frame = state; },
     });
+    if (!handle) return;
+    attached = handle;
 
     return () => {
-      el.removeEventListener('load', onLoad);
-      unsubState();
-      sup.stop();
-      supervisor = null;
-      host.close();
+      attached = null;
+      handle.detach();
     };
   });
 
-  // The stream coming back means the server is serving again — give a frame
-  // that gave up one free retry per reconnect, so a widget mounted while the
-  // server was restarting recovers without the user touching anything.
+  // The stream coming back means the server is serving again — a frame that
+  // gave up gets one free retry out of it, so a widget mounted while the server
+  // was restarting recovers without the user touching anything.
   let lastEpoch = -1;
   $effect(() => {
     const epoch = connection.epoch;
@@ -93,11 +65,8 @@
     if (lastEpoch === -1) { lastEpoch = epoch; return; }
     if (epoch === lastEpoch) return;
     lastEpoch = epoch;
-    const sup = supervisor;
-    if (sup && sup.phase !== 'live') sup.retryNow();
+    attached?.noteReconnect();
   });
-
-  function retry(): void { supervisor?.retryNow(); }
 </script>
 
 <div class="widget-cell" style="width:{width}px;height:{height}px;">
@@ -112,7 +81,7 @@
   {#if frame.phase === 'stalled'}
     <div class="widget-status widget-status--stalled">
       <span class="widget-status-text">Widget not responding</span>
-      <button class="widget-status-btn" onclick={retry}>Retry</button>
+      <button class="widget-status-btn" onclick={() => attached?.retryNow()}>Retry</button>
     </div>
   {:else if frame.attempt > 0}
     <div class="widget-status">

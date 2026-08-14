@@ -286,12 +286,20 @@ function createPlotterExtensions(): PlotterExtensions {
 
   async function load(serverBase: string): Promise<void> {
     if (serverBase !== base) {
-      // New server — everything learned about the old one is void.
+      // New server — everything learned about the old one is void, manifests
+      // included. The absent-streak grace period exists to ride out a restart
+      // of the *same* server; keeping another server's manifests through a
+      // switch would render widgets whose iframe URL is the old manifest path
+      // resolved against the new host, i.e. a broken frame where the honest
+      // answer is "still loading".
       base = serverBase;
       clearRetry();
       retryDelay = RETRY_BASE_MS;
       incompleteRechecks = 0;
       absentStreak.clear();
+      extensions.clear();
+      status = 'idle';
+      error = null;
       inFlight = null;
     } else if (inFlight) {
       return inFlight; // single-flight: concurrent callers share one request.

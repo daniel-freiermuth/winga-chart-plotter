@@ -1,7 +1,10 @@
 <script lang="ts">
   import { plotterExtensions } from '../stores/plotterExtensions.svelte';
   import { settings } from '../stores/settings.svelte';
-  import { createHostConnection, type MapControl, type PanelControl } from '../lib/plotterext-host';
+  import { connection } from '../stores/connection.svelte';
+  import type { MapControl, PanelControl } from '../lib/plotterext-host';
+  import { attachExtensionFrame, type AttachedExtensionFrame } from '../lib/extensionFrameHost';
+  import type { FrameState } from '../lib/extensionFrame';
   import type { SkRelay } from '../lib/sk-relay';
 
   let { mapControl, panelControl, relay }: {
@@ -27,15 +30,20 @@
 
   // iframe ref — recreated whenever resolved URL changes
   let iframe = $state<HTMLIFrameElement | null>(null);
+  let frame = $state<FrameState>({ phase: 'connecting', attempt: 0 });
+  // Deliberately not $state — see WidgetCell.
+  let attached: AttachedExtensionFrame | null = null;
 
   $effect(() => {
-    if (!iframe || !panelState || !panelDef) return;
-    const win = iframe.contentWindow;
-    if (!win) return;
-    const host = createHostConnection(
-      win,
-      panelState.extensionId,
-      {
+    const el = iframe;
+    const url = resolvedUrl;
+    if (!el || !panelState || !panelDef || !url) return;
+
+    const handle = attachExtensionFrame({
+      frame: el,
+      url,
+      extensionId: panelState.extensionId,
+      context: {
         kind: 'panel',
         id: panelDef.id,
         instanceId:     panelState.targetInstance ?? null,
@@ -45,8 +53,24 @@
       relay,
       mapControl,
       panelControl,
-    );
-    return () => { host.close(); };
+      onState: (state) => { frame = state; },
+    });
+    if (!handle) return;
+    attached = handle;
+
+    return () => {
+      attached = null;
+      handle.detach();
+    };
+  });
+
+  let lastEpoch = -1;
+  $effect(() => {
+    const epoch = connection.epoch;
+    if (lastEpoch === -1) { lastEpoch = epoch; return; }
+    if (epoch === lastEpoch) return;
+    lastEpoch = epoch;
+    attached?.noteReconnect();
   });
 </script>
 
@@ -75,6 +99,12 @@
         title={panelDef.title}
         style="width:100%;height:100%;border:none;display:block;"
       ></iframe>
+      {#if frame.phase === 'stalled'}
+        <div class="ext-panel-status">
+          <span>This panel is not responding.</span>
+          <button class="ext-panel-status-btn" onclick={() => attached?.retryNow()}>Retry</button>
+        </div>
+      {/if}
     </div>
   </div>
 {/if}
@@ -145,7 +175,39 @@
   }
 
   .ext-panel-body {
+    position: relative;
     flex: 1;
     overflow: hidden;
+  }
+
+  /* Covers the frame when it never came up, so a blank panel is never the
+     final word — see WidgetCell for the same treatment on widgets. */
+  .ext-panel-status {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 16px;
+    text-align: center;
+    background: #1e1e2e;
+    color: #fca5a5;
+    font-size: 13px;
+  }
+
+  .ext-panel-status-btn {
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    background: rgba(255, 255, 255, 0.08);
+    color: white;
+    border-radius: 4px;
+    padding: 5px 14px;
+    font-size: 13px;
+    cursor: pointer;
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .ext-panel-status-btn:hover { background: rgba(255, 255, 255, 0.18); }
   }
 </style>

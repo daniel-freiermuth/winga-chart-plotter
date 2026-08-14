@@ -56,15 +56,6 @@ const HOST_CAPABILITIES = [
  *  proper JSON-RPC error instead of a timeout it cannot explain. */
 const PUT_TIMEOUT_MS = 8_000;
 
-/**
- * A `bus.ready` arriving this long after the previous one marks a new document
- * rather than a retry: the extension client re-announces every 250 ms until it
- * is answered, then goes quiet for good. Anything past this gap means the frame
- * navigated (reload, self-navigation) and the previous document's Signal K
- * subscriptions are orphaned.
- */
-const READY_EPOCH_GAP_MS = 1_000;
-
 // ── Factory ──────────────────────────────────────────────────────────────────
 
 export function createHostConnection(
@@ -187,17 +178,24 @@ export function createHostConnection(
   // Sniff inbound traffic for `bus.ready` before the connection sees it: it is
   // the only signal the host gets that a *new* document is live in the frame.
   const basePort = windowPort(peer, { origin: '*' });
-  let lastReadyAt = Number.NEGATIVE_INFINITY;
   const port: BusPort = {
     post: (data) => { basePort.post(data); },
     listen: (handler) => basePort.listen((data) => {
       if (isReadyEnvelope(data)) {
-        const now = Date.now();
-        // New document — its predecessor's subscriptions can never be
-        // unsubscribed by anyone else, so drop them before the fresh document
-        // registers its own and the relay ends up fanning out twice.
-        if (now - lastReadyAt > READY_EPOCH_GAP_MS) releaseAllSubscriptions();
-        lastReadyAt = now;
+        // A `bus.ready` arriving while subscriptions are registered can only
+        // come from a *different* document, so its predecessor's subscriptions
+        // are orphaned and must go before the new document registers its own —
+        // otherwise the relay fans every value out twice and holds the path
+        // upstream forever.
+        //
+        // The invariant holds without any timing guess. A client announces
+        // itself only until the handshake answers, and only subscribes after
+        // that; postMessage is FIFO per source, so once a subscription of that
+        // document has been processed, none of its own announcements can still
+        // be in flight behind it. (An extension that re-runs connectExtension()
+        // in place is treated the same, correctly: its earlier subscription ids
+        // belong to a client it has thrown away.)
+        if (subMap.size > 0) releaseAllSubscriptions();
         hooks.onReady?.();
       }
       handler(data);

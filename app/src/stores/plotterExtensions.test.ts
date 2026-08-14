@@ -213,6 +213,51 @@ describe('extension manifest loading', () => {
     expect([...store.extensions.keys()]).toEqual(['fresh']);
   });
 
+  it('discards the previous server manifests when the server changes', async () => {
+    localStorage.setItem('plotterext:layout', JSON.stringify([placement('old')]));
+    vi.stubGlobal('fetch', vi.fn((url: string) => Promise.resolve({
+      ok: true, status: 200, statusText: 'OK',
+      json: () => Promise.resolve(url.startsWith(BASE) ? { old: manifest() } : {}),
+    } as unknown as Response)));
+    const store = await freshStore();
+    await store.load(BASE);
+    expect(store.extensions.has('old')).toBe(true);
+
+    // The absent-streak grace period is for a restart of the same server: it
+    // must not keep another server's manifest alive, or the widget renders
+    // with the old manifest's URL resolved against the new host.
+    await store.load('http://other.local');
+
+    expect(store.extensions.has('old')).toBe(false);
+  });
+
+  it('reports loading rather than ready while the new server is being fetched', async () => {
+    let release = (): void => { /* replaced below */ };
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    vi.stubGlobal('fetch', vi.fn((url: string) => {
+      if (url.startsWith(BASE)) {
+        return Promise.resolve({
+          ok: true, status: 200, statusText: 'OK',
+          json: () => Promise.resolve({ old: manifest() }),
+        } as unknown as Response);
+      }
+      return held.then(() => ({
+        ok: true, status: 200, statusText: 'OK',
+        json: () => Promise.resolve({}),
+      }) as unknown as Response);
+    }));
+    const store = await freshStore();
+    await store.load(BASE);
+    expect(store.status).toBe('ready');
+
+    const pending = store.load('http://other.local');
+    expect(store.status).toBe('loading');
+
+    release();
+    await pending;
+    expect(store.status).toBe('ready');
+  });
+
   it('only rewrites map entries whose manifest actually changed', async () => {
     stubFetch([{ ok: manifest() }, { ok: manifest() }]);
     const store = await freshStore();

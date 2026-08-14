@@ -70,6 +70,23 @@ describe('sk relay', () => {
     expect(seen).toEqual([7]);
   });
 
+  it('does not deliver the in-flight delta to a subscriber added during fan-out', () => {
+    const relay = createSkRelay(() => { /* noop */ });
+    const seen: unknown[] = [];
+    let added = false;
+    relay.subscribe('nav.x', () => {
+      if (added) return;
+      added = true;
+      relay.subscribe('nav.x', (_p, v) => seen.push(v));
+    });
+
+    relay.feed(delta('nav.x', 7));
+    expect(seen).toEqual([]);      // the snapshot is what gets delivered
+
+    relay.feed(delta('nav.x', 8));
+    expect(seen).toEqual([8]);
+  });
+
   it('ignores malformed or irrelevant payloads', () => {
     const relay = createSkRelay(() => { /* noop */ });
     const seen: unknown[] = [];
