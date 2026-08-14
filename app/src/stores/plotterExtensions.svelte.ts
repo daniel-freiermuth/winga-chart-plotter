@@ -125,12 +125,28 @@ function lsSet(key: string, values: Record<string, unknown>): void {
 
 // ── Store interface ───────────────────────────────────────────────────────────
 
+/** Lifecycle of the extension-manifest fetch — drives widget placeholders. */
+export type ExtensionsStatus =
+  /** No load has been attempted for the current server yet. */
+  | 'idle'
+  /** A request is in flight and nothing usable has arrived yet. */
+  | 'loading'
+  /** The last load succeeded; `extensions` reflects the server. */
+  | 'ready'
+  /** The last load failed; a retry is scheduled. Any previously loaded
+   *  manifests are retained so widgets survive a server restart. */
+  | 'error';
+
 export interface PlotterExtensions {
   readonly extensions: SvelteMap<string, ExtensionManifest>;
   readonly layout: WidgetPlacement[];
   readonly openPanel: OpenPanelState | null;
+  readonly status: ExtensionsStatus;
+  readonly error: string | null;
 
   load(serverBase: string): Promise<void>;
+  /** Cancel any scheduled retry and load again now (user "retry" action). */
+  reload(): void;
 
   /** Spawn a new widget instance; returns the new instanceId. */
   addWidget(extensionId: string, widgetId: string): string;
@@ -160,10 +176,32 @@ export interface PlotterExtensions {
 
 // ── Store factory ─────────────────────────────────────────────────────────────
 
+// ── Load resilience tuning ────────────────────────────────────────────────────
+
+/** A wedged server must fail the request, not hold it open forever — without
+ *  a deadline the retry chain never gets a chance to run. */
+const LOAD_TIMEOUT_MS = 10_000;
+const RETRY_BASE_MS   = 2_000;
+const RETRY_MAX_MS    = 30_000;
+
+/**
+ * A widget whose extension disappears from the manifest list vanishes off the
+ * chart, so a single absence is not trusted: Signal K registers resource
+ * providers asynchronously, and a server that has just restarted happily
+ * serves an empty (or partial) list for a few seconds. An extension is only
+ * dropped once it is missing from this many consecutive successful loads.
+ */
+const ABSENT_LOADS_BEFORE_DROP = 2;
+
+/** Bounded re-checks after a load that left placed widgets without a manifest. */
+const MAX_INCOMPLETE_RECHECKS = 5;
+
 function createPlotterExtensions(): PlotterExtensions {
   const extensions = new SvelteMap<string, ExtensionManifest>();
   let layout = $state<WidgetPlacement[]>(loadLayout());
   let openPanel = $state<OpenPanelState | null>(null);
+  let status = $state<ExtensionsStatus>('idle');
+  let error = $state<string | null>(null);
 
   // ── Instance-state change listeners ───────────────────────────────────────
   // Keyed by "${extensionId}:${instanceId}". When setInstanceState is called
@@ -172,26 +210,148 @@ function createPlotterExtensions(): PlotterExtensions {
   const instanceStateListeners = new SvelteMap<string, SvelteSet<(keys: string[]) => void>>();
 
   // ── Loading ────────────────────────────────────────────────────────────────
+  //
+  // The extension list is the app's single point of failure for widgets: a
+  // failed fetch used to be swallowed, leaving `extensions` empty and every
+  // placed widget silently absent until the page was reloaded by hand. It is
+  // therefore retried indefinitely with backoff, never cleared on failure, and
+  // re-checked whenever the outcome contradicts what the layout expects.
 
-  async function load(serverBase: string): Promise<void> {
-    const url = `${serverBase}/signalk/v2/api/resources/plotterExtensions`;
-    let data: Record<string, unknown>;
-    try {
-      const res = await fetch(url);
-      if (!res.ok) return;
-      data = (await res.json()) as Record<string, unknown>;
-    } catch { return; }
+  let base = '';
+  /** Guards against a stale in-flight response overwriting a newer server's. */
+  let loadSeq = 0;
+  let inFlight: Promise<void> | null = null;
+  let retryTimer: ReturnType<typeof setTimeout> | null = null;
+  let retryDelay = RETRY_BASE_MS;
+  let incompleteRechecks = 0;
+  /** extensionId → consecutive successful loads that did not mention it. */
+  const absentStreak = new SvelteMap<string, number>();
 
-    extensions.clear();
+  function clearRetry(): void {
+    if (retryTimer !== null) { clearTimeout(retryTimer); retryTimer = null; }
+  }
 
+  function scheduleRetry(delayMs: number): void {
+    if (retryTimer !== null) return;
+    const target = base;
+    retryTimer = setTimeout(() => {
+      retryTimer = null;
+      if (base === target) void load(target);
+    }, delayMs);
+  }
+
+  /** Parse + capability-filter the raw resource document. */
+  function parseManifests(data: Record<string, unknown>): SvelteMap<string, ExtensionManifest> {
+    const out = new SvelteMap<string, ExtensionManifest>();
     for (const [id, raw] of Object.entries(data)) {
+      if (typeof raw !== 'object' || raw === null) continue;
       const manifest = raw as ExtensionManifest;
       if (manifest.apiVersion !== '1') continue;
       const requires = Array.isArray(manifest.requires) ? manifest.requires : [];
       const satisfied = requires.every((cap) => (HOST_CAPABILITIES as readonly string[]).includes(cap));
       if (!satisfied) continue;
-      extensions.set(id, manifest);
+      out.set(id, manifest);
     }
+    return out;
+  }
+
+  /**
+   * Merge a freshly loaded set into the live map, touching only what actually
+   * changed: rewriting unchanged manifests would churn every widget's props on
+   * every poll for nothing.
+   */
+  function reconcile(fresh: SvelteMap<string, ExtensionManifest>): void {
+    for (const [id, manifest] of fresh) {
+      absentStreak.delete(id);
+      const current = extensions.get(id);
+      if (!current || JSON.stringify(current) !== JSON.stringify(manifest)) {
+        extensions.set(id, manifest);
+      }
+    }
+    for (const id of [...extensions.keys()]) {
+      if (fresh.has(id)) continue;
+      const streak = (absentStreak.get(id) ?? 0) + 1;
+      absentStreak.set(id, streak);
+      if (streak >= ABSENT_LOADS_BEFORE_DROP) {
+        absentStreak.delete(id);
+        extensions.delete(id);
+      }
+    }
+  }
+
+  /** True when a placed widget has no manifest — the list is behind reality. */
+  function layoutUnsatisfied(): boolean {
+    return layout.some((p) => !extensions.has(p.extensionId));
+  }
+
+  async function load(serverBase: string): Promise<void> {
+    if (serverBase !== base) {
+      // New server — everything learned about the old one is void, manifests
+      // included. The absent-streak grace period exists to ride out a restart
+      // of the *same* server; keeping another server's manifests through a
+      // switch would render widgets whose iframe URL is the old manifest path
+      // resolved against the new host, i.e. a broken frame where the honest
+      // answer is "still loading".
+      base = serverBase;
+      clearRetry();
+      retryDelay = RETRY_BASE_MS;
+      incompleteRechecks = 0;
+      absentStreak.clear();
+      extensions.clear();
+      status = 'idle';
+      error = null;
+      inFlight = null;
+    } else if (inFlight) {
+      return inFlight; // single-flight: concurrent callers share one request.
+    }
+
+    const seq = ++loadSeq;
+    if (status !== 'ready') status = 'loading';
+    const run = (async (): Promise<void> => {
+      const url = `${serverBase}/signalk/v2/api/resources/plotterExtensions`;
+      try {
+        const res = await fetch(url, { signal: AbortSignal.timeout(LOAD_TIMEOUT_MS) });
+        if (!res.ok) throw new Error(`HTTP ${String(res.status)} ${res.statusText}`);
+        const data: unknown = await res.json();
+        if (seq !== loadSeq) return; // superseded by a newer load
+        if (typeof data !== 'object' || data === null) throw new Error('malformed extension list');
+
+        reconcile(parseManifests(data as Record<string, unknown>));
+        status = 'ready';
+        error = null;
+        retryDelay = RETRY_BASE_MS;
+
+        // A successful load that still leaves widgets without a manifest means
+        // the server is up but not finished registering — the exact state a
+        // restarting Signal K passes through. Re-check a bounded number of
+        // times instead of leaving the user staring at missing widgets.
+        if (layoutUnsatisfied() && incompleteRechecks < MAX_INCOMPLETE_RECHECKS) {
+          incompleteRechecks++;
+          scheduleRetry(Math.min(RETRY_BASE_MS * 2 ** (incompleteRechecks - 1), RETRY_MAX_MS));
+        } else if (!layoutUnsatisfied()) {
+          incompleteRechecks = 0;
+        }
+      } catch (err) {
+        if (seq !== loadSeq) return;
+        // Existing manifests are deliberately kept: a widget that is already on
+        // screen should ride out a server restart, not disappear.
+        status = 'error';
+        error = err instanceof Error ? err.message : String(err);
+        scheduleRetry(retryDelay);
+        retryDelay = Math.min(retryDelay * 2, RETRY_MAX_MS);
+      } finally {
+        if (seq === loadSeq) inFlight = null;
+      }
+    })();
+    inFlight = run;
+    return run;
+  }
+
+  function reload(): void {
+    clearRetry();
+    retryDelay = RETRY_BASE_MS;
+    incompleteRechecks = 0;
+    if (base) void load(base);
   }
 
   // ── Layout helpers ─────────────────────────────────────────────────────────
@@ -304,8 +464,11 @@ function createPlotterExtensions(): PlotterExtensions {
     get extensions() { return extensions; },
     get layout() { return layout; },
     get openPanel() { return openPanel; },
+    get status() { return status; },
+    get error() { return error; },
 
     load,
+    reload,
     addWidget,
     moveWidget,
     resizeWidget,

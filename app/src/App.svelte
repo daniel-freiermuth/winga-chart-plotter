@@ -66,6 +66,7 @@
   import Settings from './components/Settings.svelte';
   import ChartPicker from './components/ChartPicker.svelte';
   import WidgetPanel from './components/WidgetPanel.svelte';
+  import WidgetPlaceholder from './components/WidgetPlaceholder.svelte';
   import ExtPanel from './components/ExtPanel.svelte';
   import { vesselState } from './stores/vessel';
   import { settings, SPLIT_RATIO_MIN, SPLIT_RATIO_MAX, type SettingsTab } from './stores/settings.svelte';
@@ -439,6 +440,10 @@
           if (charts.error || Object.keys(charts.available).length === 0) {
             void charts.load(settings.signalkHttpUrl);
           }
+          // Same reasoning for the extension list, which decides whether widgets
+          // render at all: a stream that just came up is the best evidence we get
+          // that a server which was down or restarting is serving again.
+          void plotterExtensions.load(settings.signalkHttpUrl);
         } else if (msg.status === 2 || msg.status === 3) {
           // Disconnected or error — schedule reconnect.
           if (msg.status === 3) connection.setError('Connection error');
@@ -452,6 +457,11 @@
       } else {
         connection.setError(`Signal K client failed: ${msg.message}`);
         console.error('[signalk] worker error', msg.message);
+        // A connect that throws in the worker never produces a status event, so
+        // without this the retry chain stops dead and the app stays offline
+        // until the user reloads the page.
+        connection.setConnected(false);
+        scheduleReconnect();
       }
     };
 
@@ -682,6 +692,8 @@
     {@const wDef = manifest?.widgets?.find(w => w.id === placement.widgetId)}
     {#if manifest && wDef}
       <WidgetPanel {placement} widgetDef={wDef} {mapControl} {panelControl} {relay} />
+    {:else}
+      <WidgetPlaceholder {placement} />
     {/if}
   {/each}
   <ExtPanel {mapControl} {panelControl} {relay} />
