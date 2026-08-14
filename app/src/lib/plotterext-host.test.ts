@@ -46,12 +46,15 @@ describe('extension host connection', () => {
     const { relay } = recordingRelay();
     await connect(relay);
 
-    bus.deliver(envelope({ method: 'bus.ready' }));
+    // The client re-announces until it is answered, and cannot tell a lost
+    // handshake from one still in flight. A host that replied only to the
+    // first announcement would strand it for good.
+    for (let i = 0; i < 3; i++) bus.deliver(envelope({ method: 'bus.ready' }));
 
     const handshakes = bus.posted.filter(
       (p) => (p as { msg?: { method?: string } }).msg?.method === 'bus.handshake',
     );
-    expect(handshakes).toHaveLength(1);
+    expect(handshakes).toHaveLength(3);
   });
 
   it('releases the previous document subscriptions when a new one announces itself', async () => {
