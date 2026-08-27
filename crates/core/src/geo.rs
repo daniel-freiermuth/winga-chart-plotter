@@ -481,7 +481,11 @@ fn process_route_coords_core(raw: &[(f64, f64)]) -> Vec<Vec<(f64, f64)>> {
 /// Unpack a flat `[lon0, lat0, lon1, lat1, …]` array (as passed from a JS
 /// `Float64Array`) into coordinate pairs.
 fn pairs_from_flat(flat: &[f64]) -> Vec<(f64, f64)> {
-    flat.chunks_exact(2).map(|c| (c[0], c[1])).collect()
+    flat.as_chunks::<2>()
+        .0
+        .iter()
+        .map(|&[a, b]| (a, b))
+        .collect()
 }
 
 /// Result of [`process_track_core`], camelCase for JS.
