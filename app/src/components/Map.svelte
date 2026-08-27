@@ -1261,6 +1261,13 @@
           } else {
             followMode.offset = null;
           }
+        } else {
+          // Follow was left on from a previous session (persisted offset) but no vessel
+          // fix has arrived yet (e.g. Signal K server restarted and hasn't reconnected).
+          // There is nothing to anchor to, so a manual pan is an unambiguous "stop
+          // following" gesture — otherwise the stale offset survives untouched and the
+          // first fix to arrive silently snaps the camera back, discarding the pan.
+          followMode.offset = null;
         }
       }
       if (map) { const c = map.getCenter(); mapView.syncView([c.lng, c.lat], map.getZoom(), map.getBearing(), map.getPitch()); }
@@ -2982,6 +2989,12 @@
       // Raw pixel signals (span change vs midpoint-Y change) determine the winner.
       let tpLock: 'none' | 'zoom-rotate' | 'pitch' = 'none';
       let tpAccumSpan = 0, tpAccumMidY = 0;
+      // True once this gesture has seen a frame with no vessel position — the pin gets
+      // dropped in onTPUp/onTPCancel, once the whole gesture (both fingers) has ended,
+      // never from inside onTPMove: writing followMode.offset there would invalidate
+      // this effect (keyed on followMode.following) and tear down these very listeners
+      // mid-pinch, killing the gesture after its first frame.
+      let tpUnanchored = false;
 
       const onTPDown = (e: PointerEvent) => {
         if (e.pointerType !== 'touch') return;
@@ -3043,6 +3056,13 @@
         // the same code path as the follow-mode effect and has no such issue.
         const off = followMode.offset;
         if (!off) return; // follow dropped mid-gesture (vessel left the viewport)
+        if (!pos) {
+          // No vessel fix yet — nothing to anchor to. Keep zooming/rotating/pitching
+          // unanchored and remember to drop the pin once the gesture ends (onTPUp).
+          tpUnanchored = true;
+          map.easeTo({ zoom: newZoom, bearing: newBearing, pitch: newPitch, duration: 0 });
+          return;
+        }
         const W   = mapContainer.clientWidth;
         const H   = mapContainer.clientHeight;
         const offset: [number, number] = [off.left * W / 2, off.top * H / 2];
@@ -3051,7 +3071,8 @@
           zoom:    newZoom,
           bearing: newBearing,
           pitch:   newPitch,
-          ...(pos ? { center: [pos.longitude, pos.latitude] as [number, number], offset } : {}),
+          center:  [pos.longitude, pos.latitude],
+          offset,
           duration: 0,
         });
       };
@@ -3060,6 +3081,12 @@
         if (e.pointerType !== 'touch') return;
         tp     = tp.filter(p => p.id !== e.pointerId);
         prevDist = NaN;
+        if (tp.length === 0 && tpUnanchored) {
+          // Whole gesture ended (no fingers left) without ever seeing a vessel fix —
+          // now safe to drop the stale pin, same reasoning as the pan/wheel cases.
+          followMode.offset = null;
+          tpUnanchored = false;
+        }
       };
 
       // Prevent the browser's native pinch-to-zoom. MapLibre's touchZoomRotate handler
@@ -3228,8 +3255,6 @@
       wheelRaf = requestAnimationFrame(() => {
         wheelRaf = null;
         if (!map) return;
-        const pos = get(vesselState).position;
-        if (!pos) return;
         const delta = wheelDelta;
         wheelDelta = 0;
         const rate = Math.abs(delta) > WHEEL_THRESH ? WHEEL_RATE : TRACKPAD_RATE;
@@ -3238,12 +3263,20 @@
         // Use zoomTarget as base so rapid scroll accumulates correctly even while
         // a previous easeTo animation is still in flight.
         zoomTarget = (zoomTarget ?? map.getZoom()) + Math.log2(scale);
+        const pos = get(vesselState).position;
         const off = followMode.offset;
         if (!off) return; // follow dropped before this frame ran
-        const W = mapContainer.clientWidth;
-        const H = mapContainer.clientHeight;
-        const offset: [number, number] = [off.left * W / 2, off.top * H / 2];
-        map.easeTo({ zoom: zoomTarget, center: [pos.longitude, pos.latitude], offset, duration: 0 });
+        if (!pos) {
+          // No vessel fix yet (e.g. Signal K server hasn't reconnected since restart) —
+          // nothing to anchor the zoom to. Same reasoning as the manual-pan case: a
+          // stale pin left engaged would silently snap the camera back once the first
+          // fix arrives, discarding whatever the user just zoomed to. Drop it now.
+          followMode.offset = null;
+          map.easeTo({ zoom: zoomTarget, duration: 0 });
+          return;
+        }
+        const anchor = { center: [pos.longitude, pos.latitude] as [number, number], offset: [off.left * mapContainer.clientWidth / 2, off.top * mapContainer.clientHeight / 2] as [number, number] };
+        map.easeTo({ zoom: zoomTarget, ...anchor, duration: 0 });
       });
     }
 
@@ -3334,7 +3367,9 @@
       class:nav-fab--blocked={followBlockedByInteraction}
       title={followBlockedByInteraction
         ? 'Following, but paused — a touch/drag guard is active'
-        : followMode.following ? 'Stop following vessel' : 'Follow vessel'}
+        : followMode.following && !$vesselState.position
+          ? 'Following — waiting for a vessel position fix'
+          : followMode.following ? 'Stop following vessel' : 'Follow vessel'}
       disabled={!followMode.following && !$vesselState.position}
       onclick={flyToVessel}
     ><FaIcon icon={faLocationCrosshairs} /></button>
