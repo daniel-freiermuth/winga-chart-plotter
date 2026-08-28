@@ -75,8 +75,16 @@ export function createSkRelay(sendUpstream: (msg: string) => void): SkRelay {
       for (const entry of update.values) {
         const ids = pathSubs.get(entry.path);
         if (!ids) continue;
-        for (const id of ids) {
-          subs.get(id)?.cb(entry.path, entry.value, ts);
+        // Snapshot: a callback may subscribe or unsubscribe (e.g. a widget
+        // being torn down mid-delta) while we are fanning out.
+        for (const id of [...ids]) {
+          try {
+            subs.get(id)?.cb(entry.path, entry.value, ts);
+          } catch (err) {
+            // One widget's failure must not cost every later subscriber its
+            // update — posting into a frame that is being destroyed throws.
+            console.warn('[sk-relay] subscriber threw for', entry.path, err);
+          }
         }
       }
     }

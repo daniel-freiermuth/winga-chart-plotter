@@ -216,6 +216,12 @@
   // One-shot guard: fires at most once per page load, the first time a real Signal K
   // position arrives while the user hasn't touched the map yet.
   let _didAutoFlyToFirstFix = false;
+  // Snapshot BEFORE any moveend this session can mutate it: true only if this pane's
+  // camera was already persisted from a *previous* page load. Gates the auto-fly-to-vessel
+  // effect below — a deliberately saved/panned-away view must never be overridden just
+  // because the boat now has a position; only the untouched first-run default (Oslo) gets
+  // corrected.
+  const _hadSavedViewOnLoad = untrack(() => mapView.hasSavedView);
   // One-shot guard: the restored rotation mode (from localStorage) must not be collapsed
   // by ensureAvailable() just because cog/heading/route haven't arrived yet on a fresh
   // page load — that data starting out null means "not received yet", not "lost".
@@ -1255,6 +1261,13 @@
           } else {
             followMode.offset = null;
           }
+        } else {
+          // Follow was left on from a previous session (persisted offset) but no vessel
+          // fix has arrived yet (e.g. Signal K server restarted and hasn't reconnected).
+          // There is nothing to anchor to, so a manual pan is an unambiguous "stop
+          // following" gesture — otherwise the stale offset survives untouched and the
+          // first fix to arrive silently snaps the camera back, discarding the pan.
+          followMode.offset = null;
         }
       }
       if (map) { const c = map.getCenter(); mapView.syncView([c.lng, c.lat], map.getZoom(), map.getBearing(), map.getPitch()); }
@@ -2976,6 +2989,12 @@
       // Raw pixel signals (span change vs midpoint-Y change) determine the winner.
       let tpLock: 'none' | 'zoom-rotate' | 'pitch' = 'none';
       let tpAccumSpan = 0, tpAccumMidY = 0;
+      // True once this gesture has seen a frame with no vessel position — the pin gets
+      // dropped in onTPUp/onTPCancel, once the whole gesture (both fingers) has ended,
+      // never from inside onTPMove: writing followMode.offset there would invalidate
+      // this effect (keyed on followMode.following) and tear down these very listeners
+      // mid-pinch, killing the gesture after its first frame.
+      let tpUnanchored = false;
 
       const onTPDown = (e: PointerEvent) => {
         if (e.pointerType !== 'touch') return;
@@ -3037,6 +3056,13 @@
         // the same code path as the follow-mode effect and has no such issue.
         const off = followMode.offset;
         if (!off) return; // follow dropped mid-gesture (vessel left the viewport)
+        if (!pos) {
+          // No vessel fix yet — nothing to anchor to. Keep zooming/rotating/pitching
+          // unanchored and remember to drop the pin once the gesture ends (onTPUp).
+          tpUnanchored = true;
+          map.easeTo({ zoom: newZoom, bearing: newBearing, pitch: newPitch, duration: 0 });
+          return;
+        }
         const W   = mapContainer.clientWidth;
         const H   = mapContainer.clientHeight;
         const offset: [number, number] = [off.left * W / 2, off.top * H / 2];
@@ -3045,7 +3071,8 @@
           zoom:    newZoom,
           bearing: newBearing,
           pitch:   newPitch,
-          ...(pos ? { center: [pos.longitude, pos.latitude] as [number, number], offset } : {}),
+          center:  [pos.longitude, pos.latitude],
+          offset,
           duration: 0,
         });
       };
@@ -3054,6 +3081,12 @@
         if (e.pointerType !== 'touch') return;
         tp     = tp.filter(p => p.id !== e.pointerId);
         prevDist = NaN;
+        if (tp.length === 0 && tpUnanchored) {
+          // Whole gesture ended (no fingers left) without ever seeing a vessel fix —
+          // now safe to drop the stale pin, same reasoning as the pan/wheel cases.
+          followMode.offset = null;
+          tpUnanchored = false;
+        }
       };
 
       // Prevent the browser's native pinch-to-zoom. MapLibre's touchZoomRotate handler
@@ -3098,16 +3131,19 @@
     };
   });
 
-  // One-shot: fly to the vessel's first real position fix, but only if the user hasn't
-  // already panned/zoomed/rotated the map by hand and isn't already in follow mode. Center
-  // only (no zoom change) — same camera move as clicking "center on vessel" once, but never
-  // engages follow mode itself ("not lock"), so the user can immediately pan away again.
-  // Persisted-view restore (loadSavedView() in onMount) already avoided the old Oslo flash;
-  // this corrects that persisted/stale view to the boat's actual position once we know it.
+  // One-shot: fly to the vessel's first real position fix, but only on a pane that never
+  // had a persisted camera (fresh install / cleared storage) — the default view is Oslo,
+  // which has nothing to do with the boat, so once we know the real position we correct
+  // it. If a view was already saved from a previous session, it reflects a deliberate
+  // pan/zoom the user made and must survive reloads untouched, even before the user
+  // interacts again this session — so `_hadSavedViewOnLoad` also gates this, in addition
+  // to `_userHasInteracted` (this-session panning) and follow mode. Center only (no zoom
+  // change) — same camera move as clicking "center on vessel" once, but never engages
+  // follow mode itself ("not lock"), so the user can immediately pan away again.
   $effect(() => {
     const pos = $vesselPosition;
     if (!map || !mapLoaded || !pos) return;
-    if (_didAutoFlyToFirstFix || _userHasInteracted || followMode.following) return;
+    if (_didAutoFlyToFirstFix || _userHasInteracted || _hadSavedViewOnLoad || followMode.following) return;
     _didAutoFlyToFirstFix = true;
     map.flyTo({ center: [pos.longitude, pos.latitude] });
   });
@@ -3219,8 +3255,6 @@
       wheelRaf = requestAnimationFrame(() => {
         wheelRaf = null;
         if (!map) return;
-        const pos = get(vesselState).position;
-        if (!pos) return;
         const delta = wheelDelta;
         wheelDelta = 0;
         const rate = Math.abs(delta) > WHEEL_THRESH ? WHEEL_RATE : TRACKPAD_RATE;
@@ -3229,12 +3263,20 @@
         // Use zoomTarget as base so rapid scroll accumulates correctly even while
         // a previous easeTo animation is still in flight.
         zoomTarget = (zoomTarget ?? map.getZoom()) + Math.log2(scale);
+        const pos = get(vesselState).position;
         const off = followMode.offset;
         if (!off) return; // follow dropped before this frame ran
-        const W = mapContainer.clientWidth;
-        const H = mapContainer.clientHeight;
-        const offset: [number, number] = [off.left * W / 2, off.top * H / 2];
-        map.easeTo({ zoom: zoomTarget, center: [pos.longitude, pos.latitude], offset, duration: 0 });
+        if (!pos) {
+          // No vessel fix yet (e.g. Signal K server hasn't reconnected since restart) —
+          // nothing to anchor the zoom to. Same reasoning as the manual-pan case: a
+          // stale pin left engaged would silently snap the camera back once the first
+          // fix arrives, discarding whatever the user just zoomed to. Drop it now.
+          followMode.offset = null;
+          map.easeTo({ zoom: zoomTarget, duration: 0 });
+          return;
+        }
+        const anchor = { center: [pos.longitude, pos.latitude] as [number, number], offset: [off.left * mapContainer.clientWidth / 2, off.top * mapContainer.clientHeight / 2] as [number, number] };
+        map.easeTo({ zoom: zoomTarget, ...anchor, duration: 0 });
       });
     }
 
@@ -3325,7 +3367,9 @@
       class:nav-fab--blocked={followBlockedByInteraction}
       title={followBlockedByInteraction
         ? 'Following, but paused — a touch/drag guard is active'
-        : followMode.following ? 'Stop following vessel' : 'Follow vessel'}
+        : followMode.following && !$vesselState.position
+          ? 'Following — waiting for a vessel position fix'
+          : followMode.following ? 'Stop following vessel' : 'Follow vessel'}
       disabled={!followMode.following && !$vesselState.position}
       onclick={flyToVessel}
     ><FaIcon icon={faLocationCrosshairs} /></button>
