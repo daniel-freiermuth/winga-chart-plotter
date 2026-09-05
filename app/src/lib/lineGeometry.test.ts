@@ -63,8 +63,8 @@ describe('rhumbCoords', () => {
 
   it('first point equals the start position', () => {
     const coords = rhumbCoords(10, 55, 1.0, 50_000);
-    expect(coords[0][0]).toBeCloseTo(10, 10);
-    expect(coords[0][1]).toBeCloseTo(55, 10);
+    expect(coords[0]![0]).toBeCloseTo(10, 10);
+    expect(coords[0]![1]).toBeCloseTo(55, 10);
   });
 
   it('zero distance returns 257 copies of the start position', () => {
@@ -101,8 +101,8 @@ describe('rhumbCoords', () => {
       expect(Number.isFinite(lat)).toBe(true);
     }
     // With the cap fix, distance is clamped to 0 so all coords equal start
-    expect(coords[0][0]).toBeCloseTo(0, 8);
-    expect(coords[0][1]).toBeCloseTo(86, 8);
+    expect(coords[0]![0]).toBeCloseTo(0, 8);
+    expect(coords[0]![1]).toBeCloseTo(86, 8);
   });
 
   it('produces no NaN/Infinity when starting at −87° heading south', () => {
@@ -131,22 +131,22 @@ describe('rhumbCoords', () => {
     // Due east from 170°E, 50 km — should cross 180° without a 360° jump
     const coords = rhumbCoords(170, 0, Math.PI / 2, 5_000_000);
     for (let i = 1; i < coords.length; i++) {
-      const jump = Math.abs(coords[i][0] - coords[i - 1][0]);
+      const jump = Math.abs(coords[i]![0] - coords[i - 1]![0]);
       // Adjacent points should never jump by ~360°
       expect(jump).toBeLessThan(10);
     }
     // Final longitude should be past 180° (unwrapped)
-    expect(coords[coords.length - 1][0]).toBeGreaterThan(180);
+    expect(coords[coords.length - 1]![0]).toBeGreaterThan(180);
   });
 
   it('maintains continuous longitude heading west across the antimeridian', () => {
     // Due west from −170° — crosses −180°
     const coords = rhumbCoords(-170, 0, (3 * Math.PI) / 2, 5_000_000);
     for (let i = 1; i < coords.length; i++) {
-      const jump = Math.abs(coords[i][0] - coords[i - 1][0]);
+      const jump = Math.abs(coords[i]![0] - coords[i - 1]![0]);
       expect(jump).toBeLessThan(10);
     }
-    expect(coords[coords.length - 1][0]).toBeLessThan(-180);
+    expect(coords[coords.length - 1]![0]).toBeLessThan(-180);
   });
 });
 
@@ -159,7 +159,7 @@ describe('gcCoords', () => {
 
   it('first point equals the start position', () => {
     const coords = gcCoords(5, 60, 1.0, 50_000);
-    expect(coords[0][0]).toBeCloseTo(5, 10);
-    expect(coords[0][1]).toBeCloseTo(60, 10);
+    expect(coords[0]![0]).toBeCloseTo(5, 10);
+    expect(coords[0]![1]).toBeCloseTo(60, 10);
   });
 });
