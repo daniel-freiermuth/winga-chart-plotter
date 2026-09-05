@@ -45,7 +45,7 @@ async function fetchAndParse(
   throw new Error(`WMTS GetCapabilities failed:\n${errors.join('\n')}`);
 }
 
-function parseDoc(doc: Document, baseUrl: string, preferLayer?: string): WmtsInfo {
+export function parseDoc(doc: Document, baseUrl: string, preferLayer?: string): WmtsInfo {
   const compatibleTms = findCompatibleTileMatrixSets(doc);
   if (compatibleTms.size === 0) throw new Error('No EPSG:3857 / WebMercatorQuad tile matrix sets');
 
