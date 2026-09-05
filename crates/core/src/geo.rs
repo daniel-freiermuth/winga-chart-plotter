@@ -807,10 +807,7 @@ mod tests {
         // Near-antipodal: (0,0) → (179.9999999, 0.00001) — haversine h rounds
         // fractionally above 1.0, which formerly made asin return NaN.
         let coords = line_coords(0.0, 0.0, 179.9999999, 0.00001, 16);
-        assert!(
-            coords.len() >= 2,
-            "should produce at least start and end"
-        );
+        assert!(coords.len() >= 2, "should produce at least start and end");
         for (i, &(lon, lat)) in coords.iter().enumerate() {
             assert!(lon.is_finite(), "NaN/Inf longitude at index {i}");
             assert!(lat.is_finite(), "NaN/Inf latitude at index {i}");
@@ -823,10 +820,7 @@ mod tests {
         // The angular distance is π; SLERP is degenerate (infinite great
         // circles) but the interpolation must still return finite values.
         let coords = line_coords(0.0, 0.0, 180.0, 0.0, 16);
-        assert!(
-            coords.len() >= 2,
-            "should produce at least start and end"
-        );
+        assert!(coords.len() >= 2, "should produce at least start and end");
         for (i, &(lon, lat)) in coords.iter().enumerate() {
             assert!(lon.is_finite(), "NaN/Inf longitude at index {i}");
             assert!(lat.is_finite(), "NaN/Inf latitude at index {i}");
