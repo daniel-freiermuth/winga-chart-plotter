@@ -32,8 +32,9 @@ fn distance_nm(lon_a: f64, lat_a: f64, lon_b: f64, lat_b: f64) -> f64 {
     let phi2 = lat_b.to_radians();
     let delta_phi = (lat_b - lat_a).to_radians();
     let delta_lambda = (lon_b - lon_a).to_radians();
-    let a = (delta_phi / 2.0).sin().powi(2)
-        + phi1.cos() * phi2.cos() * (delta_lambda / 2.0).sin().powi(2);
+    let a = ((delta_phi / 2.0).sin().powi(2)
+        + phi1.cos() * phi2.cos() * (delta_lambda / 2.0).sin().powi(2))
+    .clamp(0.0, 1.0);
     2.0 * a.sqrt().atan2((1.0 - a).sqrt()) * R_NM
 }
 
@@ -764,6 +765,24 @@ mod tests {
     fn distance_same_point_is_zero() {
         let d = distance_nm(10.75, 59.91, 10.75, 59.91);
         assert!(d.abs() < 1e-9, "expected 0, got {d}");
+    }
+
+    #[test]
+    fn distance_nm_exactly_antipodal_is_finite() {
+        // Exactly antipodal points: half the Earth's circumference ≈ 10800 nm.
+        let d = distance_nm(0.0, 0.0, 180.0, 0.0);
+        assert!(d.is_finite(), "expected finite distance, got {d}");
+        assert!((d - 10_807.28).abs() < 1.0, "expected ~10807 nm, got {d}");
+    }
+
+    #[test]
+    fn distance_nm_near_antipodal_does_not_produce_nan() {
+        // At nonzero latitudes, float rounding can push the haversine
+        // intermediate `a` above 1.0, making (1-a).sqrt() → NaN.
+        // This mirrors the densify_by_distance regression test at line 1272.
+        let d = distance_nm(0.0, 0.002, 180.0, -0.002);
+        assert!(d.is_finite(), "expected finite distance, got {d}");
+        assert!(d > 10_799.0, "expected ~half circumference, got {d}");
     }
 
     #[test]
