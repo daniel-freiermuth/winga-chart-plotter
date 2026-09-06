@@ -36,8 +36,8 @@ importers:
         specifier: ^5.0.0
         version: 5.24.0
       signalk-plotterext-bus:
-        specifier: ^0.10.0
-        version: 0.10.0
+        specifier: ^0.11.0
+        version: 0.11.0
       svelte:
         specifier: ^5.0.0
         version: 5.56.6(@typescript-eslint/types@8.64.0)
@@ -2595,8 +2595,8 @@ packages:
     resolution: {integrity: sha512-bzyZ1e88w9O1iNJbKnOlvYTrWPDl46O1bG0D3XInv+9tkPrxrN8jUUTiFlDkkmKWgn1M6CfIA13SuGqOa9Korw==}
     engines: {node: '>=14'}
 
-  signalk-plotterext-bus@0.10.0:
-    resolution: {integrity: sha512-KhUICGdTRJVQcRFR62phxUfUg2qeQpUg9HdcNqLmiSjVF1QKakYWcxwjYGPuHZileovnJV9h0+e4VxUzCklGDg==}
+  signalk-plotterext-bus@0.11.0:
+    resolution: {integrity: sha512-a9cc9Wa3tJ9HIquN11wzE0/ifzArmpIQHKT1AKWoQjIbl6bDxMvAz04NxJY+oQeuRwdqk74twNu843mA1z4X/A==}
 
   smob@1.6.2:
     resolution: {integrity: sha512-RQsvleCbF8cVHEv+xuDGaA4pOizFqJ0GgjtMSRo6oP8pnN7WsigHgVGey6aILRBKv4W2YOMHLqbKdnB6hpB9fw==}
@@ -5737,7 +5737,7 @@ snapshots:
 
   signal-exit@4.1.0: {}
 
-  signalk-plotterext-bus@0.10.0: {}
+  signalk-plotterext-bus@0.11.0: {}
 
   smob@1.6.2: {}
 
