@@ -7,11 +7,13 @@
 export function destPoint(lon: number, lat: number, bearingRad: number, distM: number): [number, number] {
   const R = 6371000;
   const δ = distM / R;
-  const φ1 = (lat * Math.PI) / 180;
-  const φ2 = φ1 + δ * Math.cos(bearingRad);
+  // Guard: clamp latitude away from the Mercator singularity at ±90°.
+  const POLE_GUARD = Math.PI / 2 - 1e-6;
+  const φ1 = Math.max(-POLE_GUARD, Math.min(POLE_GUARD, (lat * Math.PI) / 180));
+  const φ2 = Math.max(-POLE_GUARD, Math.min(POLE_GUARD, φ1 + δ * Math.cos(bearingRad)));
   const Δψ = Math.log(Math.tan(φ2 / 2 + Math.PI / 4) / Math.tan(φ1 / 2 + Math.PI / 4));
   const q = Math.abs(Δψ) > 1e-10 ? (φ2 - φ1) / Δψ : Math.cos(φ1);
-  const λ2 = (lon * Math.PI) / 180 + δ * Math.sin(bearingRad) / q;
+  const λ2 = (lon * Math.PI) / 180 + (δ * Math.sin(bearingRad)) / q;
   return [(λ2 * 180) / Math.PI, (φ2 * 180) / Math.PI];
 }
 
@@ -26,7 +28,7 @@ export function rhumbCoords(lon: number, lat: number, bearingRad: number, distM:
   if (Math.abs(cosB) > 1e-10) {
     const capφ = cosB > 0 ? (85.0 * Math.PI) / 180 : -(85.0 * Math.PI) / 180;
     const distToCap = ((capφ - φ1) / cosB) * R;
-    if (distToCap > 0 && distToCap < distM) distM = distToCap;
+    if (distToCap < distM) distM = Math.max(0, distToCap);
   }
   const SEGMENTS = 256;
   const coords: [number, number][] = [];
