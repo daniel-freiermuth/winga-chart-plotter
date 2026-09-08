@@ -3421,32 +3421,7 @@
 {/if}
 
 <style>
-  .ruler-popup {
-    position: fixed;
-    z-index: 20;
-    transform: translate(-50%, calc(-100% - 8px));
-    background: #1e1e2e;
-    border: 1px solid #444466;
-    border-radius: 8px;
-    padding: 6px 8px;
-    box-shadow: 0 4px 16px rgba(0,0,0,0.5);
-    pointer-events: all;
-  }
-  .ruler-popup-remove {
-    background: #e53e3e;
-    color: white;
-    border: none;
-    border-radius: 5px;
-    padding: 6px 16px;
-    font-size: 14px;
-    cursor: pointer;
-    font-weight: 600;
-    transition: background 0.15s;
-  }
-  @media (hover: hover) and (pointer: fine) {
-    .ruler-popup-remove:hover { background: #c53030; }
-  }
-
+  .ruler-popup,
   .planner-handle-popup {
     position: fixed;
     z-index: 20;
@@ -3458,6 +3433,7 @@
     box-shadow: 0 4px 16px rgba(0,0,0,0.5);
     pointer-events: all;
   }
+  .ruler-popup-remove,
   .planner-handle-popup-remove {
     background: #e53e3e;
     color: white;
@@ -3470,6 +3446,7 @@
     transition: background 0.15s;
   }
   @media (hover: hover) and (pointer: fine) {
+    .ruler-popup-remove:hover,
     .planner-handle-popup-remove:hover { background: #c53030; }
   }
 
