@@ -58,13 +58,24 @@ fn line_coords(lon_a: f64, lat_a: f64, lon_b: f64, lat_b: f64, segments: u32) ->
         return vec![(lon_a, lat_a), (lon_b, lat_b)];
     }
 
+    // Near-antipodal: sin(delta_sigma) ≈ 0 and the 1/sin amplification
+    // collapses intermediate SLERP points into degenerate clusters (same
+    // guard as densify_by_distance).  Fall back to endpoints only — the
+    // great circle is undefined for exactly-antipodal points, and at
+    // sin < 1e-6 the endpoints are within ~6.4 m of exactly antipodal, so
+    // the direction of the arc is not meaningfully determined.
+    let sin_d = delta_sigma.sin();
+    if sin_d.abs() < 1e-6 {
+        return vec![(lon_a, lat_a), (lon_b, lat_b)];
+    }
+
     let mut coords = Vec::with_capacity(segments as usize + 1);
     let mut prev_lambda = lambda1;
 
     for i in 0..=segments {
         let f = f64::from(i) / f64::from(segments);
-        let a = ((1.0 - f) * delta_sigma).sin() / delta_sigma.sin();
-        let b = (f * delta_sigma).sin() / delta_sigma.sin();
+        let a = ((1.0 - f) * delta_sigma).sin() / sin_d;
+        let b = (f * delta_sigma).sin() / sin_d;
         let x = a * phi1.cos() * lambda1.cos() + b * phi2.cos() * lambda2.cos();
         let y = a * phi1.cos() * lambda1.sin() + b * phi2.cos() * lambda2.sin();
         let z = a * phi1.sin() + b * phi2.sin();
