@@ -818,6 +818,52 @@ mod tests {
     }
 
     #[test]
+    fn line_coords_antipodal_equator_no_degenerate_clustering() {
+        // Antipodal equatorial endpoints: delta_sigma = π, sin(π) ≈ 1.2e-16.
+        // The 1/sin(delta_sigma) amplification factor ≈ 8e15 collapses
+        // middle SLERP points to identical coordinates (verified: with 8
+        // segments, indices 3, 4, 5 all land on (90,0) instead of 67.5°,
+        // 90°, 112.5°).  A correct implementation must either:
+        //   - fall back to endpoints only (the GC is undefined), or
+        //   - produce strictly monotonic longitude spacing.
+        let coords = line_coords(0.0, 0.0, 180.0, 0.0, 8);
+        // Every consecutive pair of longitudes must be strictly increasing
+        // (no clustering). With 8 segments the expected gap is 22.5°;
+        // require at least 1° to reject degenerate SLERP output.
+        if coords.len() > 2 {
+            for pair in coords.windows(2) {
+                let gap = pair[1].0 - pair[0].0;
+                assert!(
+                    gap > 1.0,
+                    "degenerate SLERP: gap {gap:.6}° between lon {:.6}° and {:.6}°",
+                    pair[0].0,
+                    pair[1].0
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn line_coords_antipodal_nonzero_lat_no_degenerate_clustering() {
+        // Near-antipodal at nonzero latitude (lat ±0.015°): the haversine
+        // intermediate exceeds 1.0 by 1 ULP on x86-64, and sin(delta_sigma)
+        // ≈ 1.2e-16 — identical to the equatorial case.  With 8 segments
+        // indices 3, 4, 5 all cluster at (90, 0) instead of being spaced.
+        let coords = line_coords(0.0, 0.015, 180.0, -0.015, 8);
+        if coords.len() > 2 {
+            for pair in coords.windows(2) {
+                let gap = pair[1].0 - pair[0].0;
+                assert!(
+                    gap > 1.0,
+                    "degenerate SLERP: gap {gap:.6}° between lon {:.6}° and {:.6}°",
+                    pair[0].0,
+                    pair[1].0
+                );
+            }
+        }
+    }
+
+    #[test]
     fn test_cpa_converging_no_rot() {
         // Own: origin, heading north (cog=0), 5 m/s.
         // Target: 100 m east, 1000 m north, heading south (cog=π), 5 m/s.
