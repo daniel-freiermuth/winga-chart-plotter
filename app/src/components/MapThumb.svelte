@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { StyleSpecification } from 'maplibre-gl';
-  import maplibregl from 'maplibre-gl';
+  import * as maplibregl from 'maplibre-gl';
   import { untrack } from 'svelte';
   import { mapStyles } from '../stores/mapStyles.svelte';
   import { chartBoundsContain, chartBoundsCenter } from '../lib/wasmGeo';
