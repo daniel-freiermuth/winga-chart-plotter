@@ -60,8 +60,14 @@ fn route_distance_m(waypoints: &[LonLat]) -> f64 {
 }
 
 /// Build the POST/PUT body for `resources/routes`.
-pub fn build_route_body(name: &str, waypoints: &[LonLat]) -> serde_json::Value {
-    serde_json::json!({
+///
+/// Returns `Err` when `waypoints` has fewer than 2 entries, because a
+/// GeoJSON `LineString` requires at least two positions (RFC 7946 §3.1.4).
+pub fn build_route_body(name: &str, waypoints: &[LonLat]) -> crate::Result<serde_json::Value> {
+    if waypoints.len() < 2 {
+        return Err(crate::Error::TooFewWaypoints(waypoints.len()));
+    }
+    Ok(serde_json::json!({
         "name": name,
         "description": "",
         "distance": route_distance_m(waypoints).round(),
@@ -73,7 +79,7 @@ pub fn build_route_body(name: &str, waypoints: &[LonLat]) -> serde_json::Value {
             },
             "properties": {},
         },
-    })
+    }))
 }
 
 /// Build the PUT body for `resources/routes/:uuid` from the server's current
@@ -81,19 +87,21 @@ pub fn build_route_body(name: &str, waypoints: &[LonLat]) -> serde_json::Value {
 /// the planner does not edit (description, `feature.properties` such as
 /// `coordinatesMeta`, vendor extras) are carried over from `existing`; only
 /// the name, distance and geometry are taken from the edit.
+///
+/// Returns `Err` under the same conditions as [`build_route_body`].
 pub fn build_route_update_body(
     existing: &serde_json::Value,
     name: &str,
     waypoints: &[LonLat],
-) -> serde_json::Value {
-    let fresh = build_route_body(name, waypoints);
-    merge_update(
+) -> crate::Result<serde_json::Value> {
+    let fresh = build_route_body(name, waypoints)?;
+    Ok(merge_update(
         existing,
         fresh,
         &["name", "distance"],
         &["type", "geometry"],
         &[],
-    )
+    ))
 }
 
 /// Overlay the edited parts of `fresh` onto `existing`: top-level `top_keys`,
@@ -205,7 +213,7 @@ mod wasm {
     ) -> Result<Option<String>, JsValue> {
         let waypoints: Vec<LonLat> = serde_wasm_bindgen::from_value(waypoints)?;
         let url = format!("{server_base}/signalk/v2/api/resources/routes");
-        let body = build_route_body(&name, &waypoints).to_string();
+        let body = build_route_body(&name, &waypoints)?.to_string();
         let resp = http::fetch("POST", &url, &auth_headers, Some(&body), None).await?;
         if !resp.ok() {
             return Err(http::status_error("Save route failed", &resp).into());
@@ -232,7 +240,7 @@ mod wasm {
         }
         let existing: serde_json::Value =
             serde_json::from_str(&current.text).map_err(crate::Error::json("Update route"))?;
-        let body = build_route_update_body(&existing, &name, &waypoints).to_string();
+        let body = build_route_update_body(&existing, &name, &waypoints)?.to_string();
         let resp = http::fetch("PUT", &url, &auth_headers, Some(&body), None).await?;
         if !resp.ok() {
             return Err(http::status_error("Update route failed", &resp).into());
@@ -305,7 +313,8 @@ mod tests {
                     lat: 59.44,
                 },
             ],
-        );
+        )
+        .unwrap();
         assert_eq!(body["name"], "Helsinki to Tallinn");
         assert_eq!(body["description"], "");
         assert_eq!(body["feature"]["type"], "Feature");
@@ -335,7 +344,8 @@ mod tests {
             &existing,
             "New",
             &[LonLat { lon: 0.0, lat: 0.0 }, LonLat { lon: 0.0, lat: 1.0 }],
-        );
+        )
+        .unwrap();
         assert_eq!(body["name"], "New");
         assert_eq!(body["description"], "Harbour approach");
         assert_eq!(body["x-vendor"], 7);
@@ -354,8 +364,32 @@ mod tests {
     #[test]
     fn route_update_without_usable_original_is_fresh_body() {
         let pts = [LonLat { lon: 0.0, lat: 0.0 }, LonLat { lon: 0.0, lat: 1.0 }];
-        let body = build_route_update_body(&serde_json::Value::Null, "R", &pts);
-        assert_eq!(body, build_route_body("R", &pts));
+        let body = build_route_update_body(&serde_json::Value::Null, "R", &pts).unwrap();
+        assert_eq!(body, build_route_body("R", &pts).unwrap());
+    }
+
+    #[test]
+    fn build_route_body_rejects_empty_waypoints() {
+        let result = build_route_body("empty", &[]);
+        assert!(
+            matches!(result, Err(crate::Error::TooFewWaypoints(0))),
+            "0 waypoints must be rejected, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn build_route_body_rejects_single_waypoint() {
+        let result = build_route_body(
+            "solo",
+            &[LonLat {
+                lon: 24.94,
+                lat: 60.17,
+            }],
+        );
+        assert!(
+            matches!(result, Err(crate::Error::TooFewWaypoints(1))),
+            "1 waypoint must be rejected, got {result:?}"
+        );
     }
 
     #[test]
