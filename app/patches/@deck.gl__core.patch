@@ -1,8 +1,8 @@
 diff --git a/dist/dist.dev.js b/dist/dist.dev.js
-index bd8091b0e36ccc014dc16156ccd7cfb0f3687998..daea0ce0f9179ce0e2d7e5962f076e68f0069942 100644
+index 3b509c09deaa7daf456840af0a867aed4256f438..dcbee26b0949f4050ef47cd2c11b9cd1dc3168eb 100644
 --- a/dist/dist.dev.js
 +++ b/dist/dist.dev.js
-@@ -25929,7 +25929,7 @@ var<uniform> layer: LayerUniforms;
+@@ -34728,7 +34728,7 @@ var<uniform> layer: LayerUniforms;
  `
    );
    var uniformBlock = `layout(std140) uniform layerUniforms {
@@ -11,33 +11,8 @@ index bd8091b0e36ccc014dc16156ccd7cfb0f3687998..daea0ce0f9179ce0e2d7e5962f076e68
  } layer;
  `;
    var layerUniforms = {
-@@ -32756,7 +32756,7 @@ void main() {
-     constructor(opts = {}) {
-       const {
-         longitude = 0,
--        zoom = 0,
-+        zoom = 0, bearing = 0, pitch = 0,
-         // Matches Maplibre defaults
-         // https://github.com/maplibre/maplibre-gl-js/blob/f8ab4b48d59ab8fe7b068b102538793bbdd4c848/src/geo/projection/globe_transform.ts#L632-L633
-         nearZMultiplier = 0.5,
-@@ -32774,7 +32774,14 @@ void main() {
-       const scale5 = Math.pow(2, zoom - zoomAdjust(latitude));
-       const nearZ = opts.nearZ ?? nearZMultiplier;
-       const farZ = opts.farZ ?? (altitude + GLOBE_RADIUS * 2 * scale5 / height) * farZMultiplier;
--      const viewMatrix2 = new Matrix4().lookAt({ eye: [0, -altitude, 0], up: [0, 0, 1] });
-+      const bearingRad = bearing * DEGREES_TO_RADIANS6;
-+      const pitchRad   = pitch   * DEGREES_TO_RADIANS6;
-+      const sb = Math.sin(bearingRad), cb = Math.cos(bearingRad);
-+      const sp = Math.sin(pitchRad),   cp = Math.cos(pitchRad);
-+      const viewMatrix2 = new Matrix4().lookAt({
-+          eye: [-sb * sp * altitude, -cp * altitude, -cb * sp * altitude],
-+          up:  [sb * cp, -sp, cb * cp],
-+      });
-       viewMatrix2.rotateX(latitude * DEGREES_TO_RADIANS6);
-       viewMatrix2.rotateZ(-longitude * DEGREES_TO_RADIANS6);
-       viewMatrix2.scale(scale5 / height);
 diff --git a/dist/index.cjs b/dist/index.cjs
-index 24d3ed2acb6fcc2803d3aa6dda78572abed3736d..652d439e460dc2468e8f0c9d4f7586bbab0ddcc6 100644
+index 966d28dd008a077f22be496d5cb3b89a925531bf..426c9197b84f275c1daa9e16e65c1d6e71938944 100644
 --- a/dist/index.cjs
 +++ b/dist/index.cjs
 @@ -270,7 +270,7 @@ var<uniform> layer: LayerUniforms;
@@ -49,31 +24,6 @@ index 24d3ed2acb6fcc2803d3aa6dda78572abed3736d..652d439e460dc2468e8f0c9d4f7586bb
  } layer;
  `;
  var layerUniforms = {
-@@ -4729,7 +4729,7 @@ var GlobeViewport = class extends viewport_default {
-   constructor(opts = {}) {
-     const {
-       longitude = 0,
--      zoom = 0,
-+      zoom = 0, bearing = 0, pitch = 0,
-       // Matches Maplibre defaults
-       // https://github.com/maplibre/maplibre-gl-js/blob/f8ab4b48d59ab8fe7b068b102538793bbdd4c848/src/geo/projection/globe_transform.ts#L632-L633
-       nearZMultiplier = 0.5,
-@@ -4747,7 +4747,14 @@ var GlobeViewport = class extends viewport_default {
-     const scale = Math.pow(2, zoom - zoomAdjust(latitude));
-     const nearZ = opts.nearZ ?? nearZMultiplier;
-     const farZ = opts.farZ ?? (altitude + GLOBE_RADIUS * 2 * scale / height) * farZMultiplier;
--    const viewMatrix2 = new import_core12.Matrix4().lookAt({ eye: [0, -altitude, 0], up: [0, 0, 1] });
-+    const bearingRad = bearing * DEGREES_TO_RADIANS2;
-+    const pitchRad   = pitch   * DEGREES_TO_RADIANS2;
-+    const sb = Math.sin(bearingRad), cb = Math.cos(bearingRad);
-+    const sp = Math.sin(pitchRad),   cp = Math.cos(pitchRad);
-+    const viewMatrix2 = new import_core12.Matrix4().lookAt({
-+        eye: [-sb * sp * altitude, -cp * altitude, -cb * sp * altitude],
-+        up:  [sb * cp, -sp, cb * cp],
-+    });
-     viewMatrix2.rotateX(latitude * DEGREES_TO_RADIANS2);
-     viewMatrix2.rotateZ(-longitude * DEGREES_TO_RADIANS2);
-     viewMatrix2.scale(scale / height);
 diff --git a/dist/shaderlib/misc/layer-uniforms.js b/dist/shaderlib/misc/layer-uniforms.js
 index 9ad93fba65edbb1a7017d4ce46ea393841b3b0e7..9cb176ea83277e54396d84461273d79d77c1ef30 100644
 --- a/dist/shaderlib/misc/layer-uniforms.js
@@ -87,54 +37,3 @@ index 9ad93fba65edbb1a7017d4ce46ea393841b3b0e7..9cb176ea83277e54396d84461273d79d
  } layer;
  `;
  export const layerUniforms = {
-diff --git a/dist/viewports/globe-viewport.js b/dist/viewports/globe-viewport.js
-index 57b1e4c7f607a8ec86a183a4981219b9e2db9ec9..c7da70fe156fe4769add66b8e40055f6b5124334 100644
---- a/dist/viewports/globe-viewport.js
-+++ b/dist/viewports/globe-viewport.js
-@@ -25,7 +25,7 @@ function getDistanceScales() {
- }
- class GlobeViewport extends Viewport {
-     constructor(opts = {}) {
--        const { longitude = 0, zoom = 0, 
-+        const { longitude = 0, zoom = 0, bearing = 0, pitch = 0,
-         // Matches Maplibre defaults
-         // https://github.com/maplibre/maplibre-gl-js/blob/f8ab4b48d59ab8fe7b068b102538793bbdd4c848/src/geo/projection/globe_transform.ts#L632-L633
-         nearZMultiplier = 0.5, farZMultiplier = 1, resolution = 10 } = opts;
-@@ -45,8 +45,35 @@ class GlobeViewport extends Viewport {
-         const scale = Math.pow(2, zoom - zoomAdjust(latitude));
-         const nearZ = opts.nearZ ?? nearZMultiplier;
-         const farZ = opts.farZ ?? (altitude + (GLOBE_RADIUS * 2 * scale) / height) * farZMultiplier;
--        // Calculate view matrix
--        const viewMatrix = new Matrix4().lookAt({ eye: [0, -altitude, 0], up: [0, 0, 1] });
-+        // Calculate view matrix.
-+        // Bearing rotates the camera around the globe's Y axis (vertical at centre).
-+        // Pitch tilts the camera backward along the bearing's right axis:
-+        //   right = (cb, 0, −sb), so rotating forward by pitch gives:
-+        //   new_forward = (−sb·sp, cp, −cb·sp)
-+        //   eye = −alt·new_forward = (sb·sp, −cp, cb·sp)·alt  — wait, that’s wrong.
-+        //
-+        // Correct derivation (rotate camera around right axis by +pitch):
-+        //   forward_original = (0, 1, 0)
-+        //   right = (cb, 0, −sb)
-+        //   right × forward = (sb, 0, cb)   [note: this is the up direction]
-+        //   forward' = forward·cos(pitch) + (right × forward)·sin(pitch)
-+        //            = (sb·sp, cp, cb·sp)
-+        //   eye = −alt · forward' = (−sb·sp·alt, −cp·alt, −cb·sp·alt)
-+        //   up  = up_original·cos(pitch) + (right × up_original)·sin(pitch)
-+        //       = (sb, 0, cb)·cos(pitch) + (right × (sb,0,cb))·sin(pitch)
-+        //   right × (sb,0,cb) = (cb,0,−sb)×(sb,0,cb) = (0·cb−(−sb)·0, (−sb)·sb−cb·cb, cb·0−0·sb)
-+        //                     = (0, −1, 0)
-+        //   up = (sb·cp, −sp, cb·cp)
-+        //
-+        // At pitch=0: eye=(0,−alt,0), up=(sb,0,cb). At bearing=pitch=0: matches original defaults.
-+        const bearingRad = bearing * DEGREES_TO_RADIANS;
-+        const pitchRad   = pitch   * DEGREES_TO_RADIANS;
-+        const sb = Math.sin(bearingRad), cb = Math.cos(bearingRad);
-+        const sp = Math.sin(pitchRad),   cp = Math.cos(pitchRad);
-+        const viewMatrix = new Matrix4().lookAt({
-+            eye: [-sb * sp * altitude, -cp * altitude, -cb * sp * altitude],
-+            up:  [sb * cp, -sp, cb * cp],
-+        });
-         viewMatrix.rotateX(latitude * DEGREES_TO_RADIANS);
-         viewMatrix.rotateZ(-longitude * DEGREES_TO_RADIANS);
-         viewMatrix.scale(scale / height);
