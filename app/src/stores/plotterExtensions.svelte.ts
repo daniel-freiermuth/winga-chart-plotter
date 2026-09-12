@@ -1,4 +1,4 @@
-import { SvelteMap, SvelteSet } from 'svelte/reactivity';
+import { SvelteMap } from 'svelte/reactivity';
 import { randomUuid } from '../lib/uuid';
 
 // ── Manifest types ────────────────────────────────────────────────────────────
@@ -207,7 +207,15 @@ function createPlotterExtensions(): PlotterExtensions {
   // Keyed by "${extensionId}:${instanceId}". When setInstanceState is called
   // (typically by a config panel), all registered handlers are invoked so
   // the corresponding widget connection can republish state.changed.
-  const instanceStateListeners = new SvelteMap<string, SvelteSet<(keys: string[]) => void>>();
+  // Plain Map/Set — deliberately non-reactive. This is pure internal
+  // bookkeeping never read from a template or $derived; making it reactive
+  // caused a real bug: onInstanceStateChanged() below runs synchronously
+  // inside WidgetCell's mount effect, and a SvelteMap/SvelteSet's miss-then-
+  // insert (get() on an absent key tracks the map's version, set() on a new
+  // key bumps that same version) dirtied the very effect that was still
+  // executing it, causing attach/detach to loop forever.
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity
+  const instanceStateListeners = new Map<string, Set<(keys: string[]) => void>>();
 
   // ── Loading ────────────────────────────────────────────────────────────────
   //
@@ -434,7 +442,11 @@ function createPlotterExtensions(): PlotterExtensions {
   ): () => void {
     const key = `${extensionId}:${instanceId}`;
     let set = instanceStateListeners.get(key);
-    if (!set) { set = new SvelteSet(); instanceStateListeners.set(key, set); }
+    if (!set) {
+      // eslint-disable-next-line svelte/prefer-svelte-reactivity
+      set = new Set();
+      instanceStateListeners.set(key, set);
+    }
     set.add(handler);
     return () => {
       set.delete(handler);
