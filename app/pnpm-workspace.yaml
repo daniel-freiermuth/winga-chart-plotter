@@ -1,9 +1,4 @@
 allowBuilds:
   unrs-resolver: true
-overrides:
-  '@luma.gl/core': ~9.3.5
-  '@luma.gl/engine': ~9.3.5
-  '@luma.gl/shadertools': ~9.3.5
-  '@luma.gl/webgl': ~9.3.5
 patchedDependencies:
   '@deck.gl/core': patches/@deck.gl__core.patch
