@@ -31,6 +31,10 @@ pub enum Error {
         status: u16,
         status_text: String,
     },
+    /// A route was given fewer than the 2 waypoints a GeoJSON `LineString`
+    /// requires (RFC 7946 §3.1.4).
+    #[error("A route requires at least 2 waypoints, got {0}")]
+    TooFewWaypoints(usize),
     /// Converting a Rust value into a JS value failed.
     #[error("wasm bridge: {0}")]
     Bridge(#[from] serde_wasm_bindgen::Error),
