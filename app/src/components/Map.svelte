@@ -181,6 +181,14 @@
   // MapLibre mini-label popup near the selected vessel showing CPA/TCPA.
   let cpaLabelPopup: maplibregl.Popup | null = null;
 
+  /** Remove CPA popup, clear CPA layers, and flush — shared teardown for every CPA bail path. */
+  function resetCpaVisuals(): void {
+    cpaLabelPopup?.remove();
+    cpaLabelPopup = null;
+    cpaLayerGroup = [];
+    flushLayers();
+  }
+
   // When we switch mercator→globe, MapLibre creates a fresh VerticalPerspectiveProjection
   // whose GPU latitude-error correction starts at 0. Over 500 ms the correction converges,
   // causing tiles to drift south then slide north. We work around this by caching the
@@ -2424,10 +2432,7 @@
     if (ais.selectionPhase !== null) return;
     _aisTrackGen++;
     aisTrackRaw = [];
-    cpaLabelPopup?.remove();
-    cpaLabelPopup = null;
-    cpaLayerGroup = [];
-    flushLayers();
+    resetCpaVisuals();
     if (aisAgeTimer !== null) { clearInterval(aisAgeTimer); aisAgeTimer = null; }
   });
 
@@ -2458,10 +2463,7 @@
     void cpaOwnTick; // register bounded-staleness own-state refresh (see above)
 
     if (!selId || selIdx === null || !hotData || !map || !mapLoaded) {
-      cpaLabelPopup?.remove();
-      cpaLabelPopup = null;
-      cpaLayerGroup = [];
-      flushLayers();
+      resetCpaVisuals();
       return;
     }
 
@@ -2479,10 +2481,7 @@
     const ownSog = vs.sog;
 
     if (!ownPos || ownCog === null || ownSog === null) {
-      cpaLabelPopup?.remove();
-      cpaLabelPopup = null;
-      cpaLayerGroup = [];
-      flushLayers();
+      resetCpaVisuals();
       return;
     }
 
@@ -2494,10 +2493,7 @@
     );
 
     if (!rustCpa) {
-      cpaLabelPopup?.remove();
-      cpaLabelPopup = null;
-      cpaLayerGroup = [];
-      flushLayers();
+      resetCpaVisuals();
       return;
     }
 
