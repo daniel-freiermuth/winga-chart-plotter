@@ -17,11 +17,11 @@
     "@deck.gl/core": "~9.4.0",
     "@deck.gl/extensions": "~9.4.0",
     "@deck.gl/layers": "~9.4.0",
-    "@deck.gl/mapbox": "~9.4.0",
+    "@deck.gl/maplibre": "~9.4.0",
     "@fortawesome/fontawesome-svg-core": "^7.2.0",
     "@fortawesome/free-solid-svg-icons": "^7.2.0",
     "@luma.gl/engine": "^9.4.0",
-    "maplibre-gl": "^5.0.0",
+    "maplibre-gl": "^6.0.0",
     "signalk-plotterext-bus": "^0.11.0",
     "svelte": "^5.0.0"
   },

@@ -56,13 +56,10 @@ export default defineConfig(({ command }) => ({
     chunkSizeWarningLimit: 1100,
     rollupOptions: {
       output: {
-        // MapLibre GL creates its tile workers by stringifying function bodies at
-        // runtime (modules.worker.toString()). If the outer bundle and MapLibre are
-        // minified together, Rolldown may rename internal symbols (e.g. to `Ea`) in
-        // both the outer scope AND inside those function bodies — but when the blob
-        // worker runs in isolation, the outer-scope name is not defined.
-        // Isolating MapLibre in its own chunk prevents cross-chunk inlining so the
-        // worker blob remains self-contained.
+        // MapLibre v6 uses a dedicated ESM worker loaded via setWorkerUrl()
+        // (imported with ?worker&url in Map.svelte).  Isolating MapLibre in
+        // its own chunk keeps the main-thread library self-contained and
+        // lets the browser cache it independently of app-code changes.
         //
         // deck.gl is split so app-code changes don't bust the deck.gl cache entry.
         manualChunks(id) {

@@ -1,5 +1,5 @@
 import { SvelteMap } from 'svelte/reactivity';
-import type maplibregl from 'maplibre-gl';
+import type * as maplibregl from 'maplibre-gl';
 import { fetchAndResolveStyle } from '../lib/resolveStyle';
 
 /** Resolution state of one MapLibre style URL. */

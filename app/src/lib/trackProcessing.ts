@@ -20,6 +20,7 @@ import {
   processRouteCoords as wasmProcessRouteCoords,
 } from '../wasm/signalk_chart_core.js';
 import { ready as wasmReady } from './wasmInit';
+import type { ExpressionSpecification } from 'maplibre-gl';
 
 let ready = false;
 void wasmReady
@@ -89,7 +90,7 @@ export function processRouteCoords(raw: [number, number][]): [number, number][][
  * track start (oldest point) to fully opaque at `fadeStop`, then stays opaque.
  * Used for solid-style tracks; non-solid styles use plain `line-color`.
  */
-export function buildTrackGradient(color: string, fadeStop: number): unknown[] {
+export function buildTrackGradient(color: string, fadeStop: number): ExpressionSpecification {
   const hex = color.replace('#', '');
   const r = parseInt(hex.length === 3 ? hex.charAt(0) + hex.charAt(0) : hex.slice(0, 2), 16);
   const g = parseInt(hex.length === 3 ? hex.charAt(1) + hex.charAt(1) : hex.slice(2, 4), 16);

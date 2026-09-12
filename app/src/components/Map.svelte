@@ -1,8 +1,10 @@
 <script lang="ts">
   import { onMount, onDestroy, untrack } from 'svelte';
-  import maplibregl from 'maplibre-gl';
-  import type { HitTarget, Gesture, DragTarget, Interactable } from '$lib/gesture.ts';
+  import * as maplibregl from 'maplibre-gl';
+  import { setWorkerUrl } from 'maplibre-gl';
   import 'maplibre-gl/dist/maplibre-gl.css';
+  import maplibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
+  import type { HitTarget, Gesture, DragTarget, Interactable } from '$lib/gesture.ts';
   import type * as GeoJSON from 'geojson';
   import { get } from 'svelte/store';
   import { vesselState, vesselPosition } from '../stores/vessel';
@@ -14,7 +16,7 @@
   import type { PaneState } from '../stores/pane.svelte';
   import { ais, AIS_HOT_STRIDE, AIS_F_LON, AIS_F_LAT, AIS_F_COG, AIS_F_SOG, AIS_F_ROT, AIS_F_AGE } from '../stores/ais.svelte';
   import type { AisTarget } from '../stores/ais.svelte';
-  import { MapboxOverlay } from '@deck.gl/mapbox';
+  import { MapLibreOverlay } from '@deck.gl/maplibre';
   import { PathLayer, ScatterplotLayer, TextLayer } from '@deck.gl/layers';
   import type { Layer } from '@deck.gl/core';
   import { rulers, rulerBearingText, rulerDistanceText, type Ruler } from '../stores/rulers.svelte';
@@ -38,6 +40,9 @@
   import { buildCpaLayers, formatCpaLabel, type SkCpaInput } from '../lib/aisCpaLayer';
   import { computeCpa } from '../lib/wasmGeo';
   import { buildOwnVesselLayers, buildCourseLayers } from '../lib/vesselLayers';
+
+  // MapLibre v6 ESM requires an explicit worker URL for Vite bundlers.
+  setWorkerUrl(maplibreWorkerUrl);
 
   const {
     pane,
@@ -795,7 +800,7 @@
   const RULER_SNAP_PX = 24;
 
 
-  let overlay: MapboxOverlay | null = null;
+  let overlay: MapLibreOverlay | null = null;
   // Typed-array snapshots of the last AIS data batch — used by rafTick
   // dead-reckoning (CPA ring, DR anchor).
   let aisHotSnapshot: Float64Array | null = null;
@@ -920,8 +925,8 @@
     // MapLibre) with its own rAF loop. This decouples deck.gl animation from MapLibre's render
     // pipeline, preventing AIS animation from driving MapLibre's symbol worker continuously.
     //
-    // deck.gl v9.1+ (Globe View ♥ MapLibre): GlobeViewport is updated to match
-    // MapLibre v5's camera matrices — MapboxOverlay works without additional configuration.
+    // deck.gl v9.4+ (Globe View ♥ MapLibre): GlobeViewport matches
+    // MapLibre v6's camera matrices — MapLibreOverlay works without additional configuration.
     // Do NOT pass a custom `views` prop; let getDeckInstance choose GlobeView or MapView.
     //
     // NOTE on culling: since deck.gl 9.3.3, GlobeView injects a view-level
@@ -932,7 +937,7 @@
     // and the culling hides the far hemisphere. deck's own TextLayer billboard
     // quads however come out CW under the globe orientation matrix and need a
     // per-layer cullMode:'none' (see the ruler/planner label layers).
-    overlay = new MapboxOverlay({
+    overlay = new MapLibreOverlay({
       layers: [],
       interleaved: false,
       // depthCompare:'always' — our layers (hull + icon) occupy nearly identical depths so
@@ -1533,7 +1538,7 @@
     });
 
     map.on('error', (e) => {
-      console.error('[map] error', e.error ?? e);
+      console.error('[map] error', e.error);
     });
 
     // Some nautical chart styles reference sprite images that aren't present in
@@ -1542,9 +1547,12 @@
     // every frame and refuses to render the symbol layer entirely.
     // Adding a 1×1 transparent placeholder silences the error and lets all other
     // symbols in the same layer render normally.
-    map.on('styleimagemissing', (e: { id: string }) => {
-      if (map?.hasImage(e.id)) return; // already added (re-entrant guard)
-      map?.addImage(e.id, { width: 1, height: 1, data: new Uint8Array(4) });
+    // MapLibre v6: styleimagemissing listeners can no longer resolve the current
+    // image request via addImage; use setMissingStyleImageResolver instead.
+    map.setMissingStyleImageResolver((id: string) => {
+      if (!map?.hasImage(id)) {
+        map?.addImage(id, { width: 1, height: 1, data: new Uint8Array(4) });
+      }
     });
 
     document.addEventListener('visibilitychange', onVisibilityChange);
@@ -2369,7 +2377,7 @@
 
     const flush = () => {
       _aisLastUpdateMs = Date.now();
-      aisSrc.setData({ type: 'FeatureCollection', features });
+      void aisSrc.setData({ type: 'FeatureCollection', features });
       // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access
       if ((window as any).__mapDiag) (window as any).__mapDiag.aisLabels++;
     };
@@ -2553,7 +2561,7 @@
       map.setPaintProperty('vessel-track-line', 'line-gradient',  buildTrackGradient(ap.track.color, trackFadeStop));
       map.setPaintProperty('vessel-track-line', 'line-dasharray', undefined);
     } else {
-      map.setPaintProperty('vessel-track-line', 'line-gradient',  null);
+      map.setPaintProperty('vessel-track-line', 'line-gradient',  undefined);
       map.setPaintProperty('vessel-track-line', 'line-color',     ap.track.color);
       map.setPaintProperty('vessel-track-line', 'line-dasharray', dashArray(ap.track.style, ap.track.width) ?? undefined);
     }
@@ -2608,19 +2616,19 @@
     if (!(src instanceof maplibregl.GeoJSONSource)) return;
     const overflowSrc = map.getSource(TRACK_OVERFLOW_SOURCE);
     if (coords.length < 2) {
-      src.setData(EMPTY_FC);
-      if (overflowSrc instanceof maplibregl.GeoJSONSource) overflowSrc.setData(EMPTY_FC);
+      void src.setData(EMPTY_FC);
+      if (overflowSrc instanceof maplibregl.GeoJSONSource) void overflowSrc.setData(EMPTY_FC);
       trackFadeStop = 0;
       return;
     }
     const { coords: unwrapped, overflowSegments, fadeStop } = processTrack(coords);
     trackFadeStop = fadeStop;
-    src.setData({
+    void src.setData({
       type: 'FeatureCollection',
       features: [{ type: 'Feature', geometry: { type: 'LineString', coordinates: unwrapped }, properties: {} }],
     });
     if (overflowSrc instanceof maplibregl.GeoJSONSource) {
-      overflowSrc.setData({
+      void overflowSrc.setData({
         type: 'FeatureCollection',
         features: overflowSegments.map(seg => ({
           type: 'Feature' as const,
@@ -2694,8 +2702,8 @@
           }
         }
       }
-      src.setData({ type: 'FeatureCollection', features });
-      overflowSrc.setData(EMPTY_FC);
+      void src.setData({ type: 'FeatureCollection', features });
+      void overflowSrc.setData(EMPTY_FC);
       aisTrackFadeStop = 0;
       return;
     }
@@ -2703,18 +2711,18 @@
     // When aisVessels is OFF, treat as no track data — clears source to EMPTY_FC below.
     const raw = visibility.aisVessels ? aisTrackRaw : [];
     if (raw.length < 2) {
-      src.setData(EMPTY_FC);
-      overflowSrc.setData(EMPTY_FC);
+      void src.setData(EMPTY_FC);
+      void overflowSrc.setData(EMPTY_FC);
       aisTrackFadeStop = 0;
       return;
     }
     const { coords, overflowSegments, fadeStop } = processTrack(raw);
     aisTrackFadeStop = fadeStop;
-    src.setData({
+    void src.setData({
       type: 'FeatureCollection',
       features: [{ type: 'Feature', geometry: { type: 'LineString', coordinates: coords }, properties: {} }],
     });
-    overflowSrc.setData({
+    void overflowSrc.setData({
       type: 'FeatureCollection',
       features: overflowSegments.map(seg => ({
         type: 'Feature' as const,
@@ -2736,7 +2744,7 @@
       map.setPaintProperty('ais-track-line', 'line-gradient',  buildTrackGradient(ta.color, fadeStop));
       map.setPaintProperty('ais-track-line', 'line-dasharray', undefined);
     } else {
-      map.setPaintProperty('ais-track-line', 'line-gradient',  null);
+      map.setPaintProperty('ais-track-line', 'line-gradient',  undefined);
       map.setPaintProperty('ais-track-line', 'line-color',     ta.color);
       map.setPaintProperty('ais-track-line', 'line-dasharray', ta.style !== 'solid' ? dashArray(ta.style, ta.width) ?? undefined : undefined);
     }
@@ -2783,7 +2791,7 @@
       wptFeatures.push({ type: 'Feature', geometry: { type: 'Point', coordinates: [nxtPt.longitude, nxtPt.latitude] }, properties: { wtype: 'next' } });
     }
     if (prevPt) wptFeatures.push({ type: 'Feature', geometry: { type: 'Point', coordinates: [prevPt.longitude, prevPt.latitude] }, properties: { wtype: 'prev' } });
-    wptSrc.setData({ type: 'FeatureCollection', features: wptFeatures });
+    void wptSrc.setData({ type: 'FeatureCollection', features: wptFeatures });
   });
 
   // Exclude the active route from the all-routes layer so it isn't double-styled.
@@ -2815,7 +2823,7 @@
         });
       }
     }
-    src.setData({ type: 'FeatureCollection', features });
+    void src.setData({ type: 'FeatureCollection', features });
   });
 
   // All server waypoints — rebuild GeoJSON source when the waypoint list changes.
@@ -2825,7 +2833,7 @@
     const src = map.getSource(ALL_WAYPOINTS_SRC);
     if (!(src instanceof maplibregl.GeoJSONSource)) return;
 
-    src.setData({
+    void src.setData({
       type: 'FeatureCollection',
       features: entries.map(w => ({
         type: 'Feature',

@@ -13,7 +13,7 @@
  *               Adding a new gesture type requires one more case in handleGesture.
  */
 
-import type maplibregl from 'maplibre-gl';
+import type * as maplibregl from 'maplibre-gl';
 
 // -- Drag behavior ----------------------------------------------------------------
 
