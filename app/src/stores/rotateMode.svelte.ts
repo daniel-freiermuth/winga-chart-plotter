@@ -1,9 +1,6 @@
-export type AutoRotateMode = 'north' | 'cog' | 'heading' | 'bearing';
-export type RotateMode = AutoRotateMode | 'manual';
-import { resolveResumeMode } from './rotateModeLogic';
+import { resolveResumeMode, isAvailable, AUTO_MODES, type AutoRotateMode, type RotateMode } from './rotateModeLogic';
 import { loadJSON, saveJSON } from './paneStorage';
 
-const AUTO_MODES: AutoRotateMode[] = ['north', 'cog', 'heading', 'bearing'];
 const ALL_MODES: RotateMode[] = [...AUTO_MODES, 'manual'];
 
 const LABELS: Record<RotateMode, string> = {
@@ -33,13 +30,6 @@ function loadSaved(key: string): SavedRotateMode {
     return { mode: p.mode, resumeMode: isAutoRotateMode(p.resumeMode) ? p.resumeMode : 'north' };
   }
   return { mode: 'north', resumeMode: 'north' };
-}
-
-function isAvailable(m: AutoRotateMode, hasCog: boolean, hasHeading: boolean, hasCourse: boolean): boolean {
-  if (m === 'cog')     return hasCog;
-  if (m === 'heading') return hasHeading;
-  if (m === 'bearing') return hasCourse;
-  return true;
 }
 
 /** Per-pane chart rotation mode (auto modes + free/manual rotation). */
