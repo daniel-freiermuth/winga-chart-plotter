@@ -48,12 +48,11 @@ fn line_coords(lon_a: f64, lat_a: f64, lon_b: f64, lat_b: f64, segments: u32) ->
     let phi2 = lat_b.to_radians();
     let lambda2 = lon_b.to_radians();
 
-    // Total angular distance.
-    let delta_sigma = 2.0
-        * ((((phi2 - phi1) / 2.0).sin().powi(2)
-            + phi1.cos() * phi2.cos() * ((lambda2 - lambda1) / 2.0).sin().powi(2))
-        .sqrt())
-        .asin();
+    // Total angular distance (clamp to 1.0 so near-antipodal
+    // floating-point overshoot cannot produce NaN from asin).
+    let h = ((phi2 - phi1) / 2.0).sin().powi(2)
+        + phi1.cos() * phi2.cos() * ((lambda2 - lambda1) / 2.0).sin().powi(2);
+    let delta_sigma = 2.0 * h.min(1.0).sqrt().asin();
 
     if delta_sigma < 1e-10 {
         return vec![(lon_a, lat_a), (lon_b, lat_b)];
@@ -815,6 +814,38 @@ mod tests {
             (last_lon - 181.0).abs() < 1e-6,
             "expected unwrapped longitude ~181°, got {last_lon}"
         );
+    }
+
+    #[test]
+    fn line_near_antipodal_produces_finite_coords() {
+        // Near-antipodal: (0,0) → (179.9999999, 0.00001) — haversine h rounds
+        // fractionally above 1.0, which formerly made asin return NaN.
+        let coords = line_coords(0.0, 0.0, 179.9999999, 0.00001, 16);
+        assert!(coords.len() >= 2, "should produce at least start and end");
+        for (i, &(lon, lat)) in coords.iter().enumerate() {
+            assert!(lon.is_finite(), "NaN/Inf longitude at index {i}");
+            assert!(lat.is_finite(), "NaN/Inf latitude at index {i}");
+        }
+    }
+
+    #[test]
+    fn line_exactly_antipodal_produces_finite_coords() {
+        // Exactly antipodal: (0, 0) → (180, 0).
+        // The angular distance is π; SLERP is degenerate (infinite great
+        // circles) but the interpolation must still return finite values.
+        let coords = line_coords(0.0, 0.0, 180.0, 0.0, 16);
+        assert!(coords.len() >= 2, "should produce at least start and end");
+        for (i, &(lon, lat)) in coords.iter().enumerate() {
+            assert!(lon.is_finite(), "NaN/Inf longitude at index {i}");
+            assert!(lat.is_finite(), "NaN/Inf latitude at index {i}");
+        }
+        // Endpoints should approximately match inputs.
+        let (first_lon, first_lat) = coords[0];
+        let (last_lon, last_lat) = *coords.last().unwrap();
+        assert!((first_lon - 0.0).abs() < 1e-6, "start lon");
+        assert!((first_lat - 0.0).abs() < 1e-6, "start lat");
+        assert!((last_lon - 180.0).abs() < 1e-3, "end lon");
+        assert!((last_lat - 0.0).abs() < 1e-3, "end lat");
     }
 
     #[test]
