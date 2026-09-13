@@ -48,14 +48,26 @@ fn line_coords(lon_a: f64, lat_a: f64, lon_b: f64, lat_b: f64, segments: u32) ->
     let phi2 = lat_b.to_radians();
     let lambda2 = lon_b.to_radians();
 
-    // Total angular distance.
-    let delta_sigma = 2.0
-        * ((((phi2 - phi1) / 2.0).sin().powi(2)
-            + phi1.cos() * phi2.cos() * ((lambda2 - lambda1) / 2.0).sin().powi(2))
-        .sqrt())
-        .asin();
+    // Total angular distance (haversine → central angle).
+    // Clamp intermediate to ≤1.0: at near-antipodal nonzero latitudes,
+    // IEEE 754 rounding can push it a ULP above 1.0, making asin() return
+    // NaN on strict libm implementations (same fix as distance_nm L37 and
+    // haversine_meters L321).
+    let h = ((phi2 - phi1) / 2.0).sin().powi(2)
+        + phi1.cos() * phi2.cos() * ((lambda2 - lambda1) / 2.0).sin().powi(2);
+    let delta_sigma = 2.0 * h.min(1.0).sqrt().asin();
 
     if delta_sigma < 1e-10 {
+        return vec![(lon_a, lat_a), (lon_b, lat_b)];
+    }
+
+    // Near-antipodal: sin(delta_sigma) ≈ 0 and the 1/sin amplification
+    // collapses intermediate SLERP points into degenerate clusters (same
+    // guard as densify_by_distance L349).  Fall back to endpoints only —
+    // the great circle is undefined for exactly-antipodal points, and at
+    // sin < 1e-6 the remaining arc is <6.4 m anyway.
+    let sin_d = delta_sigma.sin();
+    if sin_d.abs() < 1e-6 {
         return vec![(lon_a, lat_a), (lon_b, lat_b)];
     }
 
@@ -64,8 +76,8 @@ fn line_coords(lon_a: f64, lat_a: f64, lon_b: f64, lat_b: f64, segments: u32) ->
 
     for i in 0..=segments {
         let f = f64::from(i) / f64::from(segments);
-        let a = ((1.0 - f) * delta_sigma).sin() / delta_sigma.sin();
-        let b = (f * delta_sigma).sin() / delta_sigma.sin();
+        let a = ((1.0 - f) * delta_sigma).sin() / sin_d;
+        let b = (f * delta_sigma).sin() / sin_d;
         let x = a * phi1.cos() * lambda1.cos() + b * phi2.cos() * lambda2.cos();
         let y = a * phi1.cos() * lambda1.sin() + b * phi2.cos() * lambda2.sin();
         let z = a * phi1.sin() + b * phi2.sin();
@@ -815,6 +827,52 @@ mod tests {
             (last_lon - 181.0).abs() < 1e-6,
             "expected unwrapped longitude ~181°, got {last_lon}"
         );
+    }
+
+    #[test]
+    fn line_coords_antipodal_equator_no_degenerate_clustering() {
+        // Antipodal equatorial endpoints: delta_sigma = π, sin(π) ≈ 1.2e-16.
+        // The 1/sin(delta_sigma) amplification factor ≈ 8e15 collapses
+        // middle SLERP points to identical coordinates (verified: with 8
+        // segments, indices 3, 4, 5 all land on (90,0) instead of 67.5°,
+        // 90°, 112.5°).  A correct implementation must either:
+        //   - fall back to endpoints only (the GC is undefined), or
+        //   - produce strictly monotonic longitude spacing.
+        let coords = line_coords(0.0, 0.0, 180.0, 0.0, 8);
+        // Every consecutive pair of longitudes must be strictly increasing
+        // (no clustering). With 8 segments the expected gap is 22.5°;
+        // require at least 1° to reject degenerate SLERP output.
+        if coords.len() > 2 {
+            for pair in coords.windows(2) {
+                let gap = pair[1].0 - pair[0].0;
+                assert!(
+                    gap > 1.0,
+                    "degenerate SLERP: gap {gap:.6}° between lon {:.6}° and {:.6}°",
+                    pair[0].0,
+                    pair[1].0
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn line_coords_antipodal_nonzero_lat_no_degenerate_clustering() {
+        // Near-antipodal at nonzero latitude (lat ±0.015°): the haversine
+        // intermediate exceeds 1.0 by 1 ULP on x86-64, and sin(delta_sigma)
+        // ≈ 1.2e-16 — identical to the equatorial case.  With 8 segments
+        // indices 3, 4, 5 all cluster at (90, 0) instead of being spaced.
+        let coords = line_coords(0.0, 0.015, 180.0, -0.015, 8);
+        if coords.len() > 2 {
+            for pair in coords.windows(2) {
+                let gap = pair[1].0 - pair[0].0;
+                assert!(
+                    gap > 1.0,
+                    "degenerate SLERP: gap {gap:.6}° between lon {:.6}° and {:.6}°",
+                    pair[0].0,
+                    pair[1].0
+                );
+            }
+        }
     }
 
     #[test]
