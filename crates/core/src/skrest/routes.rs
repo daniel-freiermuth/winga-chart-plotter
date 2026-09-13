@@ -61,8 +61,17 @@ fn route_distance_m(waypoints: &[LonLat]) -> f64 {
 }
 
 /// Build the POST/PUT body for `resources/routes`.
-pub fn build_route_body(name: &str, waypoints: &[LonLat]) -> serde_json::Value {
-    serde_json::json!({
+///
+/// Returns `Err` when `waypoints` has fewer than 2 entries, because a
+/// GeoJSON `LineString` requires at least two positions (RFC 7946 §3.1.4).
+pub fn build_route_body(name: &str, waypoints: &[LonLat]) -> Result<serde_json::Value, String> {
+    if waypoints.len() < 2 {
+        return Err(format!(
+            "A route requires at least 2 waypoints, got {}",
+            waypoints.len()
+        ));
+    }
+    Ok(serde_json::json!({
         "name": name,
         "description": "",
         "distance": route_distance_m(waypoints).round(),
@@ -74,7 +83,7 @@ pub fn build_route_body(name: &str, waypoints: &[LonLat]) -> serde_json::Value {
             },
             "properties": {},
         },
-    })
+    }))
 }
 
 /// A POST `resources/routes`/`resources/waypoints` response: either a bare
@@ -124,7 +133,9 @@ mod wasm {
     ) -> Result<String, JsValue> {
         let waypoints: Vec<LonLat> = serde_wasm_bindgen::from_value(waypoints)?;
         let url = format!("{server_base}/signalk/v2/api/resources/routes");
-        let body = build_route_body(&name, &waypoints).to_string();
+        let body = build_route_body(&name, &waypoints)
+            .map_err(|e| JsValue::from_str(&e))?
+            .to_string();
         let resp = http::fetch("POST", &url, &auth_headers, Some(&body), None).await?;
         if !resp.ok() {
             return Err(http::status_error("Save route failed", &resp));
@@ -143,7 +154,9 @@ mod wasm {
     ) -> Result<(), JsValue> {
         let waypoints: Vec<LonLat> = serde_wasm_bindgen::from_value(waypoints)?;
         let url = format!("{server_base}/signalk/v2/api/resources/routes/{uuid}");
-        let body = build_route_body(&name, &waypoints).to_string();
+        let body = build_route_body(&name, &waypoints)
+            .map_err(|e| JsValue::from_str(&e))?
+            .to_string();
         let resp = http::fetch("PUT", &url, &auth_headers, Some(&body), None).await?;
         if !resp.ok() {
             return Err(http::status_error("Update route failed", &resp));
@@ -209,7 +222,8 @@ mod tests {
                     lat: 59.44,
                 },
             ],
-        );
+        )
+        .unwrap();
         assert_eq!(body["name"], "Helsinki to Tallinn");
         assert_eq!(body["description"], "");
         assert_eq!(body["feature"]["type"], "Feature");
@@ -219,6 +233,24 @@ mod tests {
             serde_json::json!([[24.94, 60.17], [24.75, 59.44]])
         );
         assert!(body["distance"].as_f64().unwrap() > 0.0);
+    }
+
+    #[test]
+    fn build_route_body_rejects_empty_waypoints() {
+        let result = build_route_body("empty", &[]);
+        assert!(result.is_err(), "0 waypoints must be rejected");
+    }
+
+    #[test]
+    fn build_route_body_rejects_single_waypoint() {
+        let result = build_route_body(
+            "solo",
+            &[LonLat {
+                lon: 24.94,
+                lat: 60.17,
+            }],
+        );
+        assert!(result.is_err(), "1 waypoint must be rejected");
     }
 
     #[test]
