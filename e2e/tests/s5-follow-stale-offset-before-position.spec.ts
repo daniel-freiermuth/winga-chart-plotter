@@ -3,7 +3,7 @@
  * where Signal K hasn't sent a position fix yet.
  *
  * `follow-mode-offset` is persisted in localStorage, so `followMode.following`
- * can read true on load with `vesselState.position` still null (server
+ * can read true on load with `vessel.position` still null (server
  * restarted, not reconnected yet). Two regressions this covers:
  *
  * 1. Manual pan (moveend) must treat "no position to anchor to" as an

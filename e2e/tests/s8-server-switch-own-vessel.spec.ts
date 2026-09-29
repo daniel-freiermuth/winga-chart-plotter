@@ -6,12 +6,12 @@
  * a different self, so Storage discards the old vessels. The client only emits
  * own-vessel state once it has a position, so a server without an own fix
  * (GPS not fixed yet, shore/planning server) never sends anything that would
- * overwrite the main thread's `vesselState`. Unless the app clears it on the
+ * overwrite the main thread's `vessel` store. Unless the app clears it on the
  * switch, server A's last fix keeps being shown as live own-ship data — and
  * feeds follow mode, CPA and the new server's track.
  *
- * Oracle: the follow button is enabled only while `vesselState.position` is
- * set (Map.svelte `disabled={!following && !position}`).
+ * Oracle: the follow button is enabled only while `vessel.position` is
+ * set (Map.svelte `disabled={!followMode.following && !vessel.position}`).
  */
 import { test, expect, type Page } from '@playwright/test';
 import { MockSignalK, OWN_ID } from '../mock-signalk/server';
