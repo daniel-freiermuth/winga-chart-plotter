@@ -3,7 +3,7 @@ import { PathLayer } from '@deck.gl/layers';
 import { PathStyleExtension } from '@deck.gl/extensions';
 import { VesselMorphLayer, MORPH_ARROW } from '../layers/VesselMorphLayer';
 import type { AppearanceSettings, LineAppearance } from '../stores/settings.svelte';
-import type { VesselState } from '../stores/vessel';
+import type { VesselState } from '../stores/vessel.svelte';
 import type { ProjectionId } from '../stores/mapView.svelte';
 import { rhumbCoords, gcCoords } from './lineGeometry';
 import { hexToRgba, lineStyleDash } from './mapStyles';
@@ -15,13 +15,13 @@ type RouteGeo = { geometry: { coordinates: number[][] } } | null | undefined;
 /**
  * Builds the own-vessel deck.gl layers: heading/COG/GC predictor lines plus the vessel
  * icon. Pure function of its arguments — callers control what's tracked as an effect
- * dependency. The position effect tracks $vesselState (60 Hz orientation ticks); the
- * appearance effect must not, so it reads state/zoom/projection via untrack() and passes
- * them in here instead.
+ * dependency. The position effect passes the live `vessel` store, so the fields read
+ * here (position, cog, sog, heading) become its dependencies; the appearance effect
+ * must not track vessel state, so it passes an untracked `vessel.snapshot()` instead.
  */
 export function buildOwnVesselLayers(
   ap: AppearanceSettings,
-  state: VesselState,
+  state: Readonly<VesselState>,
   zoom: number,
   projection: ProjectionId,
 ): Layer[] {

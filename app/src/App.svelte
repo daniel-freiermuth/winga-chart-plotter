@@ -70,7 +70,7 @@
   import WidgetPanel from './components/WidgetPanel.svelte';
   import WidgetPlaceholder from './components/WidgetPlaceholder.svelte';
   import ExtPanel from './components/ExtPanel.svelte';
-  import { vesselState } from './stores/vessel';
+  import { vessel } from './stores/vessel.svelte';
   import { settings, SPLIT_RATIO_MIN, SPLIT_RATIO_MAX, type SettingsTab } from './stores/settings.svelte';
   import { panes, setPaneLayout, visiblePanesFor, type PaneState } from './stores/pane.svelte';
   import { startRulerSnapSync } from './lib/rulerSnap';
@@ -273,7 +273,7 @@
           settings.setGeoError(null);
           const { longitude, latitude, speed, heading, accuracy } = pos.coords;
           settings.setGeoAccuracy(accuracy);
-          vesselState.set({
+          vessel.set({
             position: { longitude, latitude },
             // Geolocation heading is in degrees true [0, 360), undefined when stationary.
             // Convert to radians, fall back to null so predictors are hidden when still.
@@ -362,7 +362,7 @@
       rafPending = true;
       requestAnimationFrame(() => {
         rafPending = false;
-        vesselState.update(s => ({ ...s, heading: latestCompassHeadingRad }));
+        vessel.setHeading(latestCompassHeadingRad);
       });
     }
 
@@ -394,7 +394,7 @@
       window.removeEventListener('deviceorientationabsolute', onAbsolute as EventListener);
       window.removeEventListener('deviceorientation', onRelative);
       latestCompassHeadingRad = null;
-      vesselState.update(s => ({ ...s, heading: null }));
+      vessel.setHeading(null);
     };
   });
 
@@ -421,12 +421,11 @@
         if (settings.useGeoLocation) {
           // Geo mode: browser provides position/heading; SK course data is still used.
         } else if (pos) {
-          vesselState.set({
+          vessel.set({
             position: { longitude: pos.longitude, latitude: pos.latitude },
             cog: msg.state.cog ?? null,
             sog: msg.state.sog ?? null,
             heading: msg.state.heading ?? null,
-            ...(msg.state.course !== undefined ? { course: msg.state.course } : {}),
           });
         }
         // Update course/route regardless of geo mode — route is always from SK.
@@ -574,7 +573,7 @@
     // nothing would overwrite the old server's own-ship state — drop it here. In geo
     // mode the position belongs to the browser and stays; the route is always from SK.
     if (!settings.useGeoLocation) {
-      vesselState.set({ position: null, cog: null, sog: null, heading: null });
+      vessel.set({ position: null, cog: null, sog: null, heading: null });
     }
     route.clear();
     worker?.postMessage({ type: 'connect', url });
