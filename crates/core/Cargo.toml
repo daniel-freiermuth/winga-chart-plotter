@@ -1,7 +1,9 @@
 [package]
 name = "signalk-chart-core"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
+# Floor set by let-chains (stable in edition 2024 since Rust 1.88).
+rust-version = "1.88"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
