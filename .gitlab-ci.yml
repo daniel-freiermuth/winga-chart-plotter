@@ -27,6 +27,9 @@ variables:
   CARGO_HOME: "$CI_PROJECT_DIR/.cargo"
   # Incremental compilation is counterproductive in CI — each job starts clean.
   CARGO_INCREMENTAL: "0"
+  # wasm-pack pin — keep in sync with .github/workflows/{ci,deploy}.yml and the
+  # Justfile (wasm_pack_version).
+  WASM_PACK_VERSION: "0.15.0"
 
 # ---------------------------------------------------------------------------
 # Job templates
@@ -51,9 +54,12 @@ variables:
     - rustup target add wasm32-unknown-unknown
 
 # Rust + Node.js + wasm-pack (lint and build)
-# Guard the install: when .cargo/bin/ is restored from cache, cargo install fails
-# with "already exists" because .crates.toml is not cached.  Checking for the
-# binary directly avoids the collision and keeps the cache hit fast.
+# wasm-pack is built at the pinned version with --locked (wasm-pack's own
+# Cargo.lock, so its dependency graph is reproducible too).  The guard compares
+# the installed version rather than just checking for the binary: .cargo/bin/
+# is restored from cache, so a binary from before a pin bump must be replaced.
+# --force is needed for that replacement because .crates.toml is not cached and
+# cargo would otherwise refuse with "already exists".
 .rust-node-wasm-setup:
   image: rust:latest
   before_script:
@@ -64,8 +70,8 @@ variables:
     - rustup component add rustfmt clippy
     - rustup target add wasm32-unknown-unknown
     - |
-      if [ ! -x "$CARGO_HOME/bin/wasm-pack" ]; then
-        cargo install wasm-pack
+      if [ "$("$CARGO_HOME/bin/wasm-pack" --version 2>/dev/null)" != "wasm-pack $WASM_PACK_VERSION" ]; then
+        cargo install wasm-pack --locked --force --version "$WASM_PACK_VERSION"
       fi
     - export PATH="$CARGO_HOME/bin:$PATH"
 
