@@ -8,7 +8,7 @@
  */
 
 import type { Feature, LineString } from 'geojson';
-import type { CourseState } from './vessel';
+import type { CourseState } from './vessel.svelte';
 
 export interface RouteState {
   nextPoint:     { longitude: number; latitude: number } | null;

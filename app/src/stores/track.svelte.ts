@@ -1,4 +1,5 @@
-import { vesselState } from './vessel';
+import { untrack } from 'svelte';
+import { vessel } from './vessel.svelte';
 import { fetchTrack } from '../lib/wasmRest';
 
 // ~5 metres in degrees² — fast planar approximation, good enough for this threshold
@@ -17,7 +18,7 @@ function createTrack() {
   let _lastLon = 0;
   let _lastLat = 0;
   let _hasLast = false;
-  let _unsub: (() => void) | null = null;
+  let _stopRecording: (() => void) | null = null;
 
   function append(lon: number, lat: number): void {
     if (_hasLast) {
@@ -36,7 +37,7 @@ function createTrack() {
     get coordinates(): [number, number][] { return _coords; },
 
     async init(serverBase: string, historyHours = 24): Promise<void> {
-      _unsub?.();
+      _stopRecording?.();
       _coords = [];
       _hasLast = false;
 
@@ -53,9 +54,13 @@ function createTrack() {
         }
       }
 
-      _unsub = vesselState.subscribe(state => {
-        if (!state.position) return;
-        append(state.position.longitude, state.position.latitude);
+      _stopRecording = $effect.root(() => {
+        $effect(() => {
+          const pos = vessel.position;
+          if (!pos) return;
+          // append() reads and writes _coords; untracked so position stays the only dependency.
+          untrack(() => { append(pos.longitude, pos.latitude); });
+        });
       });
     },
 
@@ -65,8 +70,8 @@ function createTrack() {
     },
 
     destroy(): void {
-      _unsub?.();
-      _unsub = null;
+      _stopRecording?.();
+      _stopRecording = null;
     },
   };
 }

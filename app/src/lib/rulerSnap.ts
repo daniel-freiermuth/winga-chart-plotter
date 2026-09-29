@@ -1,7 +1,6 @@
-import { get } from 'svelte/store';
 import { ais } from '../stores/ais.svelte';
 import { rulers } from '../stores/rulers.svelte';
-import { vesselState } from '../stores/vessel';
+import { vessel } from '../stores/vessel.svelte';
 import { settings } from '../stores/settings.svelte';
 import { buildSnapTargets, type SnapTarget } from './snapTargets';
 
@@ -44,7 +43,7 @@ export function startRulerSnapSync(): () => void {
     }
     // Same dead-reckoning cap as the CPA ring and DR anchor in Map.svelte.
     const capMs = settings.appearance.ais.cog.lengthMinutes * 60 * 1000;
-    targets = buildSnapTargets(ais.hotData, ais.ids, ais.uploadTimestamp, get(vesselState).position, Date.now(), capMs);
+    targets = buildSnapTargets(ais.hotData, ais.ids, ais.uploadTimestamp, vessel.position, Date.now(), capMs);
     rulers.syncSnapped(targets);
     rafId = requestAnimationFrame(tick);
   };
