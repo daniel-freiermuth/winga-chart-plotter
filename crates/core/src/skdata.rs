@@ -369,10 +369,10 @@ fn apply_leaf(vessel: &mut Vessel, path: &str, value: &Json, source: Option<&str
         LeafKind::Datetime => {
             // `navigation.datetime` arrives as either a bare ISO-8601 string
             // or `{"value": "...", ...}` — same shape as any string leaf.
-            if let Some(s) = str_from_value(value) {
-                if let Some(ms) = parse_iso8601_utc_ms(&s) {
-                    vessel.nav.datetime_ms = Some(ms);
-                }
+            if let Some(s) = str_from_value(value)
+                && let Some(ms) = parse_iso8601_utc_ms(&s)
+            {
+                vessel.nav.datetime_ms = Some(ms);
             }
         }
         LeafKind::Course => {
@@ -461,13 +461,14 @@ fn apply_leaf(vessel: &mut Vessel, path: &str, value: &Json, source: Option<&str
                 // (collisionRiskRating etc.) which we safely ignore.
                 let dist = value.get("distance").and_then(Json::as_f64);
                 let time_to = value.get("timeTo").and_then(Json::as_f64);
-                if let (Some(d), Some(t)) = (dist, time_to) {
-                    if d.is_finite() && t.is_finite() {
-                        vessel.nav.closest_approach = Some(SkClosestApproach {
-                            distance_m: d,
-                            time_to_s: t,
-                        });
-                    }
+                if let (Some(d), Some(t)) = (dist, time_to)
+                    && d.is_finite()
+                    && t.is_finite()
+                {
+                    vessel.nav.closest_approach = Some(SkClosestApproach {
+                        distance_m: d,
+                        time_to_s: t,
+                    });
                 }
             }
         }
@@ -527,12 +528,11 @@ pub fn apply_message(storage: &mut Storage, json: &str) -> Result<Option<String>
         let context = obj.get("context").and_then(Json::as_str);
         // Infer self_ from the first delta's context if not yet set by Hello.
         // A proper Hello will already have set it; this is defensive-only.
-        if storage.self_id.is_none() {
-            if let Some(ctx) = context {
-                if ctx.starts_with("vessels.") {
-                    storage.set_self(ctx);
-                }
-            }
+        if storage.self_id.is_none()
+            && let Some(ctx) = context
+            && ctx.starts_with("vessels.")
+        {
+            storage.set_self(ctx);
         }
         let Some(id) = context.map(strip_vessels_prefix) else {
             return Ok(None);
@@ -553,10 +553,11 @@ pub fn apply_message(storage: &mut Storage, json: &str) -> Result<Option<String>
             }
         }
         return Ok(context.map(str::to_string));
-    } else if obj.contains_key("self") && !obj.contains_key("vessels") {
-        if let Some(self_) = obj.get("self").and_then(Json::as_str) {
-            storage.set_self(self_);
-        }
+    } else if obj.contains_key("self")
+        && !obj.contains_key("vessels")
+        && let Some(self_) = obj.get("self").and_then(Json::as_str)
+    {
+        storage.set_self(self_);
     }
     // Anything else (a Full snapshot, or an unrecognised shape) — see doc comment above.
     Ok(None)
