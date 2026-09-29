@@ -962,9 +962,11 @@ mod tests {
         }"#,
         )
         .unwrap();
-        assert!(storage
-            .vessels
-            .contains_key("urn:mrn:imo:mmsi:265813360:signalk-aisstream.XX"));
+        assert!(
+            storage
+                .vessels
+                .contains_key("urn:mrn:imo:mmsi:265813360:signalk-aisstream.XX")
+        );
     }
 
     #[test]
@@ -1145,11 +1147,13 @@ mod tests {
         .unwrap();
         {
             let state = extract_vessel_state(&storage);
-            assert!(state
-                .course
-                .as_ref()
-                .and_then(|c| c.active_route.as_ref())
-                .is_some());
+            assert!(
+                state
+                    .course
+                    .as_ref()
+                    .and_then(|c| c.active_route.as_ref())
+                    .is_some()
+            );
         }
         // Null at the parent path clears everything.
         apply_message(

@@ -47,7 +47,7 @@ pub fn build_waypoint_body(name: &str, lat: f64, lon: f64) -> serde_json::Value 
 
 #[cfg(target_arch = "wasm32")]
 mod wasm {
-    use super::{build_waypoint_body, SkWaypointRecord};
+    use super::{SkWaypointRecord, build_waypoint_body};
     use crate::skrest::http;
     use crate::skrest::routes::extract_created_id;
     use wasm_bindgen::prelude::*;

@@ -97,7 +97,7 @@ pub fn extract_created_id(text: &str) -> String {
 
 #[cfg(target_arch = "wasm32")]
 mod wasm {
-    use super::{build_route_body, extract_created_id, LonLat, SkRouteRecord};
+    use super::{LonLat, SkRouteRecord, build_route_body, extract_created_id};
     use crate::skrest::http;
     use wasm_bindgen::prelude::*;
 

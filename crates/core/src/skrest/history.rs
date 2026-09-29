@@ -441,7 +441,11 @@ mod tests {
     #[test]
     fn v2_history_url_for_vessel_param_order_includes_context_first() {
         assert_eq!(
-            v2_history_url_for_vessel("http://sk.local:3000", "urn:mrn:imo:mmsi:230035920", "2026-06-29T12:00:00.000Z"),
+            v2_history_url_for_vessel(
+                "http://sk.local:3000",
+                "urn:mrn:imo:mmsi:230035920",
+                "2026-06-29T12:00:00.000Z"
+            ),
             "http://sk.local:3000/signalk/v2/api/history/values?context=vessels.urn%3Amrn%3Aimo%3Ammsi%3A230035920&paths=navigation.position&from=2026-06-29T12%3A00%3A00.000Z"
         );
     }
