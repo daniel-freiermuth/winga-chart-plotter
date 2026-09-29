@@ -242,11 +242,11 @@ S-57 (.000) → Rust parser → GeoJSON/MVT → MapLibre
 **Current architecture:**
 
 ```
-SK WebSocket worker ──▶ App.svelte (message handler) ──▶ stores (vesselState, route, …) ──▶ Map.svelte
+SK WebSocket worker ──▶ App.svelte (message handler) ──▶ stores (vessel, route, …) ──▶ Map.svelte
 Browser GPS effect  ──▶ App.svelte                   ──▶ stores
 ```
 
-The stores (`vesselState`, `route`, `ais`, `track`) are the informal boundary between data sources and visualization. There is no explicit source-selection layer; `App.svelte`'s message handler and `$effect` blocks decide what to write into each store.
+The stores (`vessel`, `route`, `ais`, `track`) are the informal boundary between data sources and visualization. There is no explicit source-selection layer; `App.svelte`'s message handler and `$effect` blocks decide what to write into each store.
 
 **Current source rules (inline in App.svelte):**
 - In geo mode: vessel position/COG/SOG from browser GPS; route/course from SK is suppressed (`undefined`)

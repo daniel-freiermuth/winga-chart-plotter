@@ -103,9 +103,9 @@ export async function stubGeolocation(
   opts: {
     lon: number;
     lat: number;
-    /** degrees true — becomes vesselState.cog */
+    /** degrees true — becomes vessel.cog */
     headingDeg: number;
-    /** m/s — becomes vesselState.sog */
+    /** m/s — becomes vessel.sog */
     speedMs: number;
     /** northward drift applied to the reported fix, m/s */
     driftNorthMs: number;
