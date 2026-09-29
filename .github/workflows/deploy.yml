@@ -29,6 +29,10 @@ permissions:
 
 env:
   CARGO_INCREMENTAL: '0'
+  # wasm-pack pin — keep in sync with ci.yml (see there for the rationale),
+  # .gitlab-ci.yml and the Justfile (wasm_pack_version).
+  WASM_PACK_VERSION: '0.15.0'
+  WASM_PACK_SHA256: 'c09f971ecaed9a2efc80fdcea7a00ef6b53c7fadc8c57d1f61b53a6aa66b668a'
 
 jobs:
   # ---------------------------------------------------------------------------
@@ -49,11 +53,14 @@ jobs:
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
 
-      # Pinned to the exact v0.13.1 GitHub release asset — see ci.yml for rationale.
-      - name: Install wasm-pack (pinned v0.13.1)
+      # Pinned, checksum-verified release asset — see ci.yml for rationale.
+      - name: Install wasm-pack (pinned)
         run: |
-          curl -fsSL https://github.com/rustwasm/wasm-pack/releases/download/v0.13.1/wasm-pack-v0.13.1-x86_64-unknown-linux-musl.tar.gz | tar xz -C /tmp
-          install -m 755 /tmp/wasm-pack-v0.13.1-x86_64-unknown-linux-musl/wasm-pack "$HOME/.cargo/bin/wasm-pack"
+          asset="wasm-pack-v${WASM_PACK_VERSION}-x86_64-unknown-linux-musl"
+          curl -fsSL -o "/tmp/${asset}.tar.gz" "https://github.com/wasm-bindgen/wasm-pack/releases/download/v${WASM_PACK_VERSION}/${asset}.tar.gz"
+          echo "${WASM_PACK_SHA256}  /tmp/${asset}.tar.gz" | sha256sum -c -
+          tar xzf "/tmp/${asset}.tar.gz" -C /tmp
+          install -m 755 "/tmp/${asset}/wasm-pack" "$HOME/.cargo/bin/wasm-pack"
 
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
