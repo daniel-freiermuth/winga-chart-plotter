@@ -1118,7 +1118,7 @@ mod tests {
         assert!(bounds_contain(5.0, 50.0, 15.0, 60.0, 10.0, 55.0));
         assert!(!bounds_contain(5.0, 50.0, 15.0, 60.0, 20.0, 55.0)); // lon outside
         assert!(!bounds_contain(5.0, 50.0, 15.0, 60.0, 10.0, 65.0)); // lat outside
-                                                                     // Edges are inclusive.
+        // Edges are inclusive.
         assert!(bounds_contain(5.0, 50.0, 15.0, 60.0, 5.0, 50.0));
         assert!(bounds_contain(5.0, 50.0, 15.0, 60.0, 15.0, 60.0));
     }

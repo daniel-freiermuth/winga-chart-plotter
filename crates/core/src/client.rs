@@ -3,13 +3,13 @@
 //! Calls back into JS when state or connection status changes.
 
 use crate::skdata::{
-    apply_message, extract_ais_binary, extract_vessel_state, prune_stale_vessels, Storage,
-    VesselState,
+    Storage, VesselState, apply_message, extract_ais_binary, extract_vessel_state,
+    prune_stale_vessels,
 };
 use js_sys::Function;
 use serde::Serialize;
 use std::{cell::RefCell, rc::Rc};
-use wasm_bindgen::{prelude::*, JsCast};
+use wasm_bindgen::{JsCast, prelude::*};
 use web_sys::{CloseEvent, ErrorEvent, MessageEvent, WebSocket, WorkerGlobalScope};
 
 /// Connection status reported to JS via `on_status_change`.

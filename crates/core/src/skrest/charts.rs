@@ -107,7 +107,7 @@ pub fn build_tile_url(chart: &Chart, server_base: &str) -> Option<String> {
 
 #[cfg(target_arch = "wasm32")]
 mod wasm {
-    use super::{build_tile_url, Chart, ChartRecord};
+    use super::{Chart, ChartRecord, build_tile_url};
     use crate::skrest::http;
     use wasm_bindgen::prelude::*;
 

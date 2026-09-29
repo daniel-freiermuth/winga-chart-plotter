@@ -14,7 +14,7 @@
 //! real wire bytes rather than just hand-written literals.
 
 use signalk_chart_core::skdata::{
-    apply_message, extract_ais_targets, extract_vessel_state, Storage,
+    Storage, apply_message, extract_ais_targets, extract_vessel_state,
 };
 
 const SELF_CTX: &str = "vessels.urn:mrn:signalk:uuid:168eec6c-6d2f-4ce4-b5fe-911711ebbcf0";
