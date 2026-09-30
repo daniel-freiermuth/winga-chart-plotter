@@ -3160,8 +3160,9 @@
   //     phase, keeping the map lag-free. When the compass stabilises the final frame plays out fully and
   //     the ease-out gives a smooth deceleration instead of an abrupt stop.
   // Other follow modes: easeTo/flyTo only when position or mode changes (~1Hz GPS rate).
-  //   COG/heading are read only in their own rotation mode, so e.g. compass ticks don't
-  //   re-run this effect in COG or north-up mode.
+  //   COG/heading are read only in their own rotation mode, and vessel.set() keeps the
+  //   position reference on equal coordinates, so heading updates (device compass or
+  //   Signal K) don't re-run this effect in COG or north-up mode.
   // Non-follow: easeTo for bearing — short animation, touch-safe.
   $effect(() => {
     if (!map) return;

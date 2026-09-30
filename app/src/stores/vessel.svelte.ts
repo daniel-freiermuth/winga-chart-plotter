@@ -34,7 +34,11 @@ export interface VesselState {
  * heading at display rate never invalidates position-only readers.
  */
 export interface VesselStore extends Readonly<VesselState> {
-  /** Replaces the whole state with a new fix (Signal K or browser geolocation). */
+  /**
+   * Replaces the whole state with a new fix (Signal K or browser geolocation).
+   * `position` keeps its current reference when the coordinates are unchanged, so
+   * fixes that only change heading/COG/SOG don't re-run position-only readers.
+   */
   set(fix: VesselState): void;
   /** Heading-only update (device compass, up to display rate). */
   setHeading(heading: number | null): void;
@@ -44,6 +48,11 @@ export interface VesselStore extends Readonly<VesselState> {
    * not depend on vessel state.
    */
   snapshot(): VesselState;
+}
+
+function samePosition(a: VesselPosition | null, b: VesselPosition | null): boolean {
+  if (a === null || b === null) return a === b;
+  return a.longitude === b.longitude && a.latitude === b.latitude;
 }
 
 function createVessel(): VesselStore {
@@ -60,7 +69,7 @@ function createVessel(): VesselStore {
     get heading()  { return heading; },
 
     set(fix) {
-      position = fix.position;
+      if (!samePosition(position, fix.position)) position = fix.position;
       cog      = fix.cog;
       sog      = fix.sog;
       heading  = fix.heading;

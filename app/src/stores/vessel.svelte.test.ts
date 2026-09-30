@@ -51,6 +51,33 @@ describe('vessel store', () => {
     }
   });
 
+  /**
+   * Signal K emits a full state on every own-vessel change, heading-only deltas
+   * included, and App builds a fresh position object each time. Position readers
+   * (COG-follow easeTo, track, route) must not re-run when the coordinates are equal.
+   */
+  it('a fix with unchanged coordinates does not re-run position readers', () => {
+    vessel.set(fixAt(10, 59));
+    flushSync();
+    const pos = countRuns(() => vessel.position);
+    try {
+      vessel.set({ ...fixAt(10, 59), heading: 0.9 });
+      flushSync();
+      expect(pos.runs()).toBe(1);
+      expect(vessel.heading).toBe(0.9);
+
+      vessel.set(fixAt(10, 59.0001));
+      flushSync();
+      expect(pos.runs()).toBe(2);
+
+      vessel.set(NO_FIX);
+      flushSync();
+      expect(pos.runs()).toBe(3);
+    } finally {
+      pos.stop();
+    }
+  });
+
   it('set() replaces every field, including clearing ones absent from the new fix', () => {
     vessel.set(fixAt(10, 59));
     vessel.set({ position: { longitude: 11, latitude: 60 }, cog: null, sog: null, heading: null });
