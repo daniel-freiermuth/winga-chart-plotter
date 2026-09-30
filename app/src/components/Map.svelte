@@ -2437,31 +2437,15 @@
     if (aisAgeTimer !== null) { clearInterval(aisAgeTimer); aisAgeTimer = null; }
   });
 
-  // Bounded-staleness refresh for the CPA effect below: own vessel state is read
-  // untracked there (so own-vessel fixes don't each trigger a CPA recompute), so its only
-  // recompute triggers would otherwise be AIS batches and selection changes. Class-B targets
-  // legitimately report every 30 s–3 min; at 6 kn own ship moves ~550 m in 3 min, so
-  // the displayed CPA/TCPA would lag own-ship motion by the *remote* target's report
-  // interval. This tick re-runs the effect at most every CPA_OWN_REFRESH_MS while a
-  // target is selected, so it re-reads the current own vessel state with staleness bounded
-  // by the interval instead. Timer runs only while a selection is live; the effect
-  // teardown clears it on deselection and component destroy.
-  const CPA_OWN_REFRESH_MS = 5000;
-  let cpaOwnTick = $state(0);
-  $effect(() => {
-    if (ais.selectedId === null) return; // no CPA display → no timer
-    const timer = setInterval(() => { cpaOwnTick++; }, CPA_OWN_REFRESH_MS);
-    return () => { clearInterval(timer); };
-  });
-
-  // Recompute Rust CPA and rebuild CPA visualization whenever selection or AIS data changes.
-  // Own vessel state is read untracked, so own-vessel fixes don't drive the recompute;
-  // cpaOwnTick bounds the resulting staleness (see above).
+  // Recompute Rust CPA and rebuild CPA visualization whenever selection, AIS data or own
+  // position/COG/SOG change. Heading is not read, so compass ticks don't drive the recompute.
   $effect(() => {
     const selId  = ais.selectedId;
     const selIdx = ais.selectedIndex;
     const hotData = ais.hotData;
-    void cpaOwnTick; // register bounded-staleness own-state refresh (see above)
+    const ownPos = vessel.position;
+    const ownCog = vessel.cog;
+    const ownSog = vessel.sog;
 
     if (!selId || selIdx === null || !hotData || !map || !mapLoaded) {
       cpaLabelPopup?.remove();
@@ -2478,8 +2462,6 @@
     const tgtCog = hotData[b + AIS_F_COG]!;
     const tgtSog = hotData[b + AIS_F_SOG]!;
     const tgtRot = hotData[b + AIS_F_ROT]!;
-
-    const { position: ownPos, cog: ownCog, sog: ownSog } = untrack(() => vessel.snapshot());
 
     if (!ownPos || ownCog === null || ownSog === null) {
       cpaLabelPopup?.remove();
