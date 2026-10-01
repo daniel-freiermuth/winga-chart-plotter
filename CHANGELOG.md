@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [Unreleased]
+
+### Fixed
+
+- A Signal K `navigation.datetime` value with a non-ASCII character in its fractional seconds could panic the WASM core (byte slice inside a multi-byte character); such timestamps are now rejected as unparseable.
+
 ## [0.22.0] - 2026-08-08
 
 ### Added

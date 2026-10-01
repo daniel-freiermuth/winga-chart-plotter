@@ -85,8 +85,7 @@ pub fn build_tile_url(chart: &Chart, server_base: &str) -> Option<String> {
                 .layers
                 .as_ref()
                 .and_then(|l| l.first())
-                .map(String::as_str)
-                .unwrap_or("");
+                .map_or("", String::as_str);
             let fmt = mime_type(&chart.format);
             let sep = if base.contains('?') { '&' } else { '?' };
             return Some(format!(
@@ -135,6 +134,13 @@ mod wasm {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic,
+    clippy::float_cmp
+)]
 mod tests {
     use super::*;
 

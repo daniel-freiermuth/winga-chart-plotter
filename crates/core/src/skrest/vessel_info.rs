@@ -112,8 +112,7 @@ mod wasm {
         let url = format!("{server_base}/signalk/v1/api/vessels");
         let resp = http::fetch("GET", &url, &JsValue::UNDEFINED, None, None).await?;
         if !resp.ok() {
-            return serde_wasm_bindgen::to_value(&std::collections::HashMap::<String, ()>::new())
-                .map_err(|e| JsValue::from_str(&e.to_string()));
+            return Ok(js_sys::Map::new().into());
         }
         let data: serde_json::Value = serde_json::from_str(&resp.text)
             .map_err(|e| JsValue::from_str(&format!("Vessels API parse error: {e}")))?;
@@ -125,6 +124,13 @@ mod wasm {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic,
+    clippy::float_cmp
+)]
 mod tests {
     use super::*;
     use serde_json::json;

@@ -53,11 +53,10 @@ pub fn ms_to_iso8601(ms: f64) -> String {
 fn filter_coord_pairs(arr: &[Json]) -> Vec<[f64; 2]> {
     arr.iter()
         .filter_map(|c| {
-            let a = c.as_array()?;
-            if a.len() < 2 {
+            let [lon, lat, ..] = c.as_array()?.as_slice() else {
                 return None;
-            }
-            Some([a[0].as_f64()?, a[1].as_f64()?])
+            };
+            Some([lon.as_f64()?, lat.as_f64()?])
         })
         .collect()
 }
@@ -312,6 +311,13 @@ mod wasm {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic,
+    clippy::float_cmp
+)]
 mod tests {
     use super::*;
     use serde_json::json;

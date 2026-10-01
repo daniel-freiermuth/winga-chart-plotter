@@ -7,6 +7,8 @@
 //! are percent-encoded under form-urlencoded) — using the wrong one would
 //! silently drift from the original request shapes.
 
+use std::fmt::Write;
+
 /// Equivalent to JS `encodeURIComponent`. Unreserved set: `A-Za-z0-9 - _ . ! ~ * ' ( )`.
 pub fn encode_uri_component(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
@@ -24,7 +26,10 @@ pub fn encode_uri_component(s: &str) -> String {
             | b'\''
             | b'('
             | b')' => out.push(b as char),
-            _ => out.push_str(&format!("%{b:02X}")),
+            // `fmt::Write` for `String` is infallible.
+            _ => {
+                let _ = write!(out, "%{b:02X}");
+            }
         }
     }
     out
@@ -40,7 +45,10 @@ fn encode_form_value(s: &str) -> String {
                 out.push(b as char);
             }
             b' ' => out.push('+'),
-            _ => out.push_str(&format!("%{b:02X}")),
+            // `fmt::Write` for `String` is infallible.
+            _ => {
+                let _ = write!(out, "%{b:02X}");
+            }
         }
     }
     out
@@ -58,6 +66,13 @@ pub fn form_urlencoded(pairs: &[(&str, &str)]) -> String {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic,
+    clippy::float_cmp
+)]
 mod tests {
     use super::*;
 

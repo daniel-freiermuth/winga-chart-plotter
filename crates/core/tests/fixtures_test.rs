@@ -1,3 +1,11 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic,
+    clippy::float_cmp
+)]
+
 //! Regression tests against the real/spec-verified wire-delta fixtures in
 //! `fixtures/` (see `fixtures/README.md` for provenance). These fixtures were
 //! originally captured to dual-run parity-test `skdata` against the
