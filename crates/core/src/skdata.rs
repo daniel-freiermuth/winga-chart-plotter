@@ -52,6 +52,9 @@ use js_sys::Float64Array;
 
 /// A geographic position with optional accuracy metadata.
 #[wasm_bindgen]
+// The `unsafe` clippy sees is wasm-bindgen's generated getter/setter glue,
+// not hand-written code; the serde derive does not interact with it.
+#[allow(clippy::unsafe_derive_deserialize)]
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Position {
     pub longitude: f64,
@@ -101,13 +104,15 @@ pub struct CourseState {
 
 /// Parsed Signal K self-vessel state relevant for chart display.
 #[wasm_bindgen]
+// See `Position`: wasm-bindgen glue, not hand-written `unsafe`.
+#[allow(clippy::unsafe_derive_deserialize)]
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct VesselState {
     pub position: Option<Position>,
     pub cog: Option<f64>,     // Course over ground, radians
     pub sog: Option<f64>,     // Speed over ground, m/s
     pub heading: Option<f64>, // True heading, radians
-    /// Active course/route state. Non-pub so wasm_bindgen ignores it;
+    /// Active course/route state. Non-pub so `wasm_bindgen` ignores it;
     /// included in serde serialisation for the JS state callback.
     #[serde(skip_serializing_if = "Option::is_none")]
     course: Option<CourseState>,
@@ -252,16 +257,16 @@ fn strip_vessels_prefix(context: &str) -> &str {
 /// `urn:mrn:imo:mmsi:<mmsi>` (optionally with further `:`-separated suffix
 /// segments, which are ignored).
 fn mmsi_from_id(id: &str) -> Option<String> {
-    let parts: Vec<&str> = id.split(':').collect();
-    if parts.len() >= 5
-        && parts[0] == "urn"
-        && parts[1] == "mrn"
-        && parts[2] == "imo"
-        && parts[3] == "mmsi"
-    {
-        Some(parts[4].to_string())
-    } else {
-        None
+    let mut parts = id.split(':');
+    match (
+        parts.next(),
+        parts.next(),
+        parts.next(),
+        parts.next(),
+        parts.next(),
+    ) {
+        (Some("urn"), Some("mrn"), Some("imo"), Some("mmsi"), Some(mmsi)) => Some(mmsi.to_string()),
+        _ => None,
     }
 }
 
@@ -584,7 +589,9 @@ fn parse_iso8601_utc_ms(s: &str) -> Option<f64> {
     let min: i64 = tp.next()?.parse().ok()?;
     let sec: i64 = tp.next()?.parse().ok()?;
     // Truncate fractional seconds to 3 digits, right-pad with zeros → milliseconds.
-    let frac3 = &frac_str[..frac_str.len().min(3)];
+    // `get` (not `[..]`): a multi-byte char in the fraction must yield `None`,
+    // not a char-boundary panic.
+    let frac3 = frac_str.get(..frac_str.len().min(3))?;
     let ms: i64 = format!("{frac3:0<3}").parse().ok()?;
     let days = days_from_epoch(year, month, day);
     Some((days * 86_400_000 + hour * 3_600_000 + min * 60_000 + sec * 1_000 + ms) as f64)
@@ -592,9 +599,9 @@ fn parse_iso8601_utc_ms(s: &str) -> Option<f64> {
 
 /// Days from 1970-01-01 to the given Gregorian date (Hinnant's algorithm).
 fn days_from_epoch(year: i32, month: u32, day: u32) -> i64 {
-    let y = year as i64;
-    let m = month as i64;
-    let d = day as i64;
+    let y = i64::from(year);
+    let m = i64::from(month);
+    let d = i64::from(day);
     let (y, m) = if m <= 2 { (y - 1, m + 12) } else { (y, m) };
     let era = y.div_euclid(400);
     let yoe = y - era * 400; // year of era [0, 399]
@@ -705,20 +712,22 @@ pub fn extract_ais_binary(
     let mut ids = Vec::with_capacity(n);
     let mut cold = Vec::with_capacity(n);
 
-    for (i, t) in targets.into_iter().enumerate() {
-        let b = i * AIS_HOT_STRIDE;
+    let (rows, _) = hot.as_chunks_mut::<AIS_HOT_STRIDE>();
+    for (slot, t) in rows.iter_mut().zip(targets) {
         let pos = t.position.unwrap_or(Position {
             longitude: f64::NAN,
             latitude: f64::NAN,
             altitude: None,
         });
-        hot[b] = pos.longitude;
-        hot[b + 1] = pos.latitude;
-        hot[b + 2] = t.cog.unwrap_or(f64::NAN);
-        hot[b + 3] = t.sog.unwrap_or(f64::NAN);
-        hot[b + 4] = t.heading.unwrap_or(f64::NAN);
-        hot[b + 5] = t.rot.unwrap_or(f64::NAN);
-        hot[b + 6] = (now_ms - t.last_position_update_ms) / 1000.0;
+        *slot = [
+            pos.longitude,
+            pos.latitude,
+            t.cog.unwrap_or(f64::NAN),
+            t.sog.unwrap_or(f64::NAN),
+            t.heading.unwrap_or(f64::NAN),
+            t.rot.unwrap_or(f64::NAN),
+            (now_ms - t.last_position_update_ms) / 1000.0,
+        ];
         cold.push(AisColdData {
             id: t.id.clone(),
             name: t.name,
@@ -749,6 +758,13 @@ pub fn prune_stale_vessels(storage: &mut Storage, now_ms: f64, stale_ms: f64) {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic,
+    clippy::float_cmp
+)]
 mod tests {
     use super::*;
 
@@ -1075,6 +1091,14 @@ mod tests {
         assert!(parse_iso8601_utc_ms("").is_none());
         // non-UTC (no Z suffix) rejected
         assert!(parse_iso8601_utc_ms("2023-11-14T22:13:20+00:00").is_none());
+    }
+
+    #[test]
+    fn parse_iso8601_multibyte_fraction_rejected_without_panic() {
+        // Byte 3 of the fraction falls inside 'é' (bytes 2..4) — a byte slice
+        // there would panic on untrusted network input.
+        assert!(parse_iso8601_utc_ms("1970-01-01T00:00:01.12éZ").is_none());
+        assert!(parse_iso8601_utc_ms("1970-01-01T00:00:01.1éZ").is_none());
     }
 
     #[test]

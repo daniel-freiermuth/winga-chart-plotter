@@ -397,13 +397,13 @@ fn densify_by_distance(lon1: f64, lat1: f64, lon2: f64, lat2: f64) -> Vec<(f64, 
 /// dropped (a crossing at the very first pair leaves a single pre-crossing point
 /// that cannot form a valid line).
 fn split_at_antimeridian(pts: &[(f64, f64)]) -> Vec<Vec<(f64, f64)>> {
-    if pts.is_empty() {
+    let Some((&first, rest)) = pts.split_first() else {
         return Vec::new();
-    }
+    };
     let mut segs: Vec<Vec<(f64, f64)>> = Vec::new();
-    let mut seg: Vec<(f64, f64)> = vec![pts[0]];
-    let (mut prev_lon, mut prev_lat) = pts[0];
-    for &(lon, lat) in &pts[1..] {
+    let mut seg: Vec<(f64, f64)> = vec![first];
+    let (mut prev_lon, mut prev_lat) = first;
+    for &(lon, lat) in rest {
         if (lon - prev_lon).abs() > 180.0 {
             segs.push(std::mem::take(&mut seg));
             let handover_lon = prev_lon + if lon < prev_lon { -360.0 } else { 360.0 };
@@ -419,13 +419,13 @@ fn split_at_antimeridian(pts: &[(f64, f64)]) -> Vec<Vec<(f64, f64)>> {
 
 /// GC-densify a segment whose consecutive pairs have `|Δlon| ≤ 180°`.
 fn densify_track_segment(pts: &[(f64, f64)]) -> Vec<(f64, f64)> {
-    if pts.len() < 2 {
+    let Some((&first, rest)) = pts.split_first().filter(|(_, rest)| !rest.is_empty()) else {
         return pts.to_vec();
-    }
+    };
     let mut out = Vec::with_capacity(pts.len() * 2);
-    out.push(pts[0]);
-    let (mut prev_lon, mut prev_lat) = pts[0];
-    for &(lon, lat) in &pts[1..] {
+    out.push(first);
+    let (mut prev_lon, mut prev_lat) = first;
+    for &(lon, lat) in rest {
         out.extend(densify_by_distance(prev_lon, prev_lat, lon, lat));
         prev_lon = lon;
         prev_lat = lat;
@@ -456,7 +456,9 @@ fn process_track_core(raw: &[(f64, f64)]) -> TrackSegments {
     let overflow_segments = segs;
     let mut total = 0.0;
     for w in coords.windows(2) {
-        total += haversine_meters(w[0].0, w[0].1, w[1].0, w[1].1);
+        if let [(lon_a, lat_a), (lon_b, lat_b)] = *w {
+            total += haversine_meters(lon_a, lat_a, lon_b, lat_b);
+        }
     }
     let fade_stop = if total > 0.0 {
         ((0.5 * 1852.0_f64).min(total * 0.1) / total).min(1.0)
@@ -593,7 +595,7 @@ pub fn union_bounds(
         center_lon + span / 2.0,
         north,
         center_lon,
-        (south + north) / 2.0,
+        f64::midpoint(south, north),
     ]
 }
 
@@ -641,7 +643,7 @@ pub fn bounds_center(w: f64, s: f64, e: f64, n: f64) -> [f64; 2] {
     } else {
         (e - w).rem_euclid(360.0)
     };
-    [wrap180(w + span / 2.0), (s + n) / 2.0]
+    [wrap180(w + span / 2.0), f64::midpoint(s, n)]
 }
 
 /// Dateline-aware chart-bounds containment — see [`bounds_contain`].
@@ -657,6 +659,13 @@ pub fn chart_bounds_center(w: f64, s: f64, e: f64, n: f64) -> Vec<f64> {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic,
+    clippy::float_cmp
+)]
 mod tests {
     use super::*;
 
@@ -1088,18 +1097,14 @@ mod tests {
         let own_dlon_ctrl = control.own_lon - (-0.05);
         assert!(
             (own_dlon_am - own_dlon_ctrl).abs() < 0.001,
-            "own ghost Δlon mismatch: antimeridian={} control={}",
-            own_dlon_am,
-            own_dlon_ctrl
+            "own ghost Δlon mismatch: antimeridian={own_dlon_am} control={own_dlon_ctrl}"
         );
         // Target lon displacement from own start: identical.
         let tgt_dlon_am = r.tgt_lon - 179.95;
         let tgt_dlon_ctrl = control.tgt_lon - (-0.05);
         assert!(
             (tgt_dlon_am - tgt_dlon_ctrl).abs() < 0.001,
-            "tgt ghost Δlon mismatch: antimeridian={} control={}",
-            tgt_dlon_am,
-            tgt_dlon_ctrl
+            "tgt ghost Δlon mismatch: antimeridian={tgt_dlon_am} control={tgt_dlon_ctrl}"
         );
     }
 

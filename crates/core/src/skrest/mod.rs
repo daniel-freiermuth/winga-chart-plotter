@@ -3,7 +3,7 @@
 //!
 //! Per ADR-009 Phase 2: ported 1:1, function-for-function, not generated
 //! (typify/progenitor were both evaluated and rejected as not worth their
-//! cost — see KNOWLEDGE_BASE.md). Each submodule mirrors one TS call-site
+//! cost — see `KNOWLEDGE_BASE.md`). Each submodule mirrors one TS call-site
 //! grouping (charts/routes/waypoints/course/notifications/history/vessel
 //! info) and follows the same split as `geo.rs`: a pure, host-testable core
 //! (URL building, JSON [de]serialisation) plus a thin `#[wasm_bindgen]`

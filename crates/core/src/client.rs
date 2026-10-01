@@ -30,10 +30,10 @@ pub enum ConnectionStatus {
 pub struct SignalKClient {
     ws: WebSocket,
     // Closures must be kept alive for the lifetime of the client.
-    _on_open: Closure<dyn FnMut(JsValue)>,
-    _on_message: Closure<dyn FnMut(MessageEvent)>,
-    _on_error: Closure<dyn FnMut(ErrorEvent)>,
-    _on_close: Closure<dyn FnMut(CloseEvent)>,
+    on_open: Closure<dyn FnMut(JsValue)>,
+    on_message: Closure<dyn FnMut(MessageEvent)>,
+    on_error: Closure<dyn FnMut(ErrorEvent)>,
+    on_close: Closure<dyn FnMut(CloseEvent)>,
 }
 
 #[wasm_bindgen]
@@ -51,11 +51,21 @@ impl SignalKClient {
     #[wasm_bindgen(constructor)]
     pub fn new(
         url: &str,
-        on_state_change: Function,
-        on_status_change: Function,
-        on_ais_update: Function,
+        on_state_change: &Function,
+        on_status_change: &Function,
+        on_ais_update: &Function,
         on_delta: Function,
     ) -> Result<SignalKClient, JsValue> {
+        // AIS debounce: during the initial SignalK burst (~1400 messages) we
+        // accumulate all state in storage but only emit AIS at most once every
+        // AIS_MAX_INTERVAL_MS. After the burst dies down the debounce timer fires
+        // within AIS_DEBOUNCE_MS of the last message, producing one final
+        // consistent snapshot. This reduces a potentially O(n²) serialisation
+        // cascade to O(1) emits.
+        const AIS_DEBOUNCE_MS: i32 = 50;
+        const AIS_MAX_INTERVAL_MS: f64 = 500.0;
+        const AIS_STALE_MS: f64 = 10.0 * 60.0 * 1000.0; // 10 minutes
+
         let ws = WebSocket::new(url)?;
 
         let storage: Rc<RefCell<Storage>> = Rc::new(RefCell::new(Storage::default()));
@@ -93,17 +103,8 @@ impl SignalKClient {
         }) as Box<dyn FnMut(JsValue)>);
         ws.set_onopen(Some(on_open.as_ref().unchecked_ref()));
 
-        // onmessage — parse incoming delta in Rust, then debounce AIS updates.
-        //
-        // During the initial SignalK burst (~1400 messages) we accumulate all state
-        // in storage but only emit AIS at most once every AIS_MAX_INTERVAL_MS.
-        // After the burst dies down the debounce timer fires within AIS_DEBOUNCE_MS
-        // of the last message, producing one final consistent snapshot.
-        // This reduces a potentially O(n²) serialisation cascade to O(1) emits.
-        const AIS_DEBOUNCE_MS: i32 = 50;
-        const AIS_MAX_INTERVAL_MS: f64 = 500.0;
-        const AIS_STALE_MS: f64 = 10.0 * 60.0 * 1000.0; // 10 minutes
-
+        // onmessage — parse incoming delta in Rust, then debounce AIS updates
+        // (see AIS_DEBOUNCE_MS above).
         let last_ais_emit: Rc<RefCell<f64>> = Rc::new(RefCell::new(0.0));
         let debounce_handle: Rc<RefCell<Option<i32>>> = Rc::new(RefCell::new(None));
 
@@ -155,9 +156,8 @@ impl SignalKClient {
             let Some(text) = e.data().as_string() else {
                 return;
             };
-            let delta_ctx = match apply_message(&mut storage_clone.borrow_mut(), &text) {
-                Err(_) => return,
-                Ok(ctx) => ctx,
+            let Ok(delta_ctx) = apply_message(&mut storage_clone.borrow_mut(), &text) else {
+                return;
             };
             // Only forward own-vessel deltas to the extension relay.
             // AIS deltas (context = "vessels.urn:mrn:imo:mmsi:…") must not
@@ -194,29 +194,29 @@ impl SignalKClient {
             if now - *last_ais_emit.borrow() >= AIS_MAX_INTERVAL_MS {
                 // Max interval exceeded — emit now and cancel any pending debounce.
                 if let Some(handle) = debounce_handle.borrow_mut().take() {
-                    let scope = js_sys::global()
-                        .dyn_into::<WorkerGlobalScope>()
-                        .expect("running in a Worker");
-                    scope.clear_timeout_with_handle(handle);
+                    if let Some(scope) = worker_scope() {
+                        scope.clear_timeout_with_handle(handle);
+                    }
                 }
                 emit_ais();
             } else {
                 // Reset the debounce timer.
                 if let Some(handle) = debounce_handle.borrow_mut().take() {
-                    let scope = js_sys::global()
-                        .dyn_into::<WorkerGlobalScope>()
-                        .expect("running in a Worker");
-                    scope.clear_timeout_with_handle(handle);
+                    if let Some(scope) = worker_scope() {
+                        scope.clear_timeout_with_handle(handle);
+                    }
                 }
+                let Some(scope) = worker_scope() else {
+                    // No timer API outside a Worker — emit undebounced.
+                    emit_ais();
+                    return;
+                };
                 let emit = emit_ais.clone();
                 let handle_cell = debounce_handle.clone();
                 let cb = Closure::once(Box::new(move || {
                     emit();
                     *handle_cell.borrow_mut() = None;
                 }) as Box<dyn FnOnce()>);
-                let scope = js_sys::global()
-                    .dyn_into::<WorkerGlobalScope>()
-                    .expect("running in a Worker");
                 let handle = scope
                     .set_timeout_with_callback_and_timeout_and_arguments_0(
                         cb.as_ref().unchecked_ref(),
@@ -248,10 +248,10 @@ impl SignalKClient {
 
         Ok(SignalKClient {
             ws,
-            _on_open: on_open,
-            _on_message: on_message,
-            _on_error: on_error,
-            _on_close: on_close,
+            on_open,
+            on_message,
+            on_error,
+            on_close,
         })
     }
 
@@ -271,13 +271,13 @@ impl SignalKClient {
         let _ = self.ws.close();
         self.ws = WebSocket::new(url)?;
         self.ws
-            .set_onopen(Some(self._on_open.as_ref().unchecked_ref()));
+            .set_onopen(Some(self.on_open.as_ref().unchecked_ref()));
         self.ws
-            .set_onmessage(Some(self._on_message.as_ref().unchecked_ref()));
+            .set_onmessage(Some(self.on_message.as_ref().unchecked_ref()));
         self.ws
-            .set_onerror(Some(self._on_error.as_ref().unchecked_ref()));
+            .set_onerror(Some(self.on_error.as_ref().unchecked_ref()));
         self.ws
-            .set_onclose(Some(self._on_close.as_ref().unchecked_ref()));
+            .set_onclose(Some(self.on_close.as_ref().unchecked_ref()));
         Ok(())
     }
 
@@ -302,4 +302,10 @@ impl SignalKClient {
     pub fn send(&self, msg: &str) -> Result<(), JsValue> {
         self.ws.send_with_str(msg)
     }
+}
+
+/// The Worker global scope (owner of `setTimeout`/`clearTimeout`), or `None`
+/// when not running in a Worker.
+fn worker_scope() -> Option<WorkerGlobalScope> {
+    js_sys::global().dyn_into::<WorkerGlobalScope>().ok()
 }

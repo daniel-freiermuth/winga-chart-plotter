@@ -46,9 +46,8 @@ const EARTH_RADIUS_M: f64 = 1852.0 * 3440.065;
 /// Great-circle distance along a polyline, summed leg-by-leg (haversine).
 fn route_distance_m(waypoints: &[LonLat]) -> f64 {
     let mut distance_m = 0.0;
-    for i in 1..waypoints.len() {
-        let a = waypoints[i - 1];
-        let b = waypoints[i];
+    for leg in waypoints.windows(2) {
+        let [a, b] = *leg else { continue };
         let phi1 = a.lat.to_radians();
         let phi2 = b.lat.to_radians();
         let d_phi = (b.lat - a.lat).to_radians();
@@ -168,6 +167,13 @@ mod wasm {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic,
+    clippy::float_cmp
+)]
 mod tests {
     use super::*;
 
@@ -243,7 +249,7 @@ mod tests {
 
     #[test]
     fn extract_created_id_falls_back_to_empty() {
-        assert_eq!(extract_created_id(r#"{}"#), "");
+        assert_eq!(extract_created_id("{}"), "");
         assert_eq!(extract_created_id("not json"), "");
     }
 

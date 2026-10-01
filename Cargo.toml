@@ -1,3 +1,34 @@
 [workspace]
 members = ["crates/core"]
 resolver = "2"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+unused_must_use = "deny"
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+indexing_slicing = "deny"
+string_slice = "deny"
+# Accepted pedantic allows. CI runs clippy with `-D warnings`, so every
+# pedantic lint left at "warn" is effectively enforced.
+# - Pure helpers / wasm-bindgen exports: `#[must_use]` on every fn is noise.
+must_use_candidate = "allow"
+# - wasm-bindgen exports return `Result<_, JsValue>`; error = JS exception.
+missing_errors_doc = "allow"
+# - Navigation math: φ1/φ2/λ1/λ2, x/y/z, a/b follow the textbook formulas,
+#   lon/lat literals are copied verbatim from charts and fixtures, and
+#   numeric casts between f64 / usize / i64 are inherent to it.
+similar_names = "allow"
+many_single_char_names = "allow"
+unreadable_literal = "allow"
+cast_precision_loss = "allow"
+cast_possible_truncation = "allow"
+cast_sign_loss = "allow"
+cast_possible_wrap = "allow"
+too_many_lines = "allow"

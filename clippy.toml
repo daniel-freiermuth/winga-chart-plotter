@@ -1,0 +1,3 @@
+# Proper nouns (products, OGC operations, Signal K terms) that clippy::doc_markdown
+# would otherwise demand be backticked. ".." keeps the built-in defaults.
+doc-valid-idents = ["MapLibre", "RoT", "GetMap", "GetTile", "GeoJSON", ".."]
