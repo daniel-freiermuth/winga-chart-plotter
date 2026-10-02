@@ -71,7 +71,7 @@ function buildInfo(
   baseUrl: string,
   sep: string,
   targetLayer: Element,
-  compatibleTms: Set<string>,
+  compatibleTms: Map<string, string>,
   availableLayers: WmtsLayerInfo[],
 ): WmtsInfo {
   const layerName = qs(targetLayer, 'Identifier') ?? '';
@@ -84,7 +84,7 @@ function buildInfo(
     const template = resourceUrl.getAttribute('template') ?? '';
     const tileUrlTemplate = template
       .replace(/\{TileMatrixSet\}/g, tmsId)
-      .replace(/\{TileMatrix\}/g,    '{z}')
+      .replace(/\{TileMatrix\}/g,    `${compatibleTms.get(tmsId) ?? ''}{z}`)
       .replace(/\{TileRow\}/g,       '{y}')
       .replace(/\{TileCol\}/g,       '{x}');
     return { tileUrlTemplate, layerName, tileMatrixSet: tmsId, format: fmt, availableLayers };
@@ -95,7 +95,8 @@ function buildInfo(
     `${baseUrl}${sep}SERVICE=WMTS&VERSION=1.0.0&REQUEST=GetTile` +
     `&LAYER=${encodeURIComponent(layerName)}` +
     `&TILEMATRIXSET=${encodeURIComponent(tmsId)}` +
-    `&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}` +
+    `&TILEMATRIX=${encodeURIComponent(compatibleTms.get(tmsId) ?? '')}{z}` +
+    `&TILEROW={y}&TILECOL={x}` +
     `&FORMAT=${encodeURIComponent(fmt)}`;
 
   return { tileUrlTemplate, layerName, tileMatrixSet: tmsId, format: fmt, availableLayers };
@@ -105,9 +106,16 @@ function buildInfo(
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Identifiers of TileMatrixSets that use EPSG:3857 or WebMercatorQuad */
-function findCompatibleTileMatrixSets(doc: Document): Set<string> {
-  const result = new Set<string>();
+/**
+ * TileMatrixSets that use EPSG:3857 or WebMercatorQuad, mapped to the prefix
+ * that turns a zoom level into the set's TileMatrix identifier. WMTS TILEMATRIX
+ * is an identifier, not a zoom integer: GeoWebCache names its matrices
+ * 'EPSG:900913:0'…'EPSG:900913:N' (prefix 'EPSG:900913:'). Sets whose matrix
+ * identifiers are not `<prefix>0`…`<prefix>N` in order cannot be addressed by
+ * a {z} template and are skipped.
+ */
+function findCompatibleTileMatrixSets(doc: Document): Map<string, string> {
+  const result = new Map<string, string>();
   for (const tms of doc.querySelectorAll('Contents > TileMatrixSet')) {
     const id  = qs(tms, 'Identifier') ?? '';
     const crs = qs(tms, 'SupportedCRS') ?? '';
@@ -117,15 +125,32 @@ function findCompatibleTileMatrixSets(doc: Document): Set<string> {
       crs.includes('3857') ||
       crs.includes('900913')
     ) {
-      result.add(id);
+      const prefix = tileMatrixPrefix(tms);
+      if (prefix !== null) result.set(id, prefix);
     }
   }
   return result;
 }
 
+/**
+ * Common prefix of the set's TileMatrix identifiers when they read
+ * `<prefix>0`, `<prefix>1`, … in document order; null otherwise.
+ * A set without TileMatrix children yields '' (identifiers assumed to be zooms).
+ */
+function tileMatrixPrefix(tms: Element): string | null {
+  const ids = Array.from(tms.children)
+    .filter(c => c.localName === 'TileMatrix')
+    .map(m => Array.from(m.children).find(c => c.localName === 'Identifier')?.textContent ?? '');
+  if (ids.length === 0) return '';
+  const first = ids[0] ?? '';
+  if (!first.endsWith('0')) return null;
+  const prefix = first.slice(0, -1);
+  return ids.every((m, z) => m === `${prefix}${String(z)}`) ? prefix : null;
+}
+
 function pickLayer(
   layers: Element[],
-  compatibleTms: Set<string>,
+  compatibleTms: Map<string, string>,
   preferLayer?: string,
 ): Element {
   // First try: exact preferred layer
@@ -143,12 +168,12 @@ function pickLayer(
   return layers[0]!;
 }
 
-function pickTileMatrixSet(layer: Element, compatibleTms: Set<string>): string {
+function pickTileMatrixSet(layer: Element, compatibleTms: Map<string, string>): string {
   for (const link of layer.querySelectorAll('TileMatrixSetLink > TileMatrixSet')) {
     const id = link.textContent;
     if (compatibleTms.has(id)) return id;
   }
-  return compatibleTms.values().next().value ?? 'WebMercatorQuad';
+  return compatibleTms.keys().next().value ?? 'WebMercatorQuad';
 }
 
 /**
@@ -159,7 +184,7 @@ function layerTileUrl(
   layer: Element,
   baseUrl: string,
   sep: string,
-  compatibleTms: Set<string>,
+  compatibleTms: Map<string, string>,
 ): string {
   const layerName = qs(layer, 'Identifier') ?? '';
   const fmt       = qs(layer, 'Format') ?? 'image/png';
@@ -170,7 +195,7 @@ function layerTileUrl(
     const template = resourceUrl.getAttribute('template') ?? '';
     return template
       .replace(/\{TileMatrixSet\}/g, tmsId)
-      .replace(/\{TileMatrix\}/g,    '{z}')
+      .replace(/\{TileMatrix\}/g,    `${compatibleTms.get(tmsId) ?? ''}{z}`)
       .replace(/\{TileRow\}/g,       '{y}')
       .replace(/\{TileCol\}/g,       '{x}');
   }
@@ -178,7 +203,8 @@ function layerTileUrl(
   return `${baseUrl}${sep}SERVICE=WMTS&VERSION=1.0.0&REQUEST=GetTile` +
     `&LAYER=${encodeURIComponent(layerName)}` +
     `&TILEMATRIXSET=${encodeURIComponent(tmsId)}` +
-    `&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}` +
+    `&TILEMATRIX=${encodeURIComponent(compatibleTms.get(tmsId) ?? '')}{z}` +
+    `&TILEROW={y}&TILECOL={x}` +
     `&FORMAT=${encodeURIComponent(fmt)}`;
 }
 
