@@ -36,6 +36,8 @@ function layer(opts: {
   format?: string;
   tmsLinks?: string[];
   resourceUrl?: string | null;
+  /** Raw XML appended inside <Layer> after the standard children (e.g. <Style>, <Dimension>). */
+  extra?: string;
 }): string {
   const links = (opts.tmsLinks ?? [])
     .map(t => `<TileMatrixSetLink><TileMatrixSet>${t}</TileMatrixSet></TileMatrixSetLink>`)
@@ -50,6 +52,7 @@ function layer(opts: {
     ${fmt}
     ${links}
     ${res}
+    ${opts.extra ?? ''}
   </Layer>`;
 }
 
@@ -214,6 +217,70 @@ describe('buildInfo REST vs KVP', () => {
     expect(info.tileUrlTemplate).toContain('{z}');
     expect(info.tileUrlTemplate).toContain('{y}');
     expect(info.tileUrlTemplate).toContain('{x}');
+  });
+
+  it('REST: {Style} is replaced with the layer default style identifier', () => {
+    const doc = xml(capabilities({
+      tileMatrixSets: TMS,
+      layers: layer({
+        id: 'sea',
+        tmsLinks: ['WebMercator'],
+        resourceUrl: 'https://t/{Style}/{TileMatrixSet}/{TileMatrix}/{TileRow}/{TileCol}.png',
+        extra:
+          '<Style><Identifier>night</Identifier></Style>' +
+          '<Style isDefault="true"><Identifier>default</Identifier></Style>',
+      }),
+    }));
+    const info = parseDoc(doc, 'https://example.com');
+    expect(info.tileUrlTemplate).toBe('https://t/default/WebMercator/{z}/{y}/{x}.png');
+    expect(info.availableLayers[0]!.tileUrl).toBe(info.tileUrlTemplate);
+  });
+
+  it('REST: template variables match case-insensitively (GeoServer {style})', () => {
+    const doc = xml(capabilities({
+      tileMatrixSets: TMS,
+      layers: layer({
+        id: 'dwd:WORLDMAP',
+        tmsLinks: ['WebMercator'],
+        resourceUrl: 'https://gs/rest/dwd:WORLDMAP/{style}/{TileMatrixSet}/{TileMatrix}/{TileRow}/{TileCol}?format=image/png',
+        extra: '<Style isDefault="true"><Identifier>default</Identifier></Style>',
+      }),
+    }));
+    const info = parseDoc(doc, 'https://example.com');
+    expect(info.tileUrlTemplate).toBe(
+      'https://gs/rest/dwd:WORLDMAP/default/WebMercator/{z}/{y}/{x}?format=image/png',
+    );
+  });
+
+  it('REST: dimension placeholders are replaced with the dimension default (GIBS {Time})', () => {
+    const doc = xml(capabilities({
+      tileMatrixSets: TMS,
+      layers: layer({
+        id: 'MODIS',
+        tmsLinks: ['WebMercator'],
+        resourceUrl: 'https://gibs/MODIS/default/{Time}/{TileMatrixSet}/{TileMatrix}/{TileRow}/{TileCol}.jpeg',
+        extra:
+          '<Style isDefault="true"><Identifier>default</Identifier></Style>' +
+          '<Dimension><Identifier>Time</Identifier><Default>default</Default><Value>2024-01-01</Value></Dimension>',
+      }),
+    }));
+    const info = parseDoc(doc, 'https://example.com');
+    expect(info.tileUrlTemplate).toBe('https://gibs/MODIS/default/default/WebMercator/{z}/{y}/{x}.jpeg');
+    expect(info.availableLayers[0]!.tileUrl).toBe(info.tileUrlTemplate);
+  });
+
+  it('KVP: GetTile carries the mandatory STYLE parameter from the default style', () => {
+    const doc = xml(capabilities({
+      tileMatrixSets: TMS,
+      layers: layer({
+        id: 'ocean',
+        tmsLinks: ['WebMercator'],
+        extra: '<Style isDefault="true"><Identifier>default</Identifier></Style>',
+      }),
+    }));
+    const info = parseDoc(doc, 'https://example.com');
+    expect(info.tileUrlTemplate).toContain('&STYLE=default&');
+    expect(info.availableLayers[0]!.tileUrl).toBe(info.tileUrlTemplate);
   });
 });
 
