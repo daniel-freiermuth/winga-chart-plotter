@@ -77,6 +77,9 @@ function buildInfo(
   const layerName = qs(targetLayer, 'Identifier') ?? '';
   const fmt       = qs(targetLayer, 'Format') ?? 'image/png';
   const tmsId     = pickTileMatrixSet(targetLayer, compatibleTms);
+  if (tmsId === null) {
+    throw new Error(`Layer "${layerName}" links no EPSG:3857 / WebMercatorQuad tile matrix set`);
+  }
 
   // Prefer REST-style ResourceURL when available. A ResourceURL without a
   // usable `template` is not a REST endpoint — fall through to KVP.
@@ -166,16 +169,20 @@ function pickLayer(
       if (compatibleTms.has(link.textContent)) return l;
     }
   }
-  // Last resort: just return the first layer
-  return layers[0]!;
+  throw new Error('No layer links an EPSG:3857 / WebMercatorQuad tile matrix set');
 }
 
-function pickTileMatrixSet(layer: Element, compatibleTms: Map<string, string>): string {
+/**
+ * The first compatible TMS this layer declares via TileMatrixSetLink, or null.
+ * Never substitutes another TMS from the document: the service only serves a
+ * layer on the grids it links, so any other TMS yields wrong-grid or 404 tiles.
+ */
+function pickTileMatrixSet(layer: Element, compatibleTms: Map<string, string>): string | null {
   for (const link of layer.querySelectorAll('TileMatrixSetLink > TileMatrixSet')) {
     const id = link.textContent;
     if (compatibleTms.has(id)) return id;
   }
-  return compatibleTms.keys().next().value ?? 'WebMercatorQuad';
+  return null;
 }
 
 /**
@@ -191,6 +198,9 @@ function layerTileUrl(
   const layerName = qs(layer, 'Identifier') ?? '';
   const fmt       = qs(layer, 'Format') ?? 'image/png';
   const tmsId     = pickTileMatrixSet(layer, compatibleTms);
+  // No compatible grid for this layer: '' is the "no usable URL" value the
+  // picker and pickWmtsTileUrl skip.
+  if (tmsId === null) return '';
 
   const template = layer
     .querySelector('ResourceURL[resourceType="tile"]')
