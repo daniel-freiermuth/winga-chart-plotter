@@ -58,6 +58,11 @@ describe('fetchAndResolveStyle — config and camera expressions', () => {
     expect(await resolveExpr(['all', ['<', ['pitch'], 60], ['<', ['distance-from-center'], 2]]))
       .toEqual(['all', ['<', 0, 60], ['<', 0, 2]]);
   });
+
+  it('keeps coalesce intact when its first non-null argument is an expression', async () => {
+    const expr = ['coalesce', ['get', 'name_en'], ['get', 'name']];
+    expect(await resolveExpr(expr)).toEqual(expr);
+  });
 });
 
 describe('fetchAndResolveStyle — numeric constant folding', () => {
@@ -99,6 +104,16 @@ describe('fetchAndResolveStyle — literal font arrays', () => {
   it('wraps bare font arrays in case outputs but leaves all-string expressions alone', async () => {
     expect(await resolveExpr(['case', ['has', 'OBJNAM'], ['Roboto Bold'], ['Roboto Regular']]))
       .toEqual(['case', ['has', 'OBJNAM'], ['literal', ['Roboto Bold']], ['literal', ['Roboto Regular']]]);
+  });
+
+  it('does not re-wrap fonts that are already inside ["literal", …]', async () => {
+    expect(await resolveExpr(['step', ['zoom'], ['literal', ['Roboto Regular']], 8, ['Roboto Bold']]))
+      .toEqual(['step', ['zoom'], ['literal', ['Roboto Regular']], 8, ['literal', ['Roboto Bold']]]);
+  });
+
+  it('wraps match outputs but never match branch labels', async () => {
+    expect(await resolveExpr(['match', ['get', 'city'], ['New York', 'Los Angeles'], ['Roboto Bold'], ['Roboto Regular']]))
+      .toEqual(['match', ['get', 'city'], ['New York', 'Los Angeles'], ['literal', ['Roboto Bold']], ['literal', ['Roboto Regular']]]);
   });
 });
 
