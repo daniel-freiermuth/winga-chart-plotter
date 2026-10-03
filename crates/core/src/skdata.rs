@@ -576,7 +576,10 @@ pub fn apply_message(storage: &mut Storage, json: &str) -> Result<Option<String>
 ///
 /// Handles the Signal K subset: `YYYY-MM-DDTHH:MM:SS[.frac]Z`.
 /// Only UTC (`Z` suffix) is accepted — Signal K always uses UTC.
-/// Returns `None` on any parse failure.
+/// Returns `None` on any parse failure, including out-of-range fields
+/// (month 1–12, day 1–31, hour 0–23, minute 0–59, second 0–60) and a
+/// non-digit fraction. Range checks bound the arithmetic below, so
+/// untrusted input cannot overflow it.
 fn parse_iso8601_utc_ms(s: &str) -> Option<f64> {
     let s = s.trim().strip_suffix('Z')?;
     let (date, time) = s.split_once('T')?;
@@ -586,16 +589,27 @@ fn parse_iso8601_utc_ms(s: &str) -> Option<f64> {
     let day: u32 = dp.next()?.parse().ok()?;
     let (hms, frac_str) = time.split_once('.').unwrap_or((time, ""));
     let mut tp = hms.split(':');
-    let hour: i64 = tp.next()?.parse().ok()?;
-    let min: i64 = tp.next()?.parse().ok()?;
-    let sec: i64 = tp.next()?.parse().ok()?;
+    let hour: u32 = tp.next()?.parse().ok()?;
+    let min: u32 = tp.next()?.parse().ok()?;
+    let sec: u32 = tp.next()?.parse().ok()?;
+    let in_range = (1..=12).contains(&month)
+        && (1..=31).contains(&day)
+        && hour <= 23
+        && min <= 59
+        && sec <= 60; // 60 = leap second
+    if !in_range || !frac_str.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
     // Truncate fractional seconds to 3 digits, right-pad with zeros → milliseconds.
-    // `get` (not `[..]`): a multi-byte char in the fraction must yield `None`,
-    // not a char-boundary panic.
+    // `get` (not `[..]`): never a char-boundary panic, even if validation changes.
     let frac3 = frac_str.get(..frac_str.len().min(3))?;
     let ms: i64 = format!("{frac3:0<3}").parse().ok()?;
+    // Time-of-day terms are bounded by the checks above; the day term is not
+    // (any i32 year is accepted), so it uses checked arithmetic.
     let days = days_from_epoch(year, month, day);
-    Some((days * 86_400_000 + hour * 3_600_000 + min * 60_000 + sec * 1_000 + ms) as f64)
+    let time_ms = i64::from(hour) * 3_600_000 + i64::from(min) * 60_000 + i64::from(sec) * 1_000;
+    let total = days.checked_mul(86_400_000)?.checked_add(time_ms + ms)?;
+    Some(total as f64)
 }
 
 /// Days from 1970-01-01 to the given Gregorian date (Hinnant's algorithm).
@@ -1102,6 +1116,28 @@ mod tests {
         // there would panic on untrusted network input.
         assert!(parse_iso8601_utc_ms("1970-01-01T00:00:01.12éZ").is_none());
         assert!(parse_iso8601_utc_ms("1970-01-01T00:00:01.1éZ").is_none());
+    }
+
+    #[test]
+    fn parse_iso8601_out_of_range_fields_rejected_without_overflow() {
+        // An unbounded hour would overflow `hour * 3_600_000` (panic in debug).
+        assert!(parse_iso8601_utc_ms("1970-01-01T9223372036854775807:00:00Z").is_none());
+        assert!(parse_iso8601_utc_ms("1970-01-01T24:00:00Z").is_none());
+        assert!(parse_iso8601_utc_ms("1970-01-01T00:60:00Z").is_none());
+        assert!(parse_iso8601_utc_ms("1970-01-01T00:00:61Z").is_none());
+        assert!(parse_iso8601_utc_ms("1970-13-01T00:00:00Z").is_none());
+        assert!(parse_iso8601_utc_ms("1970-00-01T00:00:00Z").is_none());
+        assert!(parse_iso8601_utc_ms("1970-01-32T00:00:00Z").is_none());
+        assert!(parse_iso8601_utc_ms("1970-01-00T00:00:00Z").is_none());
+        // An extreme year would overflow `days * 86_400_000`.
+        assert!(parse_iso8601_utc_ms("2147483647-12-31T00:00:00Z").is_none());
+        // Non-digit fraction (sign/whitespace accepted by `i64::parse`) rejected.
+        assert!(parse_iso8601_utc_ms("1970-01-01T00:00:00.+1Z").is_none());
+        // Boundaries still accepted (sec 60 = leap second).
+        assert_eq!(
+            parse_iso8601_utc_ms("1970-01-01T23:59:60.999Z"),
+            Some(86_400_999.0)
+        );
     }
 
     #[test]
