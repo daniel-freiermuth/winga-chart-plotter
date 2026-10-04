@@ -7,6 +7,10 @@
  *  - Hello message with `self` on connect
  *  - v1 delta messages (context + updates[].values[])
  *
+ * Each accepted stream connection is recorded with the subscribe contexts the
+ * client sent on it, so tests can check that subscriptions land on the
+ * connection that is actually live (e.g. after a reconnect).
+ *
  * Every HTTP request is recorded (and answered 404) so tests can observe
  * which REST resources the app asked for — e.g. the AIS vessel-track fetch
  * fired by selecting a vessel, whose URL carries the vessel id.
@@ -23,6 +27,12 @@ export interface RecordedRequest {
   method: string;
   url: string;
   at: number;
+}
+
+/** One accepted stream connection, in accept order. */
+export interface RecordedConnection {
+  /** `context` of every subscribe message received on this connection. */
+  readonly subscribedContexts: string[];
 }
 
 export interface AisReport {
@@ -43,6 +53,7 @@ const iso = (): string => new Date().toISOString();
 export class MockSignalK {
   port = 0;
   readonly requests: RecordedRequest[] = [];
+  readonly connections: RecordedConnection[] = [];
   /**
    * Scripted GET responses, keyed by URL path (query string ignored).
    * Unrouted requests keep answering 404 so tests can still observe them.
@@ -77,8 +88,14 @@ export class MockSignalK {
       this.wss.handleUpgrade(req, socket, head, (ws) => {
         this.sockets.add(ws);
         ws.on('close', () => this.sockets.delete(ws));
-        // Incoming subscribe messages are accepted and ignored — the mock
-        // decides what to stream, tests script it explicitly.
+        // Subscribe messages are recorded, not honoured — the mock decides
+        // what to stream, tests script it explicitly.
+        const conn: RecordedConnection = { subscribedContexts: [] };
+        this.connections.push(conn);
+        ws.on('message', (data: Buffer) => {
+          const ctx = subscribeContext(data.toString());
+          if (ctx !== null) conn.subscribedContexts.push(ctx);
+        });
         ws.send(JSON.stringify({
           name: 'mock-signalk',
           version: '2.0.0',
@@ -112,6 +129,31 @@ export class MockSignalK {
     const text = JSON.stringify(msg);
     for (const ws of this.sockets) {
       if (ws.readyState === WebSocket.OPEN) ws.send(text);
+    }
+  }
+
+  /** Abruptly drop every live stream connection (server-side network loss). */
+  dropConnections(): void {
+    for (const ws of this.sockets) ws.terminate();
+  }
+
+  /**
+   * Wait until at least `count` stream connections have been accepted and the
+   * connection at index `count - 1` has subscribed to every context in
+   * `contexts`. Returns that connection.
+   */
+  async waitForSubscriptions(count: number, contexts: string[], timeoutMs = 15_000): Promise<RecordedConnection> {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const conn = this.connections[count - 1];
+      if (conn !== undefined && contexts.every((c) => conn.subscribedContexts.includes(c))) return conn;
+      if (Date.now() > deadline) {
+        const seen = JSON.stringify(this.connections.map((c) => c.subscribedContexts));
+        throw new Error(`mock: connection #${String(count)} never subscribed to ${contexts.join(', ')} (seen: ${seen})`);
+      }
+      const tick = Promise.withResolvers<void>();
+      setTimeout(tick.resolve, 50);
+      await tick.promise;
     }
   }
 
@@ -200,4 +242,16 @@ export function trackRequestVesselId(url: string): string | null {
     if (q !== null && q.startsWith('vessels.')) return q.slice('vessels.'.length);
   }
   return null;
+}
+
+/** The `context` of a subscribe message, else null (malformed or not a subscribe). */
+function subscribeContext(text: string): string | null {
+  let msg: unknown;
+  try {
+    msg = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (typeof msg !== 'object' || msg === null || !('subscribe' in msg)) return null;
+  return 'context' in msg && typeof msg.context === 'string' ? msg.context : null;
 }
