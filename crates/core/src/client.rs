@@ -10,7 +10,7 @@ use js_sys::Function;
 use serde::Serialize;
 use std::{cell::RefCell, rc::Rc};
 use wasm_bindgen::{JsCast, prelude::*};
-use web_sys::{CloseEvent, ErrorEvent, MessageEvent, WebSocket, WorkerGlobalScope};
+use web_sys::{CloseEvent, ErrorEvent, Event, MessageEvent, WebSocket, WorkerGlobalScope};
 
 /// Connection status reported to JS via `on_status_change`.
 #[wasm_bindgen]
@@ -30,7 +30,7 @@ pub enum ConnectionStatus {
 pub struct SignalKClient {
     ws: WebSocket,
     // Closures must be kept alive for the lifetime of the client.
-    on_open: Closure<dyn FnMut(JsValue)>,
+    on_open: Closure<dyn FnMut(Event)>,
     on_message: Closure<dyn FnMut(MessageEvent)>,
     on_error: Closure<dyn FnMut(ErrorEvent)>,
     on_close: Closure<dyn FnMut(CloseEvent)>,
@@ -70,10 +70,16 @@ impl SignalKClient {
 
         let storage: Rc<RefCell<Storage>> = Rc::new(RefCell::new(Storage::default()));
 
-        // onopen — subscribe to self navigation at 500ms and all vessels (AIS) at 1000ms
+        // onopen — subscribe to self navigation at 500ms and all vessels (AIS) at 1000ms.
+        // The subscriptions go to the socket that fired the event, never a captured
+        // handle: `reconnect()` re-attaches this closure to each replacement socket,
+        // and a captured handle would still point at the first (closed) one.
         let status_cb = on_status_change.clone();
-        let ws_clone = ws.clone();
-        let on_open = Closure::wrap(Box::new(move |_: JsValue| {
+        let on_open = Closure::wrap(Box::new(move |e: Event| {
+            let Some(ws) = e.target().and_then(|t| t.dyn_into::<WebSocket>().ok()) else {
+                let _ = status_cb.call1(&JsValue::NULL, &JsValue::from(ConnectionStatus::Error));
+                return;
+            };
             let subscribe_msg = r#"{
                 "context": "vessels.self",
                 "subscribe": [
@@ -84,7 +90,7 @@ impl SignalKClient {
                     {"path": "navigation.course",               "period": 1000}
                 ]
             }"#;
-            let _ = ws_clone.send_with_str(subscribe_msg);
+            let _ = ws.send_with_str(subscribe_msg);
             let ais_subscribe_msg = r#"{
                 "context": "vessels.*",
                 "subscribe": [
@@ -98,9 +104,9 @@ impl SignalKClient {
                     {"path": "navigation.speedThroughWater",    "period": 1000}
                 ]
             }"#;
-            let _ = ws_clone.send_with_str(ais_subscribe_msg);
+            let _ = ws.send_with_str(ais_subscribe_msg);
             let _ = status_cb.call1(&JsValue::NULL, &JsValue::from(ConnectionStatus::Connected));
-        }) as Box<dyn FnMut(JsValue)>);
+        }) as Box<dyn FnMut(Event)>);
         ws.set_onopen(Some(on_open.as_ref().unchecked_ref()));
 
         // onmessage — parse incoming delta in Rust, then debounce AIS updates
