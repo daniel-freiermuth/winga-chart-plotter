@@ -20,10 +20,7 @@ mod wasm {
     pub async fn raise_mob(server_base: String, auth_headers: JsValue) -> Result<(), JsValue> {
         let url = format!("{server_base}/signalk/v2/api/notifications/mob");
         let body = mob_body().to_string();
-        let resp = http::fetch("POST", &url, &auth_headers, Some(&body), None).await?;
-        if !resp.ok() {
-            return Err(http::status_error("MOB raise failed", &resp));
-        }
+        http::fetch_ok("POST", &url, &auth_headers, Some(&body), "MOB raise failed").await?;
         Ok(())
     }
 }

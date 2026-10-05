@@ -36,10 +36,14 @@ mod wasm {
         let url =
             format!("{server_base}/signalk/v2/api/vessels/self/navigation/course/destination");
         let body = destination_body(latitude, longitude).to_string();
-        let resp = http::fetch("PUT", &url, &auth_headers, Some(&body), None).await?;
-        if !resp.ok() {
-            return Err(http::status_error("Navigate to point failed", &resp));
-        }
+        http::fetch_ok(
+            "PUT",
+            &url,
+            &auth_headers,
+            Some(&body),
+            "Navigate to point failed",
+        )
+        .await?;
         Ok(())
     }
 
@@ -48,10 +52,7 @@ mod wasm {
     #[wasm_bindgen(js_name = clearCourse)]
     pub async fn clear_course(server_base: String, auth_headers: JsValue) -> Result<(), JsValue> {
         let url = format!("{server_base}/signalk/v2/api/vessels/self/navigation/course");
-        let resp = http::fetch("DELETE", &url, &auth_headers, None, None).await?;
-        if !resp.ok() {
-            return Err(http::status_error("Clear course failed", &resp));
-        }
+        http::fetch_ok("DELETE", &url, &auth_headers, None, "Clear course failed").await?;
         Ok(())
     }
 
@@ -66,10 +67,14 @@ mod wasm {
         let url =
             format!("{server_base}/signalk/v2/api/vessels/self/navigation/course/activeRoute");
         let body = active_route_body(&route_uuid).to_string();
-        let resp = http::fetch("PUT", &url, &auth_headers, Some(&body), None).await?;
-        if !resp.ok() {
-            return Err(http::status_error("Activate route failed", &resp));
-        }
+        http::fetch_ok(
+            "PUT",
+            &url,
+            &auth_headers,
+            Some(&body),
+            "Activate route failed",
+        )
+        .await?;
         Ok(())
     }
 
@@ -85,10 +90,14 @@ mod wasm {
             "{server_base}/signalk/v2/api/vessels/self/navigation/course/activeRoute/pointIndex"
         );
         let body = point_index_body(index).to_string();
-        let resp = http::fetch("PUT", &url, &auth_headers, Some(&body), None).await?;
-        if !resp.ok() {
-            return Err(http::status_error("Set route point index failed", &resp));
-        }
+        http::fetch_ok(
+            "PUT",
+            &url,
+            &auth_headers,
+            Some(&body),
+            "Set route point index failed",
+        )
+        .await?;
         Ok(())
     }
 }
