@@ -57,7 +57,7 @@ export function buildAisLayers(
   const fishingIndices:        number[] = []; // nav state "fishing" → fishing-gear mark
   const nucIndices:            number[] = []; // nav state 2 "notUnderCommand" → two-dot mark
   const restrictedIndices:     number[] = []; // nav state 3 "restrictedManoeuvrability" → ball-diamond-ball
-  const draughtIndices:        number[] = []; // nav state 4 "constrainedByDraught" → side-bars mark
+  const draughtIndices:        number[] = []; // nav state 4 "constrained by draft" → side-bars mark
   const sarIndices:            number[] = []; // nav state 14 SART/MOB → special red icon, no arrow
   // Ghost-decoration subsets — a state mark's GHOST (dead-reckoned) copy must only exist
   // for vessels actually qualifying for dead-reckoning (same gate as ghostIndices above:
@@ -129,8 +129,9 @@ export function buildAisLayers(
     } else if (ns.includes('restrict')) {
       restrictedIndices.push(i);
       if (isGhost) restrictedGhostIndices.push(i);
-    } else if (ns.includes('draught')) {
-      // "constrainedByHerDraught" / "constrainedByDraught"
+    } else if (ns.includes('draft') || ns.includes('draught')) {
+      // Signal K (nmea0183-signalk stateMapping) emits "constrained by draft";
+      // "draught" kept for sources using the British spelling.
       draughtIndices.push(i);
       if (isGhost) draughtGhostIndices.push(i);
     }
