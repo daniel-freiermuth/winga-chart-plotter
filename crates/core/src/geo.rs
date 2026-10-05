@@ -1315,18 +1315,18 @@ mod tests {
     #[test]
     fn process_track_empty_and_single_point_no_overflow() {
         let (coords, overflow, _) = process_track_core(&[]);
-        assert!(coords.is_empty());
-        assert!(overflow.is_empty());
+        assert_eq!(coords, Vec::<(f64, f64)>::new());
+        assert_eq!(overflow, Vec::<Vec<(f64, f64)>>::new());
         let (coords, overflow, _) = process_track_core(&[(0.0, 10.0)]);
         assert_eq!(coords, vec![(0.0, 10.0)]);
-        assert!(overflow.is_empty());
+        assert_eq!(overflow, Vec::<Vec<(f64, f64)>>::new());
     }
 
     #[test]
     fn process_track_no_overflow_for_simple_non_crossing_track() {
         let raw = vec![(0.0, 10.0), (10.0, 10.0), (20.0, 10.0)];
         let (_, overflow, _) = process_track_core(&raw);
-        assert!(overflow.is_empty());
+        assert_eq!(overflow, Vec::<Vec<(f64, f64)>>::new());
     }
 
     #[test]
@@ -1426,8 +1426,14 @@ mod tests {
 
     #[test]
     fn process_route_coords_empty_and_single_point() {
-        assert!(process_route_coords_core(&[]).is_empty());
-        assert!(process_route_coords_core(&[(0.0, 10.0)]).is_empty());
+        assert_eq!(
+            process_route_coords_core(&[]),
+            Vec::<Vec<(f64, f64)>>::new()
+        );
+        assert_eq!(
+            process_route_coords_core(&[(0.0, 10.0)]),
+            Vec::<Vec<(f64, f64)>>::new()
+        );
     }
 
     #[test]
