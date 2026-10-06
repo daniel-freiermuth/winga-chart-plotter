@@ -101,9 +101,26 @@ pub async fn fetch(
     await_response(promise).await
 }
 
+/// [`fetch`] (no timeout) that rejects any non-2xx response with
+/// [`status_error`] labelled by `action` — the shared shape of every
+/// "request must succeed" call site.
+pub async fn fetch_ok(
+    method: &str,
+    url: &str,
+    extra_headers: &JsValue,
+    body: Option<&str>,
+    action: &str,
+) -> Result<HttpResponse, JsValue> {
+    let resp = fetch(method, url, extra_headers, body, None).await?;
+    if !resp.ok() {
+        return Err(status_error(action, &resp));
+    }
+    Ok(resp)
+}
+
 /// Build a `js_sys::Error`-backed rejection matching the ported TS code's
 /// `throw new Error("<action>: <status> <statusText>")` shape.
-pub fn status_error(action: &str, resp: &HttpResponse) -> JsValue {
+fn status_error(action: &str, resp: &HttpResponse) -> JsValue {
     JsValue::from(js_sys::Error::new(&format!(
         "{action}: {} {}",
         resp.status, resp.status_text
