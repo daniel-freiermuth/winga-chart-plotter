@@ -8,8 +8,12 @@ pub fn destination_body(latitude: f64, longitude: f64) -> serde_json::Value {
 }
 
 /// Body for `PUT .../course/activeRoute`.
-pub fn active_route_body(route_uuid: &str) -> serde_json::Value {
-    serde_json::json!({ "href": format!("/resources/routes/{route_uuid}") })
+///
+/// `reverse` selects the travel direction. Signal K resets it to `false` when
+/// omitted, so re-activating a route followed in reverse (e.g. after editing
+/// it) must send it explicitly.
+pub fn active_route_body(route_uuid: &str, reverse: bool) -> serde_json::Value {
+    serde_json::json!({ "href": format!("/resources/routes/{route_uuid}"), "reverse": reverse })
 }
 
 /// Body for `PUT .../course/activeRoute/pointIndex`.
@@ -61,11 +65,12 @@ mod wasm {
     pub async fn activate_route(
         server_base: String,
         route_uuid: String,
+        reverse: bool,
         auth_headers: JsValue,
     ) -> Result<(), JsValue> {
         let url =
             format!("{server_base}/signalk/v2/api/vessels/self/navigation/course/activeRoute");
-        let body = active_route_body(&route_uuid).to_string();
+        let body = active_route_body(&route_uuid, reverse).to_string();
         let resp = http::fetch("PUT", &url, &auth_headers, Some(&body), None).await?;
         if !resp.ok() {
             return Err(http::status_error("Activate route failed", &resp));
@@ -115,10 +120,19 @@ mod tests {
 
     #[test]
     fn active_route_body_shape() {
-        let b = active_route_body("abc-123");
+        let b = active_route_body("abc-123", false);
         assert_eq!(
             b,
-            serde_json::json!({ "href": "/resources/routes/abc-123" })
+            serde_json::json!({ "href": "/resources/routes/abc-123", "reverse": false })
+        );
+    }
+
+    #[test]
+    fn active_route_body_keeps_reverse() {
+        let b = active_route_body("abc-123", true);
+        assert_eq!(
+            b,
+            serde_json::json!({ "href": "/resources/routes/abc-123", "reverse": true })
         );
     }
 

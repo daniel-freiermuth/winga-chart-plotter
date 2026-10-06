@@ -178,16 +178,19 @@ export async function clearCourse(serverBase: string, authHeaders: Record<string
 }
 
 /**
- * Activate a route as the active course.
+ * Activate a route as the active course, followed forward or in `reverse`.
+ * Signal K resets the direction to forward when `reverse` is omitted, so it
+ * is always sent explicitly.
  *   PUT /signalk/v2/api/vessels/self/navigation/course/activeRoute
  */
 export async function activateRoute(
   serverBase: string,
   routeUuid: string,
+  reverse: boolean,
   authHeaders: Record<string, string>,
 ): Promise<void> {
   await ready;
-  await wasmActivateRoute(serverBase, routeUuid, authHeaders);
+  await wasmActivateRoute(serverBase, routeUuid, reverse, authHeaders);
 }
 
 /**

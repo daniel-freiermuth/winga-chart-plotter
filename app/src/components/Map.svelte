@@ -22,6 +22,7 @@
   import { rulers, rulerBearingText, rulerDistanceText, type Ruler } from '../stores/rulers.svelte';
   import { routePlanner } from '../stores/routePlanner.svelte';
   import { route } from '../stores/route.svelte';
+  import { mirrorRouteIndex } from '../stores/routeLogic';
   import { routes } from '../stores/routes.svelte';
   import { waypoints } from '../stores/waypoints.svelte';
   import { track } from '../stores/track.svelte';
@@ -1908,7 +1909,11 @@
     const canStop = auth.isLoggedIn;
     const idxRaw = wptFeat?.properties['idx'] as number | null | undefined;
     const idx = typeof idxRaw === 'number' ? idxRaw : null;
-    const isCurrentNext = idx !== null && idx === route.pointIndex;
+    // Feature idx is a forward geometry index; Signal K's pointIndex counts
+    // along the travel direction. Snapshot the frame the popup was built in.
+    const routeLen = route.geometry?.geometry.coordinates.length ?? 0;
+    const reverse  = route.reverse;
+    const isCurrentNext = idx !== null && idx === mirrorRouteIndex(route.pointIndex, routeLen, reverse);
     const canSetNext = idx !== null && !isCurrentNext && auth.isLoggedIn;
     const canEdit    = auth.isLoggedIn && route.activeUuid !== null && route.geometry !== null;
     const pointLabel = idx !== null ? `Point ${String(idx + 1)}` : null;
@@ -1935,7 +1940,8 @@
       const setNextBtn = el.closest<HTMLButtonElement>('.set-next-wpt-btn');
       if (setNextBtn && !setNextBtn.disabled && setNextBtn.dataset['idx']) {
         popup.remove();
-        setActiveRoutePointIndex(settings.signalkHttpUrl, Number(setNextBtn.dataset['idx']), auth.authHeaders)
+        const pointIndex = mirrorRouteIndex(Number(setNextBtn.dataset['idx']), routeLen, reverse);
+        setActiveRoutePointIndex(settings.signalkHttpUrl, pointIndex, auth.authHeaders)
           .catch((err: unknown) => { console.error('[route] Failed to set next waypoint:', err); });
         return;
       }
@@ -1946,7 +1952,7 @@
         const geo  = route.geometry;
         if (uuid && geo) {
           const coords = geo.geometry.coordinates as [number, number][];
-          const anchorCoord = coords[route.pointIndex];
+          const anchorCoord = coords[mirrorRouteIndex(route.pointIndex, coords.length, route.reverse)];
           const anchor = anchorCoord ? { lon: anchorCoord[0], lat: anchorCoord[1] } : null;
           routePlanner.loadRoute(uuid, route.routeName ?? '', coords.map(([lon, lat]) => ({ lon, lat })), anchor);
         }
@@ -2005,7 +2011,7 @@
       const activateBtn = el.closest<HTMLButtonElement>('.activate-route-btn');
       if (activateBtn && !activateBtn.disabled && activateBtn.dataset['uuid']) {
         popup.remove();
-        activateRoute(settings.signalkHttpUrl, activateBtn.dataset['uuid'], auth.authHeaders)
+        activateRoute(settings.signalkHttpUrl, activateBtn.dataset['uuid'], false, auth.authHeaders)
           .catch((err: unknown) => { console.error('[route] Failed to activate route:', err); });
         return;
       }
@@ -2780,11 +2786,12 @@
     const geo = route.geometry;
     if (geo && route.activeHref) {
       const coords = geo.geometry.coordinates as [number, number][];
+      const nextIdx = mirrorRouteIndex(route.pointIndex, coords.length, route.reverse);
       coords.forEach((c, i) => {
         wptFeatures.push({
           type: 'Feature',
           geometry: { type: 'Point', coordinates: c },
-          properties: { wtype: i === route.pointIndex ? 'next' : 'point', idx: i },
+          properties: { wtype: i === nextIdx ? 'next' : 'point', idx: i },
         });
       });
     } else if (nxtPt) {
