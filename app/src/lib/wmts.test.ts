@@ -301,3 +301,70 @@ describe('compatible TMS recognition', () => {
     expect(parseDoc(doc, 'https://x.com').tileMatrixSet).toBe('custom');
   });
 });
+
+// ---------------------------------------------------------------------------
+// TileMatrix identifiers (WMTS TILEMATRIX is an identifier, not a zoom int)
+// ---------------------------------------------------------------------------
+
+/** A TileMatrixSet element with explicit <TileMatrix> children. */
+function tmsWithMatrices(id: string, crs: string, matrixIds: string[]): string {
+  const matrices = matrixIds
+    .map(m => `<TileMatrix><Identifier>${m}</Identifier></TileMatrix>`)
+    .join('');
+  return `<TileMatrixSet><Identifier>${id}</Identifier><SupportedCRS>${crs}</SupportedCRS>${matrices}</TileMatrixSet>`;
+}
+
+describe('TileMatrix identifier mapping', () => {
+  // GeoWebCache (bundled with GeoServer) names its matrices 'EPSG:900913:N'.
+  const GWC = tmsWithMatrices('EPSG:900913', 'urn:ogc:def:crs:EPSG::900913',
+    ['EPSG:900913:0', 'EPSG:900913:1', 'EPSG:900913:2']);
+
+  it('KVP: TILEMATRIX uses the prefixed matrix identifier', () => {
+    const doc = xml(capabilities({
+      tileMatrixSets: GWC,
+      layers: layer({ id: 'dwd:Warngebiete', tmsLinks: ['EPSG:900913'] }),
+    }));
+    const info = parseDoc(doc, 'https://maps.example/gwc/service/wmts');
+    expect(info.tileUrlTemplate).toContain('&TILEMATRIX=EPSG%3A900913%3A{z}&');
+    expect(info.availableLayers[0]!.tileUrl).toContain('&TILEMATRIX=EPSG%3A900913%3A{z}&');
+  });
+
+  it('REST: {TileMatrix} expands to the prefixed matrix identifier', () => {
+    const doc = xml(capabilities({
+      tileMatrixSets: GWC,
+      layers: layer({
+        id: 'dwd:WORLDMAP',
+        tmsLinks: ['EPSG:900913'],
+        resourceUrl: 'https://maps.example/rest/{TileMatrixSet}/{TileMatrix}/{TileRow}/{TileCol}',
+      }),
+    }));
+    const info = parseDoc(doc, 'https://maps.example');
+    const expected = 'https://maps.example/rest/EPSG:900913/EPSG:900913:{z}/{y}/{x}';
+    expect(info.tileUrlTemplate).toBe(expected);
+    expect(info.availableLayers[0]!.tileUrl).toBe(expected);
+  });
+
+  it('plain integer matrix identifiers map directly to {z}', () => {
+    const doc = xml(capabilities({
+      tileMatrixSets: tmsWithMatrices('WebMercatorQuad', 'EPSG:3857', ['0', '1', '2']),
+      layers: layer({ id: 'L', tmsLinks: ['WebMercatorQuad'] }),
+    }));
+    expect(parseDoc(doc, 'https://x.com').tileUrlTemplate).toContain('&TILEMATRIX={z}&');
+  });
+
+  it('rejects sets whose matrix identifiers are not a zoom sequence from 0', () => {
+    const doc = xml(capabilities({
+      tileMatrixSets: tmsWithMatrices('custom', 'EPSG:3857', ['a', 'b', 'c']),
+      layers: layer({ id: 'L', tmsLinks: ['custom'] }),
+    }));
+    expect(() => parseDoc(doc, 'https://x.com')).toThrow(/No EPSG:3857/);
+  });
+
+  it('rejects sets whose matrix identifiers do not start at zoom 0', () => {
+    const doc = xml(capabilities({
+      tileMatrixSets: tmsWithMatrices('custom', 'EPSG:3857', ['1', '2', '3']),
+      layers: layer({ id: 'L', tmsLinks: ['custom'] }),
+    }));
+    expect(() => parseDoc(doc, 'https://x.com')).toThrow(/No EPSG:3857/);
+  });
+});
