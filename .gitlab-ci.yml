@@ -3,7 +3,7 @@
 # Pipeline for signalk-chart-rs
 #
 # Stages:
-#   check  — cargo fmt, clippy, svelte-check, eslint, cargo test (parallel)
+#   check  — cargo fmt, clippy, svelte-check, eslint, cargo test, MSRV check (parallel)
 #   build  — wasm-pack + Vite production bundle
 #   deploy — GitLab Pages:
 #              default branch → root URL  (production)
@@ -111,6 +111,30 @@ test:
     paths: [.cargo/registry/, .cargo/git/, target/]
   script:
     - cargo test
+
+# Build on the minimum supported Rust version. lint/test use rust:latest, which
+# accepts APIs stabilised after the declared floor and silently invalidates it.
+# The version is read from `rust-version` in crates/core/Cargo.toml (single
+# source of truth) and installed via rustup rather than pinned in `image:`.
+# The wasm32 check is required: cfg(target_arch = "wasm32") modules only
+# compile for that target.
+msrv:
+  extends: [.default-rules]
+  image: rust:latest
+  stage: check
+  cache:
+    key:
+      prefix: msrv
+      files: [Cargo.lock]
+    paths: [.cargo/registry/, .cargo/git/, target/]
+  before_script:
+    - MSRV="$(sed -n 's/^rust-version = "\(.*\)"$/\1/p' crates/core/Cargo.toml)"
+    - test -n "$MSRV" || { echo "rust-version not found in crates/core/Cargo.toml" >&2; exit 1; }
+    - rustup toolchain install "$MSRV" --profile minimal --target wasm32-unknown-unknown
+  script:
+    - cargo +"$MSRV" check --locked --all-targets
+    - cargo +"$MSRV" check --locked -p signalk-chart-core --lib --target wasm32-unknown-unknown
+    - cargo +"$MSRV" test --locked
 
 # ---------------------------------------------------------------------------
 # Stage: build
