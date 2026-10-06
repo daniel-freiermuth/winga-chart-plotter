@@ -82,11 +82,7 @@ function buildInfo(
   const resourceUrl = targetLayer.querySelector('ResourceURL[resourceType="tile"]');
   if (resourceUrl) {
     const template = resourceUrl.getAttribute('template') ?? '';
-    const tileUrlTemplate = template
-      .replace(/\{TileMatrixSet\}/g, tmsId)
-      .replace(/\{TileMatrix\}/g,    '{z}')
-      .replace(/\{TileRow\}/g,       '{y}')
-      .replace(/\{TileCol\}/g,       '{x}');
+    const tileUrlTemplate = expandResourceTemplate(template, targetLayer, tmsId);
     return { tileUrlTemplate, layerName, tileMatrixSet: tmsId, format: fmt, availableLayers };
   }
 
@@ -94,6 +90,7 @@ function buildInfo(
   const tileUrlTemplate =
     `${baseUrl}${sep}SERVICE=WMTS&VERSION=1.0.0&REQUEST=GetTile` +
     `&LAYER=${encodeURIComponent(layerName)}` +
+    kvpStyleParam(targetLayer) +
     `&TILEMATRIXSET=${encodeURIComponent(tmsId)}` +
     `&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}` +
     `&FORMAT=${encodeURIComponent(fmt)}`;
@@ -151,6 +148,41 @@ function pickTileMatrixSet(layer: Element, compatibleTms: Set<string>): string {
   return compatibleTms.values().next().value ?? 'WebMercatorQuad';
 }
 
+/** Identifier of the layer's default <Style> (isDefault="true", else the first one), or null. */
+function defaultStyle(layer: Element): string | null {
+  const style = layer.querySelector('Style[isDefault="true"]') ?? layer.querySelector('Style');
+  return style ? qs(style, 'Identifier') : null;
+}
+
+/** `&STYLE=…` for KVP GetTile (mandatory in WMTS 1.0.0); empty when the layer declares no style. */
+function kvpStyleParam(layer: Element): string {
+  const style = defaultStyle(layer);
+  return style === null ? '' : `&STYLE=${encodeURIComponent(style)}`;
+}
+
+/**
+ * Expand a REST ResourceURL template into a MapLibre {z}/{x}/{y} template.
+ * Template variables match case-insensitively (GeoServer emits `{style}`).
+ * {Style} and one variable per <Dimension> take the layer's default values;
+ * unknown variables are left untouched.
+ */
+function expandResourceTemplate(template: string, layer: Element, tmsId: string): string {
+  const values = new Map<string, string>([
+    ['tilematrixset', tmsId],
+    ['tilematrix',    '{z}'],
+    ['tilerow',       '{y}'],
+    ['tilecol',       '{x}'],
+  ]);
+  const style = defaultStyle(layer);
+  if (style !== null) values.set('style', style);
+  for (const dim of layer.querySelectorAll('Dimension')) {
+    const id  = qs(dim, 'Identifier')?.toLowerCase();
+    const def = qs(dim, 'Default');
+    if (id && def !== null && !values.has(id)) values.set(id, def);
+  }
+  return template.replace(/\{([^{}]+)\}/g, (m, name: string) => values.get(name.toLowerCase()) ?? m);
+}
+
 /**
  * Build a MapLibre-compatible tile URL template for a single layer element.
  * Handles both REST-style (ResourceURL) and KVP-style WMTS services.
@@ -168,15 +200,12 @@ function layerTileUrl(
   const resourceUrl = layer.querySelector('ResourceURL[resourceType="tile"]');
   if (resourceUrl) {
     const template = resourceUrl.getAttribute('template') ?? '';
-    return template
-      .replace(/\{TileMatrixSet\}/g, tmsId)
-      .replace(/\{TileMatrix\}/g,    '{z}')
-      .replace(/\{TileRow\}/g,       '{y}')
-      .replace(/\{TileCol\}/g,       '{x}');
+    return expandResourceTemplate(template, layer, tmsId);
   }
 
   return `${baseUrl}${sep}SERVICE=WMTS&VERSION=1.0.0&REQUEST=GetTile` +
     `&LAYER=${encodeURIComponent(layerName)}` +
+    kvpStyleParam(layer) +
     `&TILEMATRIXSET=${encodeURIComponent(tmsId)}` +
     `&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}` +
     `&FORMAT=${encodeURIComponent(fmt)}`;
