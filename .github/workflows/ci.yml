@@ -4,7 +4,7 @@
 #
 # Runs on every push and pull request.
 # Jobs run in parallel for fast feedback:
-#   lint — cargo fmt, cargo clippy, svelte-check, eslint
+#   lint — cargo fmt, cargo clippy (host + wasm32), svelte-check, eslint
 #   test — cargo test, vitest
 #
 # Concurrency: in-progress runs for the same branch/PR are cancelled when a
@@ -80,6 +80,11 @@ jobs:
 
       - name: cargo clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
+
+      # wasm32-gated code (client.rs, skrest `wasm`/`http` modules,
+      # skdata::extract_ais_binary) is invisible to the host-target clippy run.
+      - name: cargo clippy (wasm32)
+        run: cargo clippy -p signalk-chart-core --target wasm32-unknown-unknown --all-features -- -D warnings
 
       # Build WASM with the dev profile so svelte-check can resolve the
       # generated bindings in app/src/wasm/ without waiting for a release build.

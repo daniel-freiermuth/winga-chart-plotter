@@ -39,6 +39,7 @@ test-watch:
 lint:
     cargo fmt --check
     cargo clippy --all-targets --all-features -- -D warnings
+    cargo clippy -p signalk-chart-core --target wasm32-unknown-unknown --all-features -- -D warnings
     cd {{app}} && pnpm run check && pnpm run lint
 
 # Run all lints and tests
