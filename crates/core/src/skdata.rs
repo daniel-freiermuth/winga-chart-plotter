@@ -959,6 +959,74 @@ mod tests {
     }
 
     #[test]
+    fn hello_from_a_different_self_discards_the_previous_servers_vessels() {
+        // Changing the Signal K server URL reuses the client (and its Storage)
+        // via `reconnect()`; the new server's Hello then names a different self.
+        // Nothing accumulated from the old server may survive into AIS snapshots:
+        // neither its AIS targets nor — worst of all — its own vessel, which is no
+        // longer `self` and would otherwise render as a ghost AIS target.
+        let mut storage = Storage::default();
+        apply_message(
+            &mut storage,
+            r#"{"version": "2.0.0", "self": "vessels.urn:mrn:signalk:uuid:server-a"}"#,
+        )
+        .unwrap();
+        for ctx in [
+            "vessels.urn:mrn:signalk:uuid:server-a",
+            "vessels.urn:mrn:imo:mmsi:111111111",
+        ] {
+            apply_message(
+                &mut storage,
+                &format!(
+                    r#"{{"context": "{ctx}", "updates": [{{"values": [
+                        {{"path": "navigation.position", "value": {{"longitude": 10.0, "latitude": 59.0}}}},
+                        {{"path": "navigation.datetime", "value": "1970-01-01T00:04:00.000Z"}}
+                    ]}}]}}"#
+                ),
+            )
+            .unwrap();
+        }
+
+        apply_message(
+            &mut storage,
+            r#"{"version": "2.0.0", "self": "vessels.urn:mrn:signalk:uuid:server-b"}"#,
+        )
+        .unwrap();
+
+        let now_ms = 5.0 * 60.0 * 1000.0;
+        let targets = extract_ais_targets(&storage, now_ms, 10.0 * 60.0 * 1000.0);
+        let ids: Vec<&str> = targets.iter().map(|t| t.id.as_str()).collect();
+        assert!(
+            ids.is_empty(),
+            "previous server's vessels leaked into AIS targets: {ids:?}"
+        );
+    }
+
+    #[test]
+    fn hello_from_the_same_self_keeps_accumulated_vessels() {
+        // A dropped link to the same server must keep its vessel data — that is
+        // the whole point of `reconnect()` reusing the Storage.
+        let hello = r#"{"version": "2.0.0", "self": "vessels.urn:mrn:signalk:uuid:server-a"}"#;
+        let mut storage = Storage::default();
+        apply_message(&mut storage, hello).unwrap();
+        apply_message(
+            &mut storage,
+            r#"{"context": "vessels.urn:mrn:imo:mmsi:111111111", "updates": [{"values": [
+                {"path": "navigation.position", "value": {"longitude": 10.0, "latitude": 59.0}},
+                {"path": "navigation.datetime", "value": "1970-01-01T00:04:00.000Z"}
+            ]}]}"#,
+        )
+        .unwrap();
+
+        apply_message(&mut storage, hello).unwrap();
+
+        let now_ms = 5.0 * 60.0 * 1000.0;
+        let targets = extract_ais_targets(&storage, now_ms, 10.0 * 60.0 * 1000.0);
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0].id, "urn:mrn:imo:mmsi:111111111");
+    }
+
+    #[test]
     fn vessel_id_with_extra_dots_is_not_truncated() {
         // The `signalk` crate's own `V1FullFormat::apply_delta` splits the whole
         // context on '.' and takes only the segment right after "vessels" — so an
