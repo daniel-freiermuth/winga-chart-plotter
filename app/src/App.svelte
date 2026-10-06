@@ -14,6 +14,8 @@
   let plannerDiscardConfirm = $state(false);
   let plannerError = $state<string | null>(null);
 
+  let canSaveRoute = $derived(!plannerSaving && routePlanner.name.trim() !== '' && routePlanner.waypoints.length >= 2);
+
   function handleDiscard() {
     if (routePlanner.name.trim()) {
       plannerDiscardConfirm = true;
@@ -23,7 +25,7 @@
   }
 
   async function handleSaveRoute() {
-    if (!routePlanner.name.trim() || routePlanner.waypoints.length < 2) return;
+    if (!canSaveRoute) return;
     plannerSaving = true;
     plannerError = null;
     // Capture before any async call — state is cleared by routePlanner.exit().
@@ -757,7 +759,7 @@
             type="text"
             placeholder="Route name…"
             bind:value={routePlanner.name}
-            onkeydown={(e) => { if (e.key === 'Enter' && !e.isComposing && !plannerSaving && routePlanner.name.trim() && routePlanner.waypoints.length >= 2) void handleSaveRoute(); }}
+            onkeydown={(e) => { if (e.key === 'Enter' && !e.isComposing && canSaveRoute) void handleSaveRoute(); }}
             style="
               flex: 1; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.25);
               border-radius: 6px; color: white; padding: 5px 8px; font-size: 13px; outline: none;
@@ -765,12 +767,12 @@
           />
           <button
             title={routePlanner.editingRouteUuid ? 'Update route' : 'Save as route'}
-            disabled={plannerSaving || !routePlanner.name.trim() || routePlanner.waypoints.length < 2}
+            disabled={!canSaveRoute}
             onclick={handleSaveRoute}
             style="
               background: rgba(100,200,100,0.8); border: none; outline: none; color: white;
               padding: 5px 10px; border-radius: 6px; cursor: pointer; font-size: 13px;
-              opacity: {plannerSaving || !routePlanner.name.trim() || routePlanner.waypoints.length < 2 ? 0.4 : 1};
+              opacity: {!canSaveRoute ? 0.4 : 1};
             "
           >{plannerSaving ? '…' : routePlanner.editingRouteUuid ? 'Update' : 'Save'}</button>
         </div>
