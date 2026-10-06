@@ -230,8 +230,20 @@ pub struct Storage {
 }
 
 impl Storage {
+    /// Record the own-vessel context.
+    ///
+    /// Every accumulated vessel is relative to a self: a *different* self means
+    /// a different server (e.g. the user changed the Signal K URL and the
+    /// client was reused via `reconnect()`), so the previous server's vessels —
+    /// including its own vessel, which would otherwise surface as an AIS
+    /// target — are discarded. The same self (a dropped link to the same
+    /// server) keeps everything.
     pub fn set_self(&mut self, context: &str) {
-        self.self_id = Some(strip_vessels_prefix(context).to_string());
+        let id = strip_vessels_prefix(context);
+        if self.self_id.as_deref().is_some_and(|old| old != id) {
+            self.vessels.clear();
+        }
+        self.self_id = Some(id.to_string());
     }
 
     /// Return the stripped own-vessel id (without the `vessels.` prefix), if known.

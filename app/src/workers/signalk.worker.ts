@@ -106,6 +106,7 @@ self.onmessage = async (e: MessageEvent<InMessage>): Promise<void> => {
       if (client) {
         // Reuse the existing client — reconnect replaces only the WebSocket while
         // keeping the accumulated Storage intact, so vessel data survives the drop.
+        // (A different server — different self in its Hello — starts from empty.)
         client.reconnect(msg.url);
       } else {
         client = new SignalKClient(msg.url, onState, onStatus, onAis, onRaw);

@@ -262,7 +262,9 @@ impl SignalKClient {
     }
 
     /// Close the current WebSocket and open a new one to `url`, reusing all
-    /// existing callbacks and the accumulated vessel Storage.
+    /// existing callbacks and the accumulated vessel Storage. If the new
+    /// server's Hello names a different self, `Storage::set_self` discards the
+    /// previous server's vessels.
     ///
     /// Calling `close()` on an already-closed socket is a no-op per the spec,
     /// so this is safe to call even when the previous connection has already dropped.
