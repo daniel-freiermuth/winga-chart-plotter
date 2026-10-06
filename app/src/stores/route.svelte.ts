@@ -31,6 +31,12 @@ let _reverse:       boolean                     = $state(false);
 let _geometry:      Feature<LineString> | null  = $state(null);
 let _loading:       boolean                     = $state(false);
 let _error:         string | null               = $state(null);
+// Bumped whenever the active href changes (or the store is cleared); a
+// geometry response only commits if no newer change happened since it was
+// issued. Without this, a slow fetch for a superseded route (switched route,
+// cleared course, geolocation toggled on) lands late and is drawn as the
+// active route.
+let _requestSeq = 0;
 
 /**
  * Fetch a route GeoJSON from the Signal K REST API.
@@ -73,7 +79,7 @@ async function fetchRouteGeometry(serverBase: string, href: string): Promise<Fea
   // FeatureCollection (some plugins wrap it)
   if (data.type === 'FeatureCollection') {
     const f = (data.features ?? []).find((f: unknown) =>
-      (f as Feature).geometry.type === 'LineString'
+      (f as Partial<Feature> | null)?.geometry?.type === 'LineString'
     );
     if (f) return f as Feature<LineString>;
   }
@@ -119,6 +125,7 @@ function createRoute() {
       }
 
       if (newHref !== _activeHref) {
+        const seq = ++_requestSeq;
         _activeHref = newHref;
         _geometry   = null;
         _error      = null;
@@ -126,8 +133,14 @@ function createRoute() {
         if (newHref) {
           _loading = true;
           fetchRouteGeometry(serverBase, newHref)
-            .then(geo => { _geometry = geo; _loading = false; console.debug('[route] geometry loaded:', !!geo); })
-            .catch((e: unknown) => { _error = String(e); _loading = false; console.warn('[route] fetch error:', e); });
+            .then(geo => {
+              if (seq !== _requestSeq) return;
+              _geometry = geo; _loading = false; console.debug('[route] geometry loaded:', !!geo);
+            })
+            .catch((e: unknown) => {
+              if (seq !== _requestSeq) return;
+              _error = String(e); _loading = false; console.warn('[route] fetch error:', e);
+            });
         } else {
           _loading = false;
         }
@@ -135,6 +148,7 @@ function createRoute() {
     },
 
     clear(): void {
+      ++_requestSeq;
       _nextPoint = _previousPoint = _activeHref = _routeName = _geometry = _error = null;
       _pointIndex = 0;
       _reverse = _loading = false;
