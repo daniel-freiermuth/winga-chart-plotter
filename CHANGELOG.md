@@ -24,6 +24,7 @@ All notable changes to this project are documented in this file.
 - Routes followed in reverse were handled as if followed forward: the next-waypoint highlight, "Set as next waypoint", and the anchor used when editing the active route all pointed at the mirrored waypoint, and saving an edit to the active route switched navigation back to forward. Signal K's direction-relative point index is now mapped onto the route geometry, and re-activation keeps the travel direction.
 - With the chart panned across the antimeridian, "Navigate here", "Add waypoint here", moving a waypoint, and route-planner points placed on the far side of the dateline were sent to Signal K with a longitude outside ±180° (e.g. `180.5`), which the server rejects or stores as an invalid position. Longitudes are now normalized to −180…180° before they are sent.
 - Above 85° N/S, the own vessel's COG line (and the heading line in Mercator) collapsed to a single point, i.e. disappeared, whenever the course had any poleward component, with a jump back to full length at due east/west. Such a line is now drawn at its full length and only stops if it would reach the pole; lines starting below 85° are still cut at 85° as before.
+- An active route served as a GeoJSON FeatureCollection with a member whose `geometry` is `null` (valid GeoJSON) failed to load: the LineString search threw a `TypeError`, which was shown as the route error. Such members are now skipped.
 
 ## [0.22.0] - 2026-08-08
 
