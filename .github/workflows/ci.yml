@@ -4,7 +4,7 @@
 #
 # Runs on every push and pull request.
 # Jobs run in parallel for fast feedback:
-#   lint — cargo fmt, cargo clippy, svelte-check, eslint
+#   lint — cargo fmt, cargo clippy (host + wasm32), svelte-check, eslint
 #   test — cargo test, vitest
 #
 # Concurrency: in-progress runs for the same branch/PR are cancelled when a
