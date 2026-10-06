@@ -78,10 +78,12 @@ function buildInfo(
   const fmt       = qs(targetLayer, 'Format') ?? 'image/png';
   const tmsId     = pickTileMatrixSet(targetLayer, compatibleTms);
 
-  // Prefer REST-style ResourceURL when available
-  const resourceUrl = targetLayer.querySelector('ResourceURL[resourceType="tile"]');
-  if (resourceUrl) {
-    const template = resourceUrl.getAttribute('template') ?? '';
+  // Prefer REST-style ResourceURL when available. A ResourceURL without a
+  // usable `template` is not a REST endpoint — fall through to KVP.
+  const template = targetLayer
+    .querySelector('ResourceURL[resourceType="tile"]')
+    ?.getAttribute('template');
+  if (template) {
     const tileUrlTemplate = template
       .replace(/\{TileMatrixSet\}/g, tmsId)
       .replace(/\{TileMatrix\}/g,    '{z}')
@@ -165,9 +167,10 @@ function layerTileUrl(
   const fmt       = qs(layer, 'Format') ?? 'image/png';
   const tmsId     = pickTileMatrixSet(layer, compatibleTms);
 
-  const resourceUrl = layer.querySelector('ResourceURL[resourceType="tile"]');
-  if (resourceUrl) {
-    const template = resourceUrl.getAttribute('template') ?? '';
+  const template = layer
+    .querySelector('ResourceURL[resourceType="tile"]')
+    ?.getAttribute('template');
+  if (template) {
     return template
       .replace(/\{TileMatrixSet\}/g, tmsId)
       .replace(/\{TileMatrix\}/g,    '{z}')
