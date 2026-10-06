@@ -1185,6 +1185,39 @@ mod tests {
     }
 
     #[test]
+    fn parse_iso8601_non_digit_fraction_rejected() {
+        // '€' is exactly 3 bytes, so the 3-byte slice succeeds but isn't digits.
+        assert!(parse_iso8601_utc_ms("1970-01-01T00:00:00.€Z").is_none());
+        assert!(parse_iso8601_utc_ms("1970-01-01T00:00:00.5aZ").is_none());
+        // Truncates, never rounds: .9999 → 999 ms, not 1000.
+        assert_eq!(
+            parse_iso8601_utc_ms("1970-01-01T00:00:00.9999Z"),
+            Some(999.0)
+        );
+    }
+
+    #[test]
+    fn malformed_datetime_delta_keeps_previous_datetime() {
+        let mut storage = Storage::default();
+        storage.set_self("vessels.urn:mrn:signalk:uuid:self");
+        let ctx = "vessels.urn:mrn:imo:mmsi:230000001";
+        let delta = |dt: &str| {
+            format!(
+                r#"{{"context":"{ctx}","updates":[{{"values":[{{"path":"navigation.datetime","value":"{dt}"}}]}}]}}"#
+            )
+        };
+        apply_message(&mut storage, &delta("1970-01-01T00:04:00.000Z")).unwrap();
+        for bad in ["1970-01-01T00:09:00.1€Z", "1970-01-01T00:09:00.€Z"] {
+            assert!(
+                apply_message(&mut storage, &delta(bad)).is_ok(),
+                "malformed datetime {bad:?} must not fail the whole message"
+            );
+        }
+        let vessel = storage.vessels.get("urn:mrn:imo:mmsi:230000001").unwrap();
+        assert_eq!(vessel.nav.datetime_ms, Some(240_000.0));
+    }
+
+    #[test]
     fn course_null_clears_active_route_and_next_point() {
         let mut storage = Storage::default();
         storage.set_self("vessels.urn:mrn:signalk:uuid:self");
