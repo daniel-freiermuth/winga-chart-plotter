@@ -131,8 +131,15 @@ function resolveExprs(node: unknown, defaults: Map<string, unknown>): unknown {
     return 0;
   }
 
+  // ["literal", X] is already a constant — its payload is data, never an expression.
+  if (head === 'literal') return node;
+
   // Resolve children bottom-up, then try to constant-fold arithmetic.
-  const resolved = node.map(item => resolveExprs(item, defaults));
+  // Match branch labels (["match", input, label1, out1, …, fallback] — even
+  // indices before the fallback) are literal values by spec: keep them verbatim.
+  const isMatch = head === 'match';
+  const resolved = (node as unknown[]).map((item, i) =>
+    isMatch && i >= 2 && i < node.length - 1 && i % 2 === 0 ? item : resolveExprs(item, defaults));
   return foldConstants(resolved);
 }
 
@@ -176,10 +183,12 @@ function foldConstants(node: unknown[]): unknown {
     }
   }
 
-  // coalesce: return first non-null argument (args may be mixed types)
+  // coalesce: fold to the first non-null argument only when it is a constant —
+  // every argument before it is then a literal null. If it is an expression it
+  // may evaluate to null at runtime, so the remaining fallbacks must be kept.
   if (op === 'coalesce') {
     const first = args.find(a => a !== null && a !== undefined);
-    if (first !== undefined) return first;
+    if (first !== undefined && typeof first !== 'object') return first;
   }
 
   // step/match/case: wrap any plain string-array output values in ["literal", [...]]
