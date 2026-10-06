@@ -112,17 +112,18 @@ describe('pickLayer fallback tiers', () => {
     expect(info.layerName).toBe('mercator');
   });
 
-  it('tier 3: falls back to layers[0] when no layer links a compatible TMS', () => {
-    // Both layers lack TileMatrixSetLink elements entirely
+  it('tier 3: throws when no layer links a compatible TMS', () => {
+    // Neither layer links a WebMercator TMS, so no layer can be served on a
+    // grid MapLibre can render — there is nothing valid to fall back to.
     const doc = xml(capabilities({
       tileMatrixSets: TILE_MATRIX_SETS,
       layers: [
         layer({ id: 'first',  tmsLinks: [] }),
-        layer({ id: 'second', tmsLinks: [] }),
+        layer({ id: 'second', tmsLinks: ['WGS84'] }),
       ].join(''),
     }));
-    const info = parseDoc(doc, 'https://example.com');
-    expect(info.layerName).toBe('first');
+    expect(() => parseDoc(doc, 'https://example.com'))
+      .toThrow('No layer links an EPSG:3857 / WebMercatorQuad tile matrix set');
   });
 });
 
@@ -143,19 +144,21 @@ describe('pickTileMatrixSet fallback', () => {
     expect(info.tileMatrixSet).toBe('GoogleMapsCompatible');
   });
 
-  it('falls back to an arbitrary compatible TMS when the layer has no matching link', () => {
-    // Layer links only to WGS84 (not in compatible set), so pickTileMatrixSet
-    // falls through and returns the first entry from the compatible set.
+  it('throws when the preferred layer links no compatible TMS', () => {
+    // The preferred layer is only served in WGS84. Substituting the document's
+    // WebMercator TMS would request tiles on a grid this layer never declares.
     const doc = xml(capabilities({
       tileMatrixSets: [
         tms('WebMercator', 'EPSG:3857'),
         tms('WGS84', 'EPSG:4326'),
       ].join(''),
-      layers: layer({ id: 'L1', tmsLinks: ['WGS84'] }),
+      layers: [
+        layer({ id: 'wgs-only', tmsLinks: ['WGS84'] }),
+        layer({ id: 'mercator', tmsLinks: ['WebMercator'] }),
+      ].join(''),
     }));
-    const info = parseDoc(doc, 'https://example.com');
-    // Falls through to compatibleTms.values().next().value → 'WebMercator'
-    expect(info.tileMatrixSet).toBe('WebMercator');
+    expect(() => parseDoc(doc, 'https://example.com', 'wgs-only'))
+      .toThrow('Layer "wgs-only" links no EPSG:3857 / WebMercatorQuad tile matrix set');
   });
 });
 
@@ -269,6 +272,32 @@ describe('availableLayers', () => {
     expect(info.availableLayers[0]!.tileUrl).toContain('{z}');
     expect(info.availableLayers[1]!.id).toBe('kvp-layer');
     expect(info.availableLayers[1]!.tileUrl).toContain('SERVICE=WMTS');
+  });
+
+  it('gives layers without a compatible TMS link no usable tileUrl', () => {
+    // '' is the "no usable URL" value pickWmtsTileUrl and the picker already
+    // skip; a URL on the document's WebMercator TMS would be the wrong grid.
+    const doc = xml(capabilities({
+      tileMatrixSets: [
+        tms('WebMercator', 'EPSG:3857'),
+        tms('WGS84', 'EPSG:4326'),
+      ].join(''),
+      layers: [
+        layer({ id: 'mercator', tmsLinks: ['WebMercator'] }),
+        layer({
+          id: 'wgs-rest',
+          tmsLinks: ['WGS84'],
+          resourceUrl: 'https://tiles.example/{TileMatrixSet}/{TileMatrix}/{TileRow}/{TileCol}.png',
+        }),
+        layer({ id: 'wgs-kvp', tmsLinks: ['WGS84'] }),
+      ].join(''),
+    }));
+    const info = parseDoc(doc, 'https://example.com');
+    expect(info.availableLayers.map(l => [l.id, l.tileUrl !== ''])).toEqual([
+      ['mercator', true],
+      ['wgs-rest', false],
+      ['wgs-kvp',  false],
+    ]);
   });
 });
 
