@@ -199,18 +199,18 @@ impl SignalKClient {
             let now = js_sys::Date::now();
             if now - *last_ais_emit.borrow() >= AIS_MAX_INTERVAL_MS {
                 // Max interval exceeded — emit now and cancel any pending debounce.
-                if let Some(handle) = debounce_handle.borrow_mut().take() {
-                    if let Some(scope) = worker_scope() {
-                        scope.clear_timeout_with_handle(handle);
-                    }
+                if let Some(handle) = debounce_handle.borrow_mut().take()
+                    && let Some(scope) = worker_scope()
+                {
+                    scope.clear_timeout_with_handle(handle);
                 }
                 emit_ais();
             } else {
                 // Reset the debounce timer.
-                if let Some(handle) = debounce_handle.borrow_mut().take() {
-                    if let Some(scope) = worker_scope() {
-                        scope.clear_timeout_with_handle(handle);
-                    }
+                if let Some(handle) = debounce_handle.borrow_mut().take()
+                    && let Some(scope) = worker_scope()
+                {
+                    scope.clear_timeout_with_handle(handle);
                 }
                 let Some(scope) = worker_scope() else {
                     // No timer API outside a Worker — emit undebounced.
