@@ -6,8 +6,7 @@
   import maplibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
   import type { HitTarget, Gesture, DragTarget, Interactable } from '$lib/gesture.ts';
   import type * as GeoJSON from 'geojson';
-  import { get } from 'svelte/store';
-  import { vesselState, vesselPosition } from '../stores/vessel';
+  import { vessel } from '../stores/vessel.svelte';
   import { settings, type SettingsTab } from '../stores/settings.svelte';
   import { fpsStore } from '../stores/fps.svelte';
   import type { FollowOffset } from '../stores/follow.svelte';
@@ -105,8 +104,7 @@
     _compassPressTimer = setTimeout(() => {
       _compassWasLongPress = true;
       _compassPressTimer = null;
-      const vs = get(vesselState);
-      rotateMode.toggleLock(vs.cog !== null, vs.heading !== null, route.nextPoint !== null);
+      rotateMode.toggleLock(vessel.cog !== null, vessel.heading !== null, route.nextPoint !== null);
       if ('vibrate' in navigator) navigator.vibrate(30);
     }, 500);
   }
@@ -121,16 +119,14 @@
   }
   function onCompassClick() {
     if (_compassWasLongPress) { _compassWasLongPress = false; return; }
-    const vs = get(vesselState);
-    rotateMode.toggle(vs.cog !== null, vs.heading !== null, route.nextPoint !== null);
+    rotateMode.toggle(vessel.cog !== null, vessel.heading !== null, route.nextPoint !== null);
   }
   // Keyboard path for the long-press action — without it, free-rotation lock
   // would be unreachable for keyboard users (a pointer-only gesture).
   function onCompassKeyDown(e: KeyboardEvent) {
     if (e.key !== 'Enter' || !e.shiftKey) return;
     e.preventDefault();
-    const vs = get(vesselState);
-    rotateMode.toggleLock(vs.cog !== null, vs.heading !== null, route.nextPoint !== null);
+    rotateMode.toggleLock(vessel.cog !== null, vessel.heading !== null, route.nextPoint !== null);
   }
 
   // t 0, l 0 -> center
@@ -155,7 +151,7 @@
       followMode.offset = null;
       return;
     }
-    const pos = get(vesselState).position;
+    const pos = vessel.position;
     if (pos) {
       const { left, top } = calcVesselOffset(pos);
       const inView = Math.abs(left) < 0.9 && Math.abs(top) < 0.9;
@@ -1258,7 +1254,9 @@
       // the vessel's new screen position, or drop follow entirely if the vessel left the
       // viewport (the deliberate "pan vessel off screen = unpin" exit gesture).
       if (wasPan && followMode.following) {
-        const pos = get(vesselState).position;
+        // Untracked: MapLibre fires moveend synchronously from camera calls, which may
+        // run inside an effect — that effect must not pick up a position dependency.
+        const pos = untrack(() => vessel.position);
         if (pos) {
           const { left, top } = calcVesselOffset(pos);
           if (Math.abs(left) < 0.9 && Math.abs(top) < 0.9) {
@@ -1867,7 +1865,7 @@
 
   function showOwnVesselPopup(lngLat: maplibregl.LngLat): void {
     if (!map) return;
-    const ownPos = get(vesselState).position;
+    const ownPos = vessel.position;
     const canWaypoint = auth.isLoggedIn && ownPos != null;
     const canRoute = ownPos != null;
     const popup = openPopup(new maplibregl.Popup({ closeButton: false, offset: 14, className: 'vessel-self-popup' })
@@ -2439,31 +2437,15 @@
     if (aisAgeTimer !== null) { clearInterval(aisAgeTimer); aisAgeTimer = null; }
   });
 
-  // Bounded-staleness refresh for the CPA effect below: own vessel state is read
-  // untracked there (to avoid 60 Hz reruns on heading ticks), so its only recompute
-  // triggers would otherwise be AIS batches and selection changes. Class-B targets
-  // legitimately report every 30 s–3 min; at 6 kn own ship moves ~550 m in 3 min, so
-  // the displayed CPA/TCPA would lag own-ship motion by the *remote* target's report
-  // interval. This tick re-runs the effect at most every CPA_OWN_REFRESH_MS while a
-  // target is selected, so it re-reads the current vesselState with staleness bounded
-  // by the interval instead. Timer runs only while a selection is live; the effect
-  // teardown clears it on deselection and component destroy.
-  const CPA_OWN_REFRESH_MS = 5000;
-  let cpaOwnTick = $state(0);
-  $effect(() => {
-    if (ais.selectedId === null) return; // no CPA display → no timer
-    const timer = setInterval(() => { cpaOwnTick++; }, CPA_OWN_REFRESH_MS);
-    return () => { clearInterval(timer); };
-  });
-
-  // Recompute Rust CPA and rebuild CPA visualization whenever selection or AIS data changes.
-  // Own vessel state is read untracked to avoid rerunning at 60 Hz on heading ticks;
-  // cpaOwnTick bounds the resulting staleness (see above).
+  // Recompute Rust CPA and rebuild CPA visualization whenever selection, AIS data or own
+  // position/COG/SOG change. Heading is not read, so compass ticks don't drive the recompute.
   $effect(() => {
     const selId  = ais.selectedId;
     const selIdx = ais.selectedIndex;
     const hotData = ais.hotData;
-    void cpaOwnTick; // register bounded-staleness own-state refresh (see above)
+    const ownPos = vessel.position;
+    const ownCog = vessel.cog;
+    const ownSog = vessel.sog;
 
     if (!selId || selIdx === null || !hotData || !map || !mapLoaded) {
       cpaLabelPopup?.remove();
@@ -2480,11 +2462,6 @@
     const tgtCog = hotData[b + AIS_F_COG]!;
     const tgtSog = hotData[b + AIS_F_SOG]!;
     const tgtRot = hotData[b + AIS_F_ROT]!;
-
-    const vs     = untrack(() => get(vesselState));
-    const ownPos = vs.position;
-    const ownCog = vs.cog;
-    const ownSog = vs.sog;
 
     if (!ownPos || ownCog === null || ownSog === null) {
       cpaLabelPopup?.remove();
@@ -2541,17 +2518,17 @@
   });
 
   // Appearance-only effect: paint/layout properties that change only when settings change.
-  // Deliberately does NOT read $vesselState so 60 Hz orientation updates don't trigger it.
+  // Own-vessel state is read untracked below so compass heading ticks don't trigger it.
   $effect(() => {
     const ap = settings.appearance;
     const ra = ap.route;
     if (!map || !mapLoaded) return;
     // vessel-gc/-cog/-hdg-line moved to deck.gl (see buildOwnVesselLayers()) since MapLibre
-    // layers can't render above the deck.gl overlay's own canvas. Reads $vesselState/zoom/
-    // projection untracked — only ap/ra are this effect's dependencies.
+    // layers can't render above the deck.gl overlay's own canvas. Reads vessel state/zoom/
+    // projection untracked — only ap/ra are this block's dependencies.
     {
       const { state, zoom, projection } = untrack(() => ({
-        state: $vesselState, zoom: mapZoom, projection: mapView.projection,
+        state: vessel.snapshot(), zoom: mapZoom, projection: mapView.projection,
       }));
       ownVesselLayerGroup = buildOwnVesselLayers(ap, state, zoom, projection);
     }
@@ -2587,21 +2564,21 @@
     map.setPaintProperty('all-routes-line', 'line-dasharray', dashArray(ra.allRoutes.style, ra.allRoutes.width) ?? undefined);
     // route-full/-leg/-bearing moved to deck.gl (see buildCourseLayers()) since MapLibre
     // layers can't render above the deck.gl overlay's own canvas.
-    courseLayerGroup = buildCourseLayers(route.geometry, route.nextPoint, route.previousPoint, $vesselPosition, ra);
+    courseLayerGroup = buildCourseLayers(route.geometry, route.nextPoint, route.previousPoint, vessel.position, ra);
     flushLayers();
   });
 
-  // Position effect: own-vessel deck.gl layers + track sources updated whenever vessel
-  // state or zoom changes. $vesselState changes at 60 Hz (orientation events); the deck.gl
-  // rebuild below is synchronous per tick (cheap — same cost as the icon rebuild already was).
+  // Position effect: own-vessel deck.gl layers rebuilt whenever a vessel field they read
+  // (position, COG, SOG, heading), zoom, projection or appearance changes. Heading changes
+  // at up to display rate (compass); the deck.gl rebuild below is synchronous per tick
+  // (cheap — same cost as the icon rebuild already was).
   $effect(() => {
     const ap    = settings.appearance;
-    const state = $vesselState;
     const zoom  = mapZoom;
     const projection = mapView.projection;
-    if (!map || !mapLoaded || !state.position) return;
+    if (!map || !mapLoaded || !vessel.position) return;
 
-    ownVesselLayerGroup = buildOwnVesselLayers(ap, state, zoom, projection);
+    ownVesselLayerGroup = buildOwnVesselLayers(ap, vessel, zoom, projection);
     flushLayers();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access
     if ((window as any).__mapDiag) (window as any).__mapDiag.ownVessel++;
@@ -2760,13 +2737,12 @@
 
 
   // Route/course rendering — updates when route geometry, course points, own position,
-  // or route appearance settings change.
-  // Reads $vesselPosition (not $vesselState) so compass ticks at 60 Hz don't trigger this:
-  // heading updates leave the position reference unchanged, so the derived store stays quiet.
+  // or route appearance settings change. Reads only vessel.position, so compass heading
+  // ticks don't trigger it.
   $effect(() => {
     const nxtPt   = route.nextPoint;
     const prevPt  = route.previousPoint;
-    const ownPos  = $vesselPosition;
+    const ownPos  = vessel.position;
     void settings.appearance.route;
     if (!map || !mapLoaded) return;
 
@@ -2848,8 +2824,8 @@
   // localStorage on a fresh load isn't collapsed before real data has even arrived —
   // null cog/heading/route at mount means "not received yet", not "lost".
   $effect(() => {
-    const hasCog     = $vesselState.cog     !== null;
-    const hasHeading = $vesselState.heading !== null;
+    const hasCog     = vessel.cog     !== null;
+    const hasHeading = vessel.heading !== null;
     const hasCourse  = route.nextPoint      !== null;
     if (hasCog || hasHeading || hasCourse) _receivedVesselData = true;
     if (!_receivedVesselData) return;
@@ -2929,7 +2905,7 @@
         }
         const newBearing = lockAxis !== 'pitch'   ? map.getBearing() + dx * 0.4                                                   : map.getBearing();
         const newPitch   = lockAxis !== 'bearing' ? Math.max(0, Math.min(map.getMaxPitch(), map.getPitch() - dy * 0.5)) : map.getPitch();
-        const pos = get(vesselState).position;
+        const pos = vessel.position;
         const around: [number, number] | undefined = pos
           ? [pos.longitude, pos.latitude]
           : undefined;
@@ -2938,7 +2914,7 @@
         // Non-manual: pitch only, bearing stays locked.
         // When following, anchor around the vessel so it stays at its pinned pixel.
         const newPitch = Math.max(0, Math.min(map.getMaxPitch(), map.getPitch() - dy * 0.5));
-        const pos = isFollowing ? get(vesselState).position : null;
+        const pos = isFollowing ? vessel.position : null;
         if (pos) {
           map.easeTo({ pitch: newPitch, around: [pos.longitude, pos.latitude], duration: 0 });
         } else {
@@ -3056,7 +3032,7 @@
         const newZoom    = map.getZoom()    + (tpLock !== 'pitch'        ? zoomDelta                  : 0);
         const newBearing = map.getBearing() + (tpLock !== 'pitch'        ? dAngle                     : 0);
         const newPitch   = Math.max(0, Math.min(map.getMaxPitch(), map.getPitch() - (tpLock !== 'zoom-rotate' ? pitchDelta * 0.5 : 0)));
-        const pos        = get(vesselState).position;
+        const pos        = vessel.position;
 
         // Use center+offset instead of `around` to keep the vessel at its pinned
         // screen position. `around` triggers _calcMatrices → calcMatrices → _calcMatrices
@@ -3149,7 +3125,7 @@
   // change) — same camera move as clicking "center on vessel" once, but never engages
   // follow mode itself ("not lock"), so the user can immediately pan away again.
   $effect(() => {
-    const pos = $vesselPosition;
+    const pos = vessel.position;
     if (!map || !mapLoaded || !pos) return;
     if (_didAutoFlyToFirstFix || _userHasInteracted || _hadSavedViewOnLoad || followMode.following) return;
     _didAutoFlyToFirstFix = true;
@@ -3166,19 +3142,21 @@
   //     phase, keeping the map lag-free. When the compass stabilises the final frame plays out fully and
   //     the ease-out gives a smooth deceleration instead of an abrupt stop.
   // Other follow modes: easeTo/flyTo only when position or mode changes (~1Hz GPS rate).
+  //   COG/heading are read only in their own rotation mode, and vessel.set() keeps the
+  //   position reference on equal coordinates, so heading updates (device compass or
+  //   Signal K) don't re-run this effect in COG or north-up mode.
   // Non-follow: easeTo for bearing — short animation, touch-safe.
   $effect(() => {
     if (!map) return;
-    const state = $vesselState;
-    const pos = state.position;
+    const pos = vessel.position;
     const rm = rotateMode.mode;
     const off = followMode.offset; // null = not following (or the pin was just dropped)
 
     // Compute target bearing.
     let bearing: number | undefined;
     if (rm === 'north') bearing = 0;
-    else if (rm === 'cog'     && state.cog     !== null) bearing = (state.cog     * 180 / Math.PI);
-    else if (rm === 'heading' && state.heading  !== null) bearing = (state.heading * 180 / Math.PI);
+    else if (rm === 'cog'     && vessel.cog     !== null) bearing = (vessel.cog     * 180 / Math.PI);
+    else if (rm === 'heading' && vessel.heading !== null) bearing = (vessel.heading * 180 / Math.PI);
     else if (rm === 'bearing' && pos !== null && route.nextPoint !== null) {
       bearing = gcBearingDeg(pos.longitude, pos.latitude, route.nextPoint.longitude, route.nextPoint.latitude);
     }
@@ -3271,7 +3249,7 @@
         // Use zoomTarget as base so rapid scroll accumulates correctly even while
         // a previous easeTo animation is still in flight.
         zoomTarget = (zoomTarget ?? map.getZoom()) + Math.log2(scale);
-        const pos = get(vesselState).position;
+        const pos = vessel.position;
         const off = followMode.offset;
         if (!off) return; // follow dropped before this frame ran
         if (!pos) {
@@ -3302,7 +3280,9 @@
       if (scrollTimer !== null) return; // our own scroll animation is still active
       if (reanchoring) return;
       if (_isInteracting) return;       // user is mid-gesture (pinch-zoom); don't fight it
-      const pos = get(vesselState).position;
+      // Untracked: zoomend/resize can fire synchronously from a camera call made inside an
+      // effect — that effect must not pick up a position dependency.
+      const pos = untrack(() => vessel.position);
       if (!pos || !map) return;
       const off = followMode.offset;
       if (!off) return; // follow was dropped before this queued event ran
@@ -3375,10 +3355,10 @@
       class:nav-fab--blocked={followBlockedByInteraction}
       title={followBlockedByInteraction
         ? 'Following, but paused — a touch/drag guard is active'
-        : followMode.following && !$vesselState.position
+        : followMode.following && !vessel.position
           ? 'Following — waiting for a vessel position fix'
           : followMode.following ? 'Stop following vessel' : 'Follow vessel'}
-      disabled={!followMode.following && !$vesselState.position}
+      disabled={!followMode.following && !vessel.position}
       onclick={flyToVessel}
     ><FaIcon icon={faLocationCrosshairs} /></button>
 
