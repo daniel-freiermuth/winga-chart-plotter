@@ -181,8 +181,9 @@ describe('buildInfo REST vs KVP', () => {
     );
   });
 
-  it('REST: missing template attribute yields empty tileUrlTemplate', () => {
-    // Manually craft a ResourceURL element without a template attribute
+  it('REST: ResourceURL without a template attribute falls through to KVP', () => {
+    // A ResourceURL lacking `template` is not a usable REST endpoint; it must
+    // not yield an empty tile URL that callers would record as a success.
     const raw = `<?xml version="1.0"?>
 <Capabilities><Contents>
   ${TMS}
@@ -194,7 +195,23 @@ describe('buildInfo REST vs KVP', () => {
   </Layer>
 </Contents></Capabilities>`;
     const info = parseDoc(xml(raw), 'https://example.com');
-    expect(info.tileUrlTemplate).toBe('');
+    const kvp =
+      'https://example.com?SERVICE=WMTS&VERSION=1.0.0&REQUEST=GetTile' +
+      '&LAYER=notemplate&TILEMATRIXSET=WebMercator' +
+      '&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}&FORMAT=image%2Fpng';
+    expect(info.tileUrlTemplate).toBe(kvp);
+    expect(info.availableLayers[0]?.tileUrl).toBe(kvp);
+  });
+
+  it('REST: ResourceURL with an empty template attribute falls through to KVP', () => {
+    const doc = xml(capabilities({
+      tileMatrixSets: TMS,
+      layers: layer({ id: 'blank', tmsLinks: ['WebMercator'], resourceUrl: '' }),
+    }));
+    const info = parseDoc(doc, 'https://example.com');
+    expect(info.tileUrlTemplate).toContain('REQUEST=GetTile');
+    expect(info.tileUrlTemplate).toContain('LAYER=blank');
+    expect(info.availableLayers[0]?.tileUrl).toBe(info.tileUrlTemplate);
   });
 
   it('KVP: builds a query-string URL when no ResourceURL exists', () => {
