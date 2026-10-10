@@ -8,6 +8,7 @@ All notable changes to this project are documented in this file.
 
 - A Signal K `navigation.datetime` value with a non-ASCII character in its fractional seconds could panic the WASM core (byte slice inside a multi-byte character); such timestamps are now rejected as unparseable.
 - After any reconnect (server dropped the stream, returning to the tab while offline, or switching servers), AIS targets stopped arriving for the rest of the session: the subscribe messages were written to the old, closed WebSocket instead of the new one. They are now sent on the socket that just opened.
+- Switching the active route, clearing the course, or enabling device geolocation while the previous active route's geometry was still loading could let that stale response land late and draw the old route as the active one; superseded responses are now discarded. A route served as a FeatureCollection with a null-geometry member no longer fails to load.
 
 ## [0.22.0] - 2026-08-08
 
