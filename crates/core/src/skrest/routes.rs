@@ -104,10 +104,8 @@ mod wasm {
     #[wasm_bindgen(js_name = fetchAllRoutes)]
     pub async fn fetch_all_routes(server_base: String) -> Result<JsValue, JsValue> {
         let url = format!("{server_base}/signalk/v2/api/resources/routes");
-        let resp = http::fetch("GET", &url, &JsValue::UNDEFINED, None, None).await?;
-        if !resp.ok() {
-            return Err(http::status_error("Routes API error", &resp));
-        }
+        let resp =
+            http::fetch_ok("GET", &url, &JsValue::UNDEFINED, None, "Routes API error").await?;
         let routes: SkRouteRecord = serde_json::from_str(&resp.text)
             .map_err(|e| JsValue::from_str(&format!("Routes API parse error: {e}")))?;
         crate::skrest::to_js_object(&routes)
@@ -124,10 +122,14 @@ mod wasm {
         let waypoints: Vec<LonLat> = serde_wasm_bindgen::from_value(waypoints)?;
         let url = format!("{server_base}/signalk/v2/api/resources/routes");
         let body = build_route_body(&name, &waypoints).to_string();
-        let resp = http::fetch("POST", &url, &auth_headers, Some(&body), None).await?;
-        if !resp.ok() {
-            return Err(http::status_error("Save route failed", &resp));
-        }
+        let resp = http::fetch_ok(
+            "POST",
+            &url,
+            &auth_headers,
+            Some(&body),
+            "Save route failed",
+        )
+        .await?;
         Ok(extract_created_id(&resp.text))
     }
 
@@ -143,10 +145,14 @@ mod wasm {
         let waypoints: Vec<LonLat> = serde_wasm_bindgen::from_value(waypoints)?;
         let url = format!("{server_base}/signalk/v2/api/resources/routes/{uuid}");
         let body = build_route_body(&name, &waypoints).to_string();
-        let resp = http::fetch("PUT", &url, &auth_headers, Some(&body), None).await?;
-        if !resp.ok() {
-            return Err(http::status_error("Update route failed", &resp));
-        }
+        http::fetch_ok(
+            "PUT",
+            &url,
+            &auth_headers,
+            Some(&body),
+            "Update route failed",
+        )
+        .await?;
         Ok(())
     }
 
@@ -158,10 +164,7 @@ mod wasm {
         auth_headers: JsValue,
     ) -> Result<(), JsValue> {
         let url = format!("{server_base}/signalk/v2/api/resources/routes/{uuid}");
-        let resp = http::fetch("DELETE", &url, &auth_headers, None, None).await?;
-        if !resp.ok() {
-            return Err(http::status_error("Delete route failed", &resp));
-        }
+        http::fetch_ok("DELETE", &url, &auth_headers, None, "Delete route failed").await?;
         Ok(())
     }
 }
