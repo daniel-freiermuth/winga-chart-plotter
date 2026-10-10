@@ -8,6 +8,7 @@ All notable changes to this project are documented in this file.
 
 - A Signal K `navigation.datetime` value with a non-ASCII character in its fractional seconds could panic the WASM core (byte slice inside a multi-byte character); such timestamps are now rejected as unparseable.
 - After any reconnect (server dropped the stream, returning to the tab while offline, or switching servers), AIS targets stopped arriving for the rest of the session: the subscribe messages were written to the old, closed WebSocket instead of the new one. They are now sent on the socket that just opened.
+- Routes followed in reverse were handled as if followed forward: the next-waypoint highlight, "Set as next waypoint", and the anchor used when editing the active route all pointed at the mirrored waypoint, and saving an edit to the active route switched navigation back to forward. Signal K's direction-relative point index is now mapped onto the route geometry, and re-activation keeps the travel direction.
 
 ## [0.22.0] - 2026-08-08
 

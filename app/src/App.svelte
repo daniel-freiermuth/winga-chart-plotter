@@ -6,6 +6,7 @@
     faGear, faRuler,
   } from '@fortawesome/free-solid-svg-icons';
   import { routePlanner } from './stores/routePlanner.svelte';
+  import { reanchorPointIndex } from './stores/routeLogic';
   import { waypoints } from './stores/waypoints.svelte';
   import { saveRoute, updateRoute, raiseMob, activateRoute, setActiveRoutePointIndex } from './lib/wasmRest';
   import { gcDistanceNm, unionViewBounds } from './lib/wasmGeo';
@@ -30,6 +31,7 @@
     const editingUuid           = routePlanner.editingRouteUuid;
     const wasEditingActiveRoute = editingUuid !== null && editingUuid === route.activeUuid;
     const anchorPoint           = wasEditingActiveRoute ? routePlanner.anchorPoint : null;
+    const reverse               = wasEditingActiveRoute && route.reverse;
     try {
       if (editingUuid) {
         await updateRoute(settings.signalkHttpUrl, editingUuid, routePlanner.name.trim(), routePlanner.waypoints, auth.authHeaders);
@@ -42,18 +44,10 @@
       await routes.load(settings.signalkHttpUrl);
       // Re-anchor navigation to the closest waypoint in the updated route.
       if (wasEditingActiveRoute && editingUuid) {
-        await activateRoute(settings.signalkHttpUrl, editingUuid, auth.authHeaders);
-        if (anchorPoint && newWaypoints.length > 0) {
-          let closestIdx  = 0;
-          let closestDist = Infinity;
-          for (let i = 0; i < newWaypoints.length; i++) {
-            const wpt = newWaypoints[i]!;
-            const d   = gcDistanceNm(anchorPoint.lon, anchorPoint.lat, wpt.lon, wpt.lat);
-            if (d < closestDist) { closestDist = d; closestIdx = i; }
-          }
-          if (closestIdx > 0) {
-            await setActiveRoutePointIndex(settings.signalkHttpUrl, closestIdx, auth.authHeaders);
-          }
+        await activateRoute(settings.signalkHttpUrl, editingUuid, reverse, auth.authHeaders);
+        const pointIndex = anchorPoint ? reanchorPointIndex(newWaypoints, anchorPoint, reverse, gcDistanceNm) : null;
+        if (pointIndex !== null) {
+          await setActiveRoutePointIndex(settings.signalkHttpUrl, pointIndex, auth.authHeaders);
         }
       }
     } catch (e) {
