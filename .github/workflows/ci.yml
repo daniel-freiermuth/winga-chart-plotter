@@ -6,6 +6,7 @@
 # Jobs run in parallel for fast feedback:
 #   lint — cargo fmt, cargo clippy, svelte-check, eslint
 #   test — cargo test, vitest
+#   msrv — cargo check/test on the declared rust-version (crates/core/Cargo.toml)
 #
 # Concurrency: in-progress runs for the same branch/PR are cancelled when a
 # newer push arrives, so stale check results never block a PR.
@@ -144,3 +145,43 @@ jobs:
 
       - name: vitest
         run: cd app && pnpm test
+
+  # ---------------------------------------------------------------------------
+  # msrv — build on the minimum supported Rust version
+  # lint/test track floating stable, which accepts APIs stabilised after the
+  # declared floor and silently invalidates it. The version is read from
+  # `rust-version` in crates/core/Cargo.toml so a bump there is the only edit.
+  # The wasm32 check is required: cfg(target_arch = "wasm32") modules only
+  # compile for that target.
+  # ---------------------------------------------------------------------------
+  msrv:
+    name: MSRV
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read rust-version from crates/core/Cargo.toml
+        id: msrv
+        run: |
+          version="$(sed -n 's/^rust-version = "\(.*\)"$/\1/p' crates/core/Cargo.toml)"
+          test -n "$version" || { echo "rust-version not found in crates/core/Cargo.toml" >&2; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Install Rust ${{ steps.msrv.outputs.version }}
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.msrv.outputs.version }}
+          targets: wasm32-unknown-unknown
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: cargo check (host, all targets)
+        run: cargo +${{ steps.msrv.outputs.version }} check --locked --all-targets
+
+      - name: cargo check (wasm32)
+        run: cargo +${{ steps.msrv.outputs.version }} check --locked -p signalk-chart-core --lib --target wasm32-unknown-unknown
+
+      - name: cargo test
+        run: cargo +${{ steps.msrv.outputs.version }} test --locked
