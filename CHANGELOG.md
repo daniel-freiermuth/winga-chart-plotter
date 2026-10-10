@@ -8,6 +8,7 @@ All notable changes to this project are documented in this file.
 
 - A Signal K `navigation.datetime` value with a non-ASCII character in its fractional seconds could panic the WASM core (byte slice inside a multi-byte character); such timestamps are now rejected as unparseable.
 - After any reconnect (server dropped the stream, returning to the tab while offline, or switching servers), AIS targets stopped arriving for the rest of the session: the subscribe messages were written to the old, closed WebSocket instead of the new one. They are now sent on the socket that just opened.
+- A WMTS chart whose URL is a pasted GetCapabilities link (`…?SERVICE=WMTS&REQUEST=GetCapabilities`) and whose service has no REST tile template showed no tiles on GeoServer/MapProxy: every tile request still carried `REQUEST=GetCapabilities` ahead of `REQUEST=GetTile`, so the server returned the capabilities XML. The `SERVICE`/`REQUEST`/`VERSION` params are now stripped before the GetTile URL is built; other query params (e.g. API keys) are kept.
 
 ## [0.22.0] - 2026-08-08
 

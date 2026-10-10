@@ -241,6 +241,32 @@ describe('baseUrl query-string separator', () => {
     const info = parseDoc(doc, 'https://example.com/wms?token=abc');
     expect(info.tileUrlTemplate).toMatch(/^https:\/\/example\.com\/wms\?token=abc&SERVICE=WMTS/);
   });
+
+  it('drops GetCapabilities SERVICE/REQUEST/VERSION params from a pasted capabilities URL', () => {
+    const doc = xml(capabilities({
+      tileMatrixSets: TMS,
+      layers: layer({ id: 'L', tmsLinks: ['WebMercator'] }),
+    }));
+    const info = parseDoc(
+      doc,
+      'https://example.com/wmts?service=WMTS&token=abc&REQUEST=GetCapabilities&Version=1.0.0',
+    );
+    const expected =
+      'https://example.com/wmts?token=abc&SERVICE=WMTS&VERSION=1.0.0&REQUEST=GetTile' +
+      '&LAYER=L&TILEMATRIXSET=WebMercator&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}&FORMAT=image%2Fpng';
+    expect(info.tileUrlTemplate).toBe(expected);
+    expect(info.availableLayers[0]?.tileUrl).toBe(expected);
+  });
+
+  it('uses ? when the pasted capabilities URL has no other params', () => {
+    const doc = xml(capabilities({
+      tileMatrixSets: TMS,
+      layers: layer({ id: 'L', tmsLinks: ['WebMercator'] }),
+    }));
+    const info = parseDoc(doc, 'https://example.com/wmts?SERVICE=WMTS&REQUEST=GetCapabilities');
+    expect(info.tileUrlTemplate).toMatch(/^https:\/\/example\.com\/wmts\?SERVICE=WMTS&VERSION=1\.0\.0&REQUEST=GetTile&/);
+    expect(info.tileUrlTemplate).not.toContain('GetCapabilities');
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -52,18 +52,22 @@ export function parseDoc(doc: Document, baseUrl: string, preferLayer?: string): 
   const layers = Array.from(doc.querySelectorAll('Contents > Layer'));
   if (layers.length === 0) throw new Error('No layers in capabilities document');
 
-  const sep = baseUrl.includes('?') ? '&' : '?';
+  // A pasted GetCapabilities URL carries SERVICE/REQUEST/VERSION; appending
+  // REQUEST=GetTile after them makes first-value-wins servers (GeoServer,
+  // MapProxy) answer every tile with capabilities XML.
+  const kvpBase = stripOperationParams(baseUrl);
+  const sep = kvpBase.includes('?') ? '&' : '?';
 
   // Build a tile URL for each layer so the picker can show per-layer previews
   // without re-fetching capabilities (works for both REST and KVP WMTS).
   const availableLayers = layers.map(l => ({
     id:      qs(l, 'Identifier') ?? '',
     title:   qs(l, 'Title') ?? qs(l, 'Identifier') ?? '',
-    tileUrl: layerTileUrl(l, baseUrl, sep, compatibleTms),
+    tileUrl: layerTileUrl(l, kvpBase, sep, compatibleTms),
   }));
 
   const targetLayer = pickLayer(layers, compatibleTms, preferLayer);
-  return buildInfo(baseUrl, sep, targetLayer, compatibleTms, availableLayers);
+  return buildInfo(kvpBase, sep, targetLayer, compatibleTms, availableLayers);
 }
 
 
@@ -121,6 +125,21 @@ function findCompatibleTileMatrixSets(doc: Document): Set<string> {
     }
   }
   return result;
+}
+
+/** KVP keys that identify the WMTS operation; matched case-insensitively per OGC KVP rules. */
+const OPERATION_PARAMS: Record<string, true> = { SERVICE: true, REQUEST: true, VERSION: true };
+
+/** Remove SERVICE/REQUEST/VERSION from the query string, keeping all other params (e.g. API keys). */
+function stripOperationParams(baseUrl: string): string {
+  const q = baseUrl.indexOf('?');
+  if (q < 0) return baseUrl;
+  const kept = baseUrl
+    .slice(q + 1)
+    .split('&')
+    .filter(p => p !== '' && OPERATION_PARAMS[(p.split('=', 1)[0] ?? '').toUpperCase()] !== true);
+  const path = baseUrl.slice(0, q);
+  return kept.length > 0 ? `${path}?${kept.join('&')}` : path;
 }
 
 function pickLayer(
