@@ -34,6 +34,7 @@
   import { SvelteMap, SvelteSet } from 'svelte/reactivity';
   import { buildTrackGradient, processTrack, processRouteCoords } from '../lib/trackProcessing';
   import { hexToRgba, dashArray } from '../lib/mapStyles';
+  import { escapeHtml } from '../lib/escapeHtml';
   import { currentSnapTargets } from '../lib/rulerSnap';
   import FaIcon from '../lib/FaIcon.svelte';
   import { faLocationCrosshairs, faLayerGroup } from '@fortawesome/free-solid-svg-icons';
@@ -1582,7 +1583,7 @@
 
   function buildAisPopupHtml(t: AisTarget): string {
     const row = (label: string, value: string | number | null, unit = '') =>
-      value !== null ? `<tr><td>${label}</td><td><b>${String(value)}${unit}</b></td></tr>` : '';
+      value !== null ? `<tr><td>${label}</td><td><b>${escapeHtml(String(value))}${unit}</b></td></tr>` : '';
 
     const rotDpm = t.rot !== undefined ? (t.rot * 180 / Math.PI) * 60 : null;
     const rotStr = rotDpm !== null
@@ -1591,8 +1592,8 @@
 
     const lookupLinks = t.mmsi
       ? `<div class="ais-links">
-          <a href="https://www.vesselfinder.com/vessels/details/${t.mmsi}" target="_blank" rel="noopener">VesselFinder</a>
-          <a href="https://www.myshiptracking.com/?mmsi=${t.mmsi}" target="_blank" rel="noopener">MyShipTracking</a>
+          <a href="https://www.vesselfinder.com/vessels/details/${escapeHtml(t.mmsi)}" target="_blank" rel="noopener">VesselFinder</a>
+          <a href="https://www.myshiptracking.com/?mmsi=${escapeHtml(t.mmsi)}" target="_blank" rel="noopener">MyShipTracking</a>
         </div>`
       : '';
 
@@ -1633,7 +1634,7 @@
 
     return `
       <div class="ais-popup">
-        <div class="ais-popup-title">${t.name ?? t.mmsi ?? 'Unknown vessel'}</div>
+        <div class="ais-popup-title">${escapeHtml(t.name ?? t.mmsi ?? 'Unknown vessel')}</div>
         <table>
           ${identRows}
           ${navRows ? `<tr><td colspan="2" class="ais-section">Navigation</td></tr>${navRows}` : ''}
@@ -1778,7 +1779,7 @@
     };
     const items = targets.map((t, pos) => {
       const type = typeLabel[t.kind] ?? t.kind;
-      const name = t.label ? ` \u2014 ${t.label}` : '';
+      const name = t.label ? ` \u2014 ${escapeHtml(t.label)}` : '';
       return `<li class="map-disambig-item" data-entry="${String(pos)}">${type}${name}</li>`;
     }).join('');
     const html = `
@@ -1913,7 +1914,7 @@
       .setLngLat(lngLat)
       .setHTML(`
         <div class="ais-popup">
-          ${name || pointLabel ? `<div class="ais-popup-title">${name ?? ''}${name && pointLabel ? ' — ' : ''}${pointLabel ?? ''}</div>` : ''}
+          ${name || pointLabel ? `<div class="ais-popup-title">${escapeHtml(name ?? '')}${name && pointLabel ? ' — ' : ''}${pointLabel ?? ''}</div>` : ''}
           <div class="ais-links" style="margin-top:0">
             ${idx !== null ? `<button class="popup-settings-btn set-next-wpt-btn" data-idx="${String(idx)}"
               ${canSetNext ? '' : isCurrentNext ? 'disabled title="Already the next waypoint"' : 'disabled title="Login required"'}>Set as next waypoint</button>` : ''}
@@ -1980,15 +1981,15 @@
       .setLngLat(lngLat)
       .setHTML(`
         <div class="ais-popup">
-          ${name ? `<div class="ais-popup-title">${name}</div>` : ''}
+          ${name ? `<div class="ais-popup-title">${escapeHtml(name)}</div>` : ''}
           ${fullRoute ? `<div class="ais-popup-meta">${distanceNm < 10 ? distanceNm.toFixed(2) : distanceNm.toFixed(1)} NM</div>` : ''}
           <div class="ais-links" style="margin-top:0">
             <button class="popup-settings-btn activate-route-btn"
-              ${canAct ? `data-uuid="${uuid}"` : 'disabled title="Login required to activate route"'}>Activate route</button>
+              ${canAct ? `data-uuid="${escapeHtml(uuid)}"` : 'disabled title="Login required to activate route"'}>Activate route</button>
             <button class="popup-settings-btn edit-route-btn"
-              ${canAct ? `data-uuid="${uuid}"` : 'disabled title="Login required to edit route"'}>Edit route</button>
+              ${canAct ? `data-uuid="${escapeHtml(uuid)}"` : 'disabled title="Login required to edit route"'}>Edit route</button>
             <button class="popup-settings-btn delete-route-btn"
-              ${canAct ? `data-uuid="${uuid}" data-name="${name}"` : 'disabled title="Login required to delete route"'}>Delete route</button>
+              ${canAct ? `data-uuid="${escapeHtml(uuid)}" data-name="${escapeHtml(name)}"` : 'disabled title="Login required to delete route"'}>Delete route</button>
             <button class="popup-settings-btn" data-settings="routes">Route style</button>
           </div>
         </div>`)
@@ -2041,7 +2042,7 @@
       .setLngLat([lon, lat])
       .setHTML(`
         <div class="ais-popup">
-          <div class="ais-popup-title">${name || 'Waypoint'}</div>
+          <div class="ais-popup-title">${escapeHtml(name || 'Waypoint')}</div>
           <div class="ais-popup-coords">${formatDm(lat, lon)}</div>
           <div class="ais-links" style="margin-top:4px">
             <button class="popup-settings-btn navigate-here-btn"
@@ -2051,11 +2052,11 @@
               ${routePlanner.active ? 'Add to route' : 'Start route from here'}
             </button>
             <button class="popup-settings-btn rename-waypoint-btn"
-              ${canAct ? `data-uuid="${uuid}" data-name="${name}" data-lat="${String(lat)}" data-lon="${String(lon)}"` : 'disabled title="Login required"'}>Rename</button>
+              ${canAct ? `data-uuid="${escapeHtml(uuid)}" data-name="${escapeHtml(name)}" data-lat="${String(lat)}" data-lon="${String(lon)}"` : 'disabled title="Login required"'}>Rename</button>
             <button class="popup-settings-btn move-waypoint-btn"
-              ${canAct ? `data-uuid="${uuid}" data-name="${name}"` : 'disabled title="Login required"'}>Move</button>
+              ${canAct ? `data-uuid="${escapeHtml(uuid)}" data-name="${escapeHtml(name)}"` : 'disabled title="Login required"'}>Move</button>
             <button class="popup-settings-btn delete-waypoint-btn"
-              ${canAct ? `data-uuid="${uuid}" data-name="${name}"` : 'disabled title="Login required"'}>Delete</button>
+              ${canAct ? `data-uuid="${escapeHtml(uuid)}" data-name="${escapeHtml(name)}"` : 'disabled title="Login required"'}>Delete</button>
           </div>
         </div>`)
       ).addTo(map);
