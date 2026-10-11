@@ -8,6 +8,7 @@ All notable changes to this project are documented in this file.
 
 - A Signal K `navigation.datetime` value with a non-ASCII character in its fractional seconds could panic the WASM core (byte slice inside a multi-byte character); such timestamps are now rejected as unparseable.
 - After any reconnect (server dropped the stream, returning to the tab while offline, or switching servers), AIS targets stopped arriving for the rest of the session: the subscribe messages were written to the old, closed WebSocket instead of the new one. They are now sent on the socket that just opened.
+- Route names, waypoint names and AIS vessel strings (name, MMSI, callsigns, skipper, type, status, flag, port) were inserted into map popups as raw HTML, so a route or waypoint named e.g. `<img src=x onerror=…>` ran script when tapped — script that could read the stored Signal K token. They are now escaped and always shown as plain text.
 
 ## [0.22.0] - 2026-08-08
 
