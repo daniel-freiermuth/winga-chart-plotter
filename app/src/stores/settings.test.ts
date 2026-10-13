@@ -179,13 +179,9 @@ describe('load() — resourcePollIntervalSeconds validation', () => {
 // ---------------------------------------------------------------------------
 
 describe('load() — deep partial appearance merge', () => {
-  it('merges ais.track.color when both ais and route sub-objects exist', async () => {
-    // Both `ais` and `route` must be present (even if empty) because load()
-    // accesses p.appearance?.route.bearing (etc.) without a second `?.` —
-    // if route is absent, the access throws TypeError caught by the outer
-    // try/catch, discarding ALL settings.
+  it('merges ais.track.color when route sub-object is absent', async () => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({
-      appearance: { ais: { track: { color: '#ff0000' } }, route: {} },
+      appearance: { ais: { track: { color: '#ff0000' } } },
     }));
     const s = await importSettings();
     const { ais } = s.appearance;
@@ -203,9 +199,9 @@ describe('load() — deep partial appearance merge', () => {
     expect(ais.cog.width).toBe(1.5);
   });
 
-  it('merges route.bearing.color when both ais and route sub-objects exist', async () => {
+  it('merges route.bearing.color when ais sub-object is absent', async () => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({
-      appearance: { ais: {}, route: { bearing: { color: '#000000' } } },
+      appearance: { route: { bearing: { color: '#000000' } } },
     }));
     const s = await importSettings();
     const { route } = s.appearance;
@@ -216,28 +212,29 @@ describe('load() — deep partial appearance merge', () => {
     expect(route.highlightColor).toBe('#ef4444');  // default
   });
 
-  it('appearance with route absent — TypeError silently falls back to all defaults', async () => {
-    // p.appearance?.route.bearing throws TypeError when appearance is defined
-    // but route is undefined (the ?. only guards appearance, not route).
-    // The outer try/catch catches it and returns structuredClone(DEFAULTS).
+  it('appearance without ais/route (pre-ais storage) keeps every other persisted setting', async () => {
+    // Storage written before appearance.ais / appearance.route existed.
     localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      signalkProtocol: 'wss',
+      signalkHost: 'boat.local',
+      signalkPort: 3443,
+      paneLayout: 'split',
+      targetFps: 30,
       appearance: { vesselColor: '#000000' },
     }));
     const s = await importSettings();
 
-    // ALL settings fall back to defaults, including the vesselColor we set
-    expect(s.appearance.vesselColor).toBe('#ef4444');
+    expect(s.protocol).toBe('wss');
+    expect(s.host).toBe('boat.local');
+    expect(s.port).toBe(3443);
+    expect(s.paneLayout).toBe('split');
+    expect(s.targetFps).toBe(30);
+    expect(s.appearance.vesselColor).toBe('#000000');
+    // Missing sub-objects are filled from defaults.
+    expect(s.appearance.ais.cog.color).toBe('#374151');
+    expect(s.appearance.ais.track.color).toBe('#f97316');
+    expect(s.appearance.route.bearing.color).toBe('#ff6d00');
     expect(s.appearance.route.highlightColor).toBe('#ef4444');
-  });
-
-  it('appearance with ais absent — TypeError silently falls back to all defaults', async () => {
-    // Same bug as above: p.appearance?.ais.cog throws when ais is undefined.
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({
-      appearance: { route: { bearing: { color: '#000000' } } },
-    }));
-    const s = await importSettings();
-
-    expect(s.appearance.route.bearing.color).toBe('#ff6d00'); // default, not '#000000'
   });
 });
 
