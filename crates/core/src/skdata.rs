@@ -1421,6 +1421,64 @@ mod tests {
     }
 
     #[test]
+    fn parse_iso8601_out_of_range_components_rejected() {
+        // Out-of-range fields must not silently roll over into another instant.
+        for s in [
+            "2024-00-15T00:00:00Z",
+            "2024-13-01T00:00:00Z",
+            "2024-01-00T00:00:00Z",
+            "2024-01-32T00:00:00Z",
+            "2023-02-29T00:00:00Z",
+            "2024-04-31T00:00:00Z",
+            "2024-01-01T24:00:00Z",
+            "2024-01-01T25:00:00Z",
+            "2024-01-01T00:60:00Z",
+            "2024-01-01T00:00:61Z",
+        ] {
+            assert!(parse_iso8601_utc_ms(s).is_none(), "{s}");
+        }
+        // Valid calendar edges still parse.
+        assert_eq!(
+            parse_iso8601_utc_ms("2024-02-29T23:59:59.999Z"),
+            Some(1_709_251_199_999.0)
+        );
+        // RFC 3339 leap second: POSIX time folds it onto the next second.
+        assert_eq!(
+            parse_iso8601_utc_ms("2016-12-31T23:59:60Z"),
+            Some(1_483_228_800_000.0)
+        );
+    }
+
+    #[test]
+    fn parse_iso8601_signed_or_non_fixed_width_components_rejected() {
+        for s in [
+            "2024-01-01T00:-1:00Z",
+            "2024-01-01T+1:00:00Z",
+            "+2024-01-01T00:00:00Z",
+            "2024-1-01T00:00:00Z",
+            "2024-01-01T0:00:00Z",
+            "1970-01-01T00:00:00.+5Z",
+            "1970-01-01T00:00:00.-5Z",
+            "1970-01-01T00:00:00.Z",
+            "1970-01-01T00:00:00.1234aZ",
+        ] {
+            assert!(parse_iso8601_utc_ms(s).is_none(), "{s}");
+        }
+    }
+
+    #[test]
+    fn parse_iso8601_oversized_components_rejected_without_panic() {
+        // Each of these overflowed i64 arithmetic (panic with overflow checks on).
+        for s in [
+            "2024-01-01T9223372036854775807:00:00Z",
+            "2024-4294967295-01T00:00:00Z",
+            "2147483647-01-01T00:00:00Z",
+        ] {
+            assert!(parse_iso8601_utc_ms(s).is_none(), "{s}");
+        }
+    }
+
+    #[test]
     fn malformed_datetime_delta_keeps_previous_datetime() {
         let mut storage = Storage::default();
         storage.set_self("vessels.urn:mrn:signalk:uuid:self");
