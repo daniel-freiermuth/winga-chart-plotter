@@ -586,32 +586,66 @@ pub fn apply_message(storage: &mut Storage, json: &str) -> Result<Option<String>
 
 /// Parse a UTC ISO 8601 datetime string to epoch milliseconds.
 ///
-/// Handles the Signal K subset: `YYYY-MM-DDTHH:MM:SS[.frac]Z`.
+/// Handles the Signal K subset: `YYYY-MM-DDTHH:MM:SS[.frac]Z` (RFC 3339
+/// `date-time` with fixed-width, unsigned digit fields).
 /// Only UTC (`Z` suffix) is accepted — Signal K always uses UTC.
-/// Returns `None` on any parse failure.
+/// Returns `None` on any parse failure, including out-of-range fields
+/// (month 13, Feb 30, hour 24, …) — those must not roll over into another
+/// instant. A leap second (`:60`) is accepted and folds onto the next second,
+/// as POSIX time does.
 fn parse_iso8601_utc_ms(s: &str) -> Option<f64> {
     let s = s.trim().strip_suffix('Z')?;
     let (date, time) = s.split_once('T')?;
     let mut dp = date.split('-');
-    let year: i32 = dp.next()?.parse().ok()?;
-    let month: u32 = dp.next()?.parse().ok()?;
-    let day: u32 = dp.next()?.parse().ok()?;
-    let (hms, frac_str) = time.split_once('.').unwrap_or((time, ""));
+    let year = fixed_width_digits(dp.next()?, 4)?;
+    let month = fixed_width_digits(dp.next()?, 2)?;
+    let day = fixed_width_digits(dp.next()?, 2)?;
+    if !(1..=12).contains(&month) || day == 0 || day > days_in_month(year, month) {
+        return None;
+    }
+    let (hms, frac_str) = time.split_once('.').unwrap_or((time, "0"));
     let mut tp = hms.split(':');
-    let hour: i64 = tp.next()?.parse().ok()?;
-    let min: i64 = tp.next()?.parse().ok()?;
-    let sec: i64 = tp.next()?.parse().ok()?;
-    // Truncate fractional seconds to 3 digits, right-pad with zeros → milliseconds.
-    // `get` (not `[..]`): a multi-byte char in the fraction must yield `None`,
-    // not a char-boundary panic.
+    let hour = fixed_width_digits(tp.next()?, 2)?;
+    let min = fixed_width_digits(tp.next()?, 2)?;
+    let sec = fixed_width_digits(tp.next()?, 2)?;
+    if hour > 23 || min > 59 || sec > 60 {
+        return None;
+    }
+    // Fraction: one or more ASCII digits (no sign, no other chars), truncated
+    // to 3 digits and right-padded with zeros → milliseconds.
+    if frac_str.is_empty() || !frac_str.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
     let frac3 = frac_str.get(..frac_str.len().min(3))?;
     let ms: i64 = format!("{frac3:0<3}").parse().ok()?;
+    // All fields are bounded above (4-digit year), so this cannot overflow.
     let days = days_from_epoch(year, month, day);
+    let (hour, min, sec) = (i64::from(hour), i64::from(min), i64::from(sec));
     Some((days * 86_400_000 + hour * 3_600_000 + min * 60_000 + sec * 1_000 + ms) as f64)
 }
 
+/// Parse a field of exactly `width` ASCII digits (no sign, no whitespace).
+fn fixed_width_digits(s: &str, width: usize) -> Option<u32> {
+    if s.len() != width || !s.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    s.parse().ok()
+}
+
+/// Days in `month` (1–12) of the proleptic Gregorian `year`.
+fn days_in_month(year: u32, month: u32) -> u32 {
+    match month {
+        2 if year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400)) => {
+            29
+        }
+        2 => 28,
+        4 | 6 | 9 | 11 => 30,
+        _ => 31,
+    }
+}
+
 /// Days from 1970-01-01 to the given Gregorian date (Hinnant's algorithm).
-fn days_from_epoch(year: i32, month: u32, day: u32) -> i64 {
+fn days_from_epoch(year: u32, month: u32, day: u32) -> i64 {
     let y = i64::from(year);
     let m = i64::from(month);
     let d = i64::from(day);
@@ -1194,6 +1228,64 @@ mod tests {
             parse_iso8601_utc_ms("1970-01-01T00:00:00.9999Z"),
             Some(999.0)
         );
+    }
+
+    #[test]
+    fn parse_iso8601_out_of_range_components_rejected() {
+        // Out-of-range fields must not silently roll over into another instant.
+        for s in [
+            "2024-00-15T00:00:00Z",
+            "2024-13-01T00:00:00Z",
+            "2024-01-00T00:00:00Z",
+            "2024-01-32T00:00:00Z",
+            "2023-02-29T00:00:00Z",
+            "2024-04-31T00:00:00Z",
+            "2024-01-01T24:00:00Z",
+            "2024-01-01T25:00:00Z",
+            "2024-01-01T00:60:00Z",
+            "2024-01-01T00:00:61Z",
+        ] {
+            assert!(parse_iso8601_utc_ms(s).is_none(), "{s}");
+        }
+        // Valid calendar edges still parse.
+        assert_eq!(
+            parse_iso8601_utc_ms("2024-02-29T23:59:59.999Z"),
+            Some(1_709_251_199_999.0)
+        );
+        // RFC 3339 leap second: POSIX time folds it onto the next second.
+        assert_eq!(
+            parse_iso8601_utc_ms("2016-12-31T23:59:60Z"),
+            Some(1_483_228_800_000.0)
+        );
+    }
+
+    #[test]
+    fn parse_iso8601_signed_or_non_fixed_width_components_rejected() {
+        for s in [
+            "2024-01-01T00:-1:00Z",
+            "2024-01-01T+1:00:00Z",
+            "+2024-01-01T00:00:00Z",
+            "2024-1-01T00:00:00Z",
+            "2024-01-01T0:00:00Z",
+            "1970-01-01T00:00:00.+5Z",
+            "1970-01-01T00:00:00.-5Z",
+            "1970-01-01T00:00:00.Z",
+            "1970-01-01T00:00:00.1234aZ",
+        ] {
+            assert!(parse_iso8601_utc_ms(s).is_none(), "{s}");
+        }
+    }
+
+    #[test]
+    fn parse_iso8601_oversized_components_rejected_without_panic() {
+        // Each of these overflowed i64 arithmetic (panic with overflow checks on).
+        for s in [
+            "2024-01-01T9223372036854775807:00:00Z",
+            "2024-4294967295-01T00:00:00Z",
+            "2147483647-01-01T00:00:00Z",
+        ] {
+            assert!(parse_iso8601_utc_ms(s).is_none(), "{s}");
+        }
     }
 
     #[test]
