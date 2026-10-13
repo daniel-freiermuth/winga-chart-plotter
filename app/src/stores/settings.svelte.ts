@@ -187,13 +187,22 @@ function detectSignalkOrigin(): Pick<SettingsData, 'signalkProtocol' | 'signalkH
   };
 }
 
+/** Persisted settings as read back from storage: any key may be missing,
+ *  including the nested `ais`/`route` groups absent from older builds. */
+type StoredSettings = Omit<Partial<SettingsData>, 'appearance'> & {
+  appearance?: Partial<Omit<AppearanceSettings, 'ais' | 'route'>> & {
+    ais?:   Partial<AisAppearance>;
+    route?: Partial<RouteAppearance>;
+  };
+};
+
 function load(): SettingsData {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
       const parsed: unknown = JSON.parse(raw);
       if (typeof parsed === 'object' && parsed !== null) {
-        const p = parsed as Partial<SettingsData>;
+        const p = parsed as StoredSettings;
         const normalizedConn = normalizeConnection({
           signalkProtocol: p.signalkProtocol ?? DEFAULTS.signalkProtocol,
           signalkHost: p.signalkHost ?? DEFAULTS.signalkHost,
@@ -215,17 +224,17 @@ function load(): SettingsData {
             ais: {
               ...DEFAULTS.appearance.ais,
               ...(p.appearance?.ais ?? {}),
-              cog:   { ...DEFAULTS.appearance.ais.cog,   ...(p.appearance?.ais.cog   ?? {}) },
-              track: { ...DEFAULTS.appearance.ais.track, ...(p.appearance?.ais.track ?? {}) },
+              cog:   { ...DEFAULTS.appearance.ais.cog,   ...(p.appearance?.ais?.cog   ?? {}) },
+              track: { ...DEFAULTS.appearance.ais.track, ...(p.appearance?.ais?.track ?? {}) },
             },
             ruler: { ...DEFAULTS.appearance.ruler, ...(p.appearance?.ruler ?? {}) },
             planner: { ...DEFAULTS.appearance.planner, ...(p.appearance?.planner ?? {}) },
             route: {
-              bearing:   { ...DEFAULTS.appearance.route.bearing,   ...(p.appearance?.route.bearing   ?? {}) },
-              segment:   { ...DEFAULTS.appearance.route.segment,   ...(p.appearance?.route.segment   ?? {}) },
-              remaining: { ...DEFAULTS.appearance.route.remaining, ...(p.appearance?.route.remaining ?? {}) },
-              allRoutes: { ...DEFAULTS.appearance.route.allRoutes, ...(p.appearance?.route.allRoutes ?? {}) },
-              highlightColor: typeof p.appearance?.route.highlightColor === 'string' ? p.appearance.route.highlightColor : DEFAULTS.appearance.route.highlightColor,
+              bearing:   { ...DEFAULTS.appearance.route.bearing,   ...(p.appearance?.route?.bearing   ?? {}) },
+              segment:   { ...DEFAULTS.appearance.route.segment,   ...(p.appearance?.route?.segment   ?? {}) },
+              remaining: { ...DEFAULTS.appearance.route.remaining, ...(p.appearance?.route?.remaining ?? {}) },
+              allRoutes: { ...DEFAULTS.appearance.route.allRoutes, ...(p.appearance?.route?.allRoutes ?? {}) },
+              highlightColor: typeof p.appearance?.route?.highlightColor === 'string' ? p.appearance.route.highlightColor : DEFAULTS.appearance.route.highlightColor,
             },
             track: { ...DEFAULTS.appearance.track, ...(p.appearance?.track ?? {}) },
           },
