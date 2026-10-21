@@ -161,13 +161,22 @@ export interface PlotterExtensions {
   togglePanelFor(extensionId: string, panelId: string): void;
 
   getInstanceState(extensionId: string, instanceId: string, keys?: string[]): Record<string, unknown>;
-  setInstanceState(extensionId: string, instanceId: string, values: Record<string, unknown>): void;
+  /**
+   * `writer` identifies the connection making the write (opaque, compared by
+   * identity) and is handed to every listener, so a connection that already
+   * answers its own write can skip the echo.
+   */
+  setInstanceState(extensionId: string, instanceId: string, values: Record<string, unknown>, writer?: object): void;
   /**
    * Subscribe to per-instance state writes from any connection (e.g. a config
    * panel). Returns an unsubscribe function. Used by WidgetCell to republish
    * `state.changed` to the widget's own HostConnection.
    */
-  onInstanceStateChanged(extensionId: string, instanceId: string, handler: (keys: string[]) => void): () => void;
+  onInstanceStateChanged(
+    extensionId: string,
+    instanceId: string,
+    handler: (keys: string[], writer: object | undefined) => void,
+  ): () => void;
   getExtState(extensionId: string, keys?: string[]): Record<string, unknown>;
   setExtState(extensionId: string, values: Record<string, unknown>): void;
 
@@ -215,7 +224,7 @@ function createPlotterExtensions(): PlotterExtensions {
   // key bumps that same version) dirtied the very effect that was still
   // executing it, causing attach/detach to loop forever.
   // eslint-disable-next-line svelte/prefer-svelte-reactivity
-  const instanceStateListeners = new Map<string, Set<(keys: string[]) => void>>();
+  const instanceStateListeners = new Map<string, Set<(keys: string[], writer: object | undefined) => void>>();
 
   // ── Loading ────────────────────────────────────────────────────────────────
   //
@@ -423,6 +432,7 @@ function createPlotterExtensions(): PlotterExtensions {
     extensionId: string,
     instanceId: string,
     values: Record<string, unknown>,
+    writer?: object,
   ): void {
     lsSet(`plotterext:state:${extensionId}:${instanceId}`, values);
     const key = `${extensionId}:${instanceId}`;
@@ -430,7 +440,7 @@ function createPlotterExtensions(): PlotterExtensions {
     if (handlers) {
       const changedKeys = Object.keys(values);
       for (const handler of handlers) {
-        try { handler(changedKeys); } catch { /* ignore */ }
+        try { handler(changedKeys, writer); } catch { /* ignore */ }
       }
     }
   }
@@ -438,7 +448,7 @@ function createPlotterExtensions(): PlotterExtensions {
   function onInstanceStateChanged(
     extensionId: string,
     instanceId: string,
-    handler: (keys: string[]) => void,
+    handler: (keys: string[], writer: object | undefined) => void,
   ): () => void {
     const key = `${extensionId}:${instanceId}`;
     let set = instanceStateListeners.get(key);

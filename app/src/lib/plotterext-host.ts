@@ -236,7 +236,7 @@ export function createHostConnection(
     if (scope === 'extension') {
       plotterExtensions.setExtState(extensionId, values);
     } else {
-      plotterExtensions.setInstanceState(extensionId, requireInstanceId(), values);
+      plotterExtensions.setInstanceState(extensionId, requireInstanceId(), values, conn);
     }
     conn.publish('state.changed', {
       scope,
