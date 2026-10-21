@@ -352,6 +352,40 @@ describe('normalizeConnection via apply()', () => {
     expect(s.protocol).toBe('ws');
   });
 
+  it('uses the scheme default port for a pasted https:// URL with explicit :443', async () => {
+    const s = await importSettings();
+    s.apply({
+      signalkHost: 'https://myboat.example.com:443',
+      signalkProtocol: 'ws',
+      signalkPort: 3000,
+    });
+    expect(s.host).toBe('myboat.example.com');
+    expect(s.port).toBe(443);
+    expect(s.protocol).toBe('wss');
+  });
+
+  it('uses the scheme default port for a pasted https:// URL without a port', async () => {
+    const s = await importSettings();
+    s.apply({
+      signalkHost: 'https://myboat.example.com',
+      signalkProtocol: 'ws',
+      signalkPort: 3000,
+    });
+    expect(s.port).toBe(443);
+    expect(s.protocol).toBe('wss');
+  });
+
+  it('uses the scheme default port for a pasted http:// URL without a port', async () => {
+    const s = await importSettings();
+    s.apply({
+      signalkHost: 'http://signal.local',
+      signalkProtocol: 'ws',
+      signalkPort: 3000,
+    });
+    expect(s.port).toBe(80);
+    expect(s.protocol).toBe('ws');
+  });
+
   it('keeps malformed URL host as-is when URL constructor throws', async () => {
     const s = await importSettings();
     s.apply({
