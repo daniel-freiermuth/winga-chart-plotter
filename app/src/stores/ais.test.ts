@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ais } from './ais.svelte';
+import { ais, AIS_HOT_STRIDE } from './ais.svelte';
 
 // Each test starts with a clean selection.
 afterEach(() => { ais.clear(); });
@@ -79,5 +79,20 @@ describe('popup ownership lifecycle', () => {
     expect(dispose).toHaveBeenCalledOnce();
     expect(ais.selectedId).toBe('v1');
     expect(ais.selectionPhase).toBe('highlighted');
+  });
+});
+
+describe('updateBinary', () => {
+  it('an empty batch drops every target of the previous batch', () => {
+    // The worker posts an empty snapshot when the last target goes stale or a
+    // server switch leaves no targets; it must replace, not merge.
+    ais.updateBinary(new Float64Array(AIS_HOT_STRIDE).buffer, ['v1'], [{ id: 'v1' }]);
+    expect(ais.count).toBe(1);
+
+    ais.updateBinary(new ArrayBuffer(0), [], []);
+
+    expect(ais.count).toBe(0);
+    expect(ais.ids).toEqual([]);
+    expect(ais.getTarget(0)).toBeNull();
   });
 });
