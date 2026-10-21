@@ -80,7 +80,8 @@ impl SignalKClient {
         let status_cb = on_status_change.clone();
         let on_open = Closure::wrap(Box::new(move |e: Event| {
             let Some(ws) = e.target().and_then(|t| t.dyn_into::<WebSocket>().ok()) else {
-                let _ = status_cb.call1(&JsValue::NULL, &JsValue::from(ConnectionStatus::Error));
+                log_err("SignalKClient: onopen target is not a WebSocket", &e);
+                report_status(&status_cb, ConnectionStatus::Error);
                 return;
             };
             let subscribe_msg = r#"{
@@ -93,7 +94,6 @@ impl SignalKClient {
                     {"path": "navigation.course",               "period": 1000}
                 ]
             }"#;
-            let _ = ws.send_with_str(subscribe_msg);
             let ais_subscribe_msg = r#"{
                 "context": "vessels.*",
                 "subscribe": [
@@ -107,8 +107,17 @@ impl SignalKClient {
                     {"path": "navigation.speedThroughWater",    "period": 1000}
                 ]
             }"#;
-            let _ = ws.send_with_str(ais_subscribe_msg);
-            let _ = status_cb.call1(&JsValue::NULL, &JsValue::from(ConnectionStatus::Connected));
+            // A failed subscribe leaves an open socket that will never deliver
+            // self/AIS data — that is not a healthy connection.
+            if let Err(err) = ws
+                .send_with_str(subscribe_msg)
+                .and_then(|()| ws.send_with_str(ais_subscribe_msg))
+            {
+                log_err("SignalKClient: subscribe send failed", &err);
+                report_status(&status_cb, ConnectionStatus::Error);
+                return;
+            }
+            report_status(&status_cb, ConnectionStatus::Connected);
         }) as Box<dyn FnMut(Event)>);
         ws.set_onopen(Some(on_open.as_ref().unchecked_ref()));
 
@@ -146,20 +155,33 @@ impl SignalKClient {
                     // snapshots, and a retracted `sk_cpa` must arrive as an explicit
                     // `null` (the default serializer would emit `undefined`, which the
                     // JS coldMap merge cannot tell apart from "field absent → retain").
-                    let cold_js = cold
-                        .serialize(
-                            &serde_wasm_bindgen::Serializer::new().serialize_missing_as_null(true),
-                        )
-                        .unwrap_or(JsValue::NULL);
+                    let cold_js = match cold.serialize(
+                        &serde_wasm_bindgen::Serializer::new().serialize_missing_as_null(true),
+                    ) {
+                        Ok(v) => v,
+                        Err(err) => {
+                            // Skip this emit rather than hand JS `cold: null`;
+                            // the next emit retries from the same storage.
+                            log_err("SignalKClient: AIS cold serialisation failed", &err.into());
+                            return;
+                        }
+                    };
                     let payload = js_sys::Object::new();
-                    let _ = js_sys::Reflect::set(
-                        &payload,
-                        &JsValue::from_str("hot"),
-                        &hot_arr.buffer(),
-                    );
-                    let _ = js_sys::Reflect::set(&payload, &JsValue::from_str("ids"), &js_ids);
-                    let _ = js_sys::Reflect::set(&payload, &JsValue::from_str("cold"), &cold_js);
-                    let _ = ais_cb.call1(&JsValue::NULL, &payload);
+                    for (key, value) in [
+                        ("hot", hot_arr.buffer().into()),
+                        ("ids", JsValue::from(js_ids)),
+                        ("cold", cold_js),
+                    ] {
+                        if let Err(err) =
+                            js_sys::Reflect::set(&payload, &JsValue::from_str(key), &value)
+                        {
+                            log_err("SignalKClient: building AIS payload failed", &err);
+                            return;
+                        }
+                    }
+                    if let Err(err) = ais_cb.call1(&JsValue::NULL, &payload) {
+                        log_err("SignalKClient: on_ais_update callback threw", &err);
+                    }
                 }
                 *last_emit.borrow_mut() = now_ms;
             })
@@ -169,8 +191,12 @@ impl SignalKClient {
             let Some(text) = e.data().as_string() else {
                 return;
             };
-            let Ok(delta_ctx) = apply_message(&mut storage_clone.borrow_mut(), &text) else {
-                return;
+            let delta_ctx = match apply_message(&mut storage_clone.borrow_mut(), &text) {
+                Ok(ctx) => ctx,
+                Err(msg) => {
+                    log_err("SignalKClient: dropping unparseable message", &msg.into());
+                    return;
+                }
             };
             // Only forward own-vessel deltas to the extension relay.
             // AIS deltas (context = "vessels.urn:mrn:imo:mmsi:…") must not
@@ -186,8 +212,8 @@ impl SignalKClient {
                         .self_id()
                         .is_some_and(|sid| ctx == format!("vessels.{sid}"))
             });
-            if forward {
-                let _ = on_delta.call1(&JsValue::NULL, &JsValue::from_str(&text));
+            if forward && let Err(err) = on_delta.call1(&JsValue::NULL, &JsValue::from_str(&text)) {
+                log_err("SignalKClient: on_delta callback threw", &err);
             }
 
             // Always forward own-vessel state immediately — it's a single cheap struct.
@@ -198,8 +224,19 @@ impl SignalKClient {
                 let changed = last_vessel_state_clone.borrow().as_ref() != Some(&state);
                 if changed {
                     *last_vessel_state_clone.borrow_mut() = Some(state.clone());
-                    let js_val = serde_wasm_bindgen::to_value(&state).unwrap_or(JsValue::NULL);
-                    let _ = state_cb.call1(&JsValue::NULL, &js_val);
+                    match serde_wasm_bindgen::to_value(&state) {
+                        Ok(js_val) => {
+                            if let Err(err) = state_cb.call1(&JsValue::NULL, &js_val) {
+                                log_err("SignalKClient: on_state_change callback threw", &err);
+                            }
+                        }
+                        Err(err) => {
+                            log_err(
+                                "SignalKClient: VesselState serialisation failed",
+                                &err.into(),
+                            );
+                        }
+                    }
                 }
             }
 
@@ -245,17 +282,14 @@ impl SignalKClient {
         // onerror
         let status_cb = on_status_change.clone();
         let on_error = Closure::wrap(Box::new(move |_e: ErrorEvent| {
-            let _ = status_cb.call1(&JsValue::NULL, &JsValue::from(ConnectionStatus::Error));
+            report_status(&status_cb, ConnectionStatus::Error);
         }) as Box<dyn FnMut(ErrorEvent)>);
         ws.set_onerror(Some(on_error.as_ref().unchecked_ref()));
 
         // onclose
         let status_cb = on_status_change.clone();
         let on_close = Closure::wrap(Box::new(move |_e: CloseEvent| {
-            let _ = status_cb.call1(
-                &JsValue::NULL,
-                &JsValue::from(ConnectionStatus::Disconnected),
-            );
+            report_status(&status_cb, ConnectionStatus::Disconnected);
         }) as Box<dyn FnMut(CloseEvent)>);
         ws.set_onclose(Some(on_close.as_ref().unchecked_ref()));
 
@@ -283,6 +317,8 @@ impl SignalKClient {
     /// off a reconnect loop that closes the healthy socket all over again.
     pub fn reconnect(&mut self, url: &str) -> Result<(), JsValue> {
         self.detach_handlers();
+        // `close()` without code/reason cannot throw (it only rejects invalid
+        // codes/reasons), so there is no error to surface here.
         let _ = self.ws.close();
         self.ws = WebSocket::new(url)?;
         self.ws
@@ -302,6 +338,7 @@ impl SignalKClient {
     /// failure, and must not surface as one after the caller has moved on.
     pub fn close(&self) {
         self.detach_handlers();
+        // See `reconnect`: argument-less `close()` cannot throw.
         let _ = self.ws.close();
     }
 
@@ -323,4 +360,17 @@ impl SignalKClient {
 /// when not running in a Worker.
 fn worker_scope() -> Option<WorkerGlobalScope> {
     js_sys::global().dyn_into::<WorkerGlobalScope>().ok()
+}
+
+/// Report a status change to JS, logging (not swallowing) a throwing callback.
+fn report_status(status_cb: &Function, status: ConnectionStatus) {
+    if let Err(err) = status_cb.call1(&JsValue::NULL, &JsValue::from(status)) {
+        log_err("SignalKClient: on_status_change callback threw", &err);
+    }
+}
+
+/// Single sink for errors that must not abort the stream but must never be
+/// silent: the WebSocket keeps running, the failure lands in the console.
+fn log_err(ctx: &str, err: &JsValue) {
+    web_sys::console::error_2(&JsValue::from_str(ctx), err);
 }

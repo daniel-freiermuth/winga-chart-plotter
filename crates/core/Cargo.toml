@@ -19,7 +19,7 @@ phf = { version = "0.11", features = ["macros"] }
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen-futures = "0.4"
 web-sys = { version = "0.3", features = [
-  "WebSocket", "MessageEvent", "ErrorEvent", "CloseEvent", "Event",
+  "WebSocket", "MessageEvent", "ErrorEvent", "CloseEvent", "Event", "console",
   "WorkerGlobalScope",
   "Window", "Request", "RequestInit", "RequestMode", "Response", "AbortSignal",
 ] }
