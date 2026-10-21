@@ -206,14 +206,15 @@ export async function setActiveRoutePointIndex(
 /**
  * POST /signalk/v2/api/resources/routes
  *
- * Returns the UUID of the newly created route.
+ * Returns the UUID of the newly created route, or `undefined` when the
+ * server's success response carried no id.
  */
 export async function saveRoute(
   serverBase: string,
   name: string,
   waypoints: { lon: number; lat: number }[],
   authHeaders: Record<string, string>,
-): Promise<string> {
+): Promise<string | undefined> {
   await ready;
   return wasmSaveRoute(serverBase, name, waypoints, authHeaders);
 }
@@ -251,7 +252,8 @@ export async function deleteRoute(
 /**
  * POST /signalk/v2/api/resources/waypoints
  *
- * Returns the UUID of the newly created waypoint.
+ * Returns the UUID of the newly created waypoint, or `undefined` when the
+ * server's success response carried no id.
  */
 export async function saveWaypoint(
   serverBase: string,
@@ -259,7 +261,7 @@ export async function saveWaypoint(
   lat: number,
   lon: number,
   authHeaders: Record<string, string>,
-): Promise<string> {
+): Promise<string | undefined> {
   await ready;
   return wasmSaveWaypoint(serverBase, name, lat, lon, authHeaders);
 }

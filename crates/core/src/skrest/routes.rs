@@ -156,21 +156,21 @@ pub(crate) fn merge_update(
 }
 
 /// A POST `resources/routes`/`resources/waypoints` response: either a bare
-/// UUID string, or an object carrying `id`/`uuid`.
-pub fn extract_created_id(text: &str) -> String {
-    let Ok(data) = serde_json::from_str::<serde_json::Value>(text) else {
-        return String::new();
-    };
-    match data {
+/// UUID string, or an object carrying `id`/`uuid`. Returns `None` when the
+/// body is unparsable, carries no string id, or the id is empty — an empty id
+/// would turn `/resources/<kind>/{id}` into the collection URL.
+pub fn extract_created_id(text: &str) -> Option<String> {
+    let data = serde_json::from_str::<serde_json::Value>(text).ok()?;
+    let id = match data {
         serde_json::Value::String(s) => s,
         serde_json::Value::Object(o) => o
             .get("id")
             .or_else(|| o.get("uuid"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
+            .and_then(|v| v.as_str())?
             .to_string(),
-        _ => String::new(),
-    }
+        _ => return None,
+    };
+    (!id.is_empty()).then_some(id)
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -194,14 +194,15 @@ mod wasm {
         crate::skrest::to_js_object(&routes)
     }
 
-    /// `POST /signalk/v2/api/resources/routes` — returns the new route's UUID.
+    /// `POST /signalk/v2/api/resources/routes` — returns the new route's UUID,
+    /// or `undefined` if the server's 2xx response did not carry one.
     #[wasm_bindgen(js_name = saveRoute)]
     pub async fn save_route(
         server_base: String,
         name: String,
         waypoints: JsValue,
         auth_headers: JsValue,
-    ) -> Result<String, JsValue> {
+    ) -> Result<Option<String>, JsValue> {
         let waypoints: Vec<LonLat> = serde_wasm_bindgen::from_value(waypoints)?;
         let url = format!("{server_base}/signalk/v2/api/resources/routes");
         let body = build_route_body(&name, &waypoints).to_string();
@@ -359,28 +360,48 @@ mod tests {
 
     #[test]
     fn extract_created_id_from_bare_string() {
-        assert_eq!(extract_created_id("\"abc-123\""), "abc-123");
+        assert_eq!(
+            extract_created_id("\"abc-123\"").as_deref(),
+            Some("abc-123")
+        );
     }
 
     #[test]
     fn extract_created_id_from_id_field() {
-        assert_eq!(extract_created_id(r#"{"id":"abc-123"}"#), "abc-123");
+        assert_eq!(
+            extract_created_id(r#"{"id":"abc-123"}"#).as_deref(),
+            Some("abc-123")
+        );
     }
 
     #[test]
     fn extract_created_id_from_uuid_field() {
-        assert_eq!(extract_created_id(r#"{"uuid":"abc-123"}"#), "abc-123");
+        assert_eq!(
+            extract_created_id(r#"{"uuid":"abc-123"}"#).as_deref(),
+            Some("abc-123")
+        );
     }
 
     #[test]
     fn extract_created_id_prefers_id_over_uuid() {
-        assert_eq!(extract_created_id(r#"{"id":"a","uuid":"b"}"#), "a");
+        assert_eq!(
+            extract_created_id(r#"{"id":"a","uuid":"b"}"#).as_deref(),
+            Some("a")
+        );
     }
 
     #[test]
-    fn extract_created_id_falls_back_to_empty() {
-        assert_eq!(extract_created_id("{}"), "");
-        assert_eq!(extract_created_id("not json"), "");
+    fn extract_created_id_none_when_id_absent_or_invalid() {
+        assert_eq!(extract_created_id("not json"), None);
+        assert_eq!(extract_created_id("{}"), None);
+        assert_eq!(extract_created_id("42"), None);
+        assert_eq!(extract_created_id(r#"{"id":42}"#), None);
+    }
+
+    #[test]
+    fn extract_created_id_none_when_id_empty() {
+        assert_eq!(extract_created_id("\"\""), None);
+        assert_eq!(extract_created_id(r#"{"id":""}"#), None);
     }
 
     #[test]

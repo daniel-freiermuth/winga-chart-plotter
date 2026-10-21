@@ -85,7 +85,8 @@ mod wasm {
         crate::skrest::to_js_object(&waypoints)
     }
 
-    /// `POST /signalk/v2/api/resources/waypoints` — returns the new waypoint's UUID.
+    /// `POST /signalk/v2/api/resources/waypoints` — returns the new waypoint's
+    /// UUID, or `undefined` if the server's 2xx response did not carry one.
     #[wasm_bindgen(js_name = saveWaypoint)]
     pub async fn save_waypoint(
         server_base: String,
@@ -93,7 +94,7 @@ mod wasm {
         lat: f64,
         lon: f64,
         auth_headers: JsValue,
-    ) -> Result<String, JsValue> {
+    ) -> Result<Option<String>, JsValue> {
         let url = format!("{server_base}/signalk/v2/api/resources/waypoints");
         let body = build_waypoint_body(&name, lat, lon).to_string();
         let resp = http::fetch("POST", &url, &auth_headers, Some(&body), None).await?;
