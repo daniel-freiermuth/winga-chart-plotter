@@ -168,10 +168,8 @@ mod wasm {
     #[wasm_bindgen(js_name = fetchCharts)]
     pub async fn fetch_charts(server_base: String) -> Result<JsValue, JsValue> {
         let url = format!("{server_base}/signalk/v2/api/resources/charts");
-        let resp = http::fetch("GET", &url, &JsValue::UNDEFINED, None, None).await?;
-        if !resp.ok() {
-            return Err(http::status_error("Charts API error", &resp).into());
-        }
+        let resp =
+            http::fetch_ok("GET", &url, &JsValue::UNDEFINED, None, "Charts API error").await?;
         let charts: ChartRecord =
             serde_json::from_str(&resp.text).map_err(crate::Error::json("Charts API"))?;
         crate::skrest::to_js_object(&charts)
