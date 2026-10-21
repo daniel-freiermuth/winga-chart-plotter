@@ -37,6 +37,8 @@ pub struct SignalKClient {
     on_message: Closure<dyn FnMut(MessageEvent)>,
     on_error: Closure<dyn FnMut(ErrorEvent)>,
     on_close: Closure<dyn FnMut(CloseEvent)>,
+    /// Last own-vessel state handed to `on_state_change`, used to skip repeats.
+    last_vessel_state: Rc<RefCell<Option<VesselState>>>,
 }
 
 #[wasm_bindgen]
@@ -299,6 +301,7 @@ impl SignalKClient {
             on_message,
             on_error,
             on_close,
+            last_vessel_state,
         })
     }
 
@@ -320,6 +323,10 @@ impl SignalKClient {
         // `close()` without code/reason cannot throw (it only rejects invalid
         // codes/reasons), so there is no error to surface here.
         let _ = self.ws.close();
+        // The app drops its own-ship state on a server switch, so the first
+        // state from the new socket must be emitted even if it equals the
+        // last one (same server under another URL, vessel not moving).
+        *self.last_vessel_state.borrow_mut() = None;
         self.ws = WebSocket::new(url)?;
         self.ws
             .set_onopen(Some(self.on_open.as_ref().unchecked_ref()));

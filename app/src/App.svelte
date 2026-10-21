@@ -570,6 +570,13 @@
     connection.setError(null);
     reconnectDelay = 2000;
     if (reconnectTimer !== null) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+    // The new server may never report an own position (no GPS fix, shore server), so
+    // nothing would overwrite the old server's own-ship state — drop it here. In geo
+    // mode the position belongs to the browser and stays; the route is always from SK.
+    if (!settings.useGeoLocation) {
+      vesselState.set({ position: null, cog: null, sog: null, heading: null });
+    }
+    route.clear();
     worker?.postMessage({ type: 'connect', url });
   });
 
