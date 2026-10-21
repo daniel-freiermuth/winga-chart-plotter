@@ -3,12 +3,15 @@
 //! Calls back into JS when state or connection status changes.
 
 use crate::skdata::{
-    Storage, VesselState, apply_message, extract_ais_binary, extract_vessel_state,
-    prune_stale_vessels,
+    Storage, VesselState, ais_snapshot_due, apply_message, extract_ais_binary,
+    extract_vessel_state, prune_stale_vessels,
 };
 use js_sys::Function;
 use serde::Serialize;
-use std::{cell::RefCell, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+};
 use wasm_bindgen::{JsCast, prelude::*};
 use web_sys::{CloseEvent, ErrorEvent, Event, MessageEvent, WebSocket, WorkerGlobalScope};
 
@@ -125,12 +128,16 @@ impl SignalKClient {
             let storage = storage_clone.clone();
             let ais_cb = on_ais_update.clone();
             let last_emit = last_ais_emit.clone();
+            // Whether the last posted snapshot was empty; `false` until the first
+            // post, so a fresh client clears whatever the consumer still shows.
+            let last_posted_empty = Cell::new(false);
             Rc::new(move || {
                 let now_ms = js_sys::Date::now();
                 prune_stale_vessels(&mut storage.borrow_mut(), now_ms, AIS_STALE_MS);
                 let (hot_arr, ids, cold) =
                     extract_ais_binary(&storage.borrow(), now_ms, AIS_STALE_MS);
-                if !ids.is_empty() {
+                if ais_snapshot_due(ids.len(), last_posted_empty.get()) {
+                    last_posted_empty.set(ids.is_empty());
                     let js_ids = js_sys::Array::new_with_length(ids.len() as u32);
                     for (i, id) in ids.iter().enumerate() {
                         js_ids.set(i as u32, JsValue::from_str(id));
