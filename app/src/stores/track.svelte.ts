@@ -19,6 +19,9 @@ function createTrack() {
   let _lastLat = 0;
   let _hasLast = false;
   let _stopRecording: (() => void) | null = null;
+  // Bumped by every init()/destroy(); an init() whose generation is no longer
+  // current was superseded while awaiting its history fetch and must not write.
+  let _generation = 0;
 
   function append(lon: number, lat: number): void {
     if (_hasLast) {
@@ -37,19 +40,23 @@ function createTrack() {
     get coordinates(): [number, number][] { return _coords; },
 
     async init(serverBase: string, historyHours = 24): Promise<void> {
+      const generation = ++_generation;
       _stopRecording?.();
+      _stopRecording = null;
       _coords = [];
       _hasLast = false;
 
       if (historyHours > 0) {
         try {
           const historical = await fetchTrack(serverBase, historyHours);
+          if (generation !== _generation) return;
           _coords = historical;  // raw coords from server, unwrapped at render time
           if (historical.length > 0) {
             [_lastLon, _lastLat] = historical[historical.length - 1] as [number, number];
             _hasLast = true;
           }
         } catch (err) {
+          if (generation !== _generation) return;
           console.warn('[track] Could not fetch historical track:', err);
         }
       }
@@ -70,6 +77,7 @@ function createTrack() {
     },
 
     destroy(): void {
+      _generation++;
       _stopRecording?.();
       _stopRecording = null;
     },
