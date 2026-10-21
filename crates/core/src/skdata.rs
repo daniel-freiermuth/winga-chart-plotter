@@ -770,6 +770,14 @@ pub fn prune_stale_vessels(storage: &mut Storage, now_ms: f64, stale_ms: f64) {
         });
 }
 
+/// Whether an AIS snapshot of `count` targets must be posted to the consumer,
+/// given whether the previously posted snapshot was empty (`false` before the
+/// first post, when the consumer's state is unknown).
+pub fn ais_snapshot_due(count: usize, last_posted_empty: bool) -> bool {
+    let _ = last_posted_empty;
+    count > 0
+}
+
 #[cfg(test)]
 #[allow(
     clippy::unwrap_used,
@@ -968,6 +976,55 @@ mod tests {
             !storage.vessels.contains_key("urn:mrn:imo:mmsi:999999999"),
             "stale vessel should be pruned"
         );
+    }
+
+    #[test]
+    fn ais_snapshot_due_posts_non_empty_snapshots() {
+        assert!(ais_snapshot_due(1, false));
+        assert!(ais_snapshot_due(3, true));
+    }
+
+    #[test]
+    fn ais_snapshot_due_posts_the_transition_to_empty() {
+        // The consumer replaces its whole AIS state with each snapshot and has no
+        // staleness handling of its own: if the drop to zero targets is never
+        // posted, it keeps drawing the last non-empty snapshot forever.
+        assert!(ais_snapshot_due(0, false));
+    }
+
+    #[test]
+    fn ais_snapshot_due_suppresses_repeated_empty_snapshots() {
+        assert!(!ais_snapshot_due(0, true));
+    }
+
+    #[test]
+    fn last_target_going_stale_yields_a_due_empty_snapshot() {
+        let mut storage = Storage::default();
+        storage.set_self("vessels.urn:mrn:signalk:uuid:self");
+        apply_message(
+            &mut storage,
+            r#"{
+            "context": "vessels.urn:mrn:imo:mmsi:999999999",
+            "updates": [{"values": [
+                {"path": "navigation.position", "value": {"longitude": 11.0, "latitude": 59.0}},
+                {"path": "navigation.datetime", "value": "1970-01-01T00:01:00.000Z"}
+            ]}]
+        }"#,
+        )
+        .unwrap();
+        let stale_ms = 10.0 * 60.0 * 1000.0;
+
+        // Fresh at 5 min: one target posted.
+        let fresh = extract_ais_targets(&storage, 5.0 * 60.0 * 1000.0, stale_ms);
+        assert_eq!(fresh.len(), 1);
+        assert!(ais_snapshot_due(fresh.len(), false));
+
+        // Stale at 20 min: the now-empty set must still reach the consumer.
+        let now_ms = 20.0 * 60.0 * 1000.0;
+        prune_stale_vessels(&mut storage, now_ms, stale_ms);
+        let stale = extract_ais_targets(&storage, now_ms, stale_ms);
+        assert!(stale.is_empty());
+        assert!(ais_snapshot_due(stale.len(), fresh.is_empty()));
     }
 
     #[test]
