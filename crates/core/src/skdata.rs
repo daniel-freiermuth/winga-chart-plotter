@@ -25,7 +25,7 @@
 //!
 //! Signal K's wire delta format places `$source`/`timestamp` at the *update
 //! block* level (shared by every value in that block), not per-value — see
-//! [`Update`] below. The `signalk` crate's own delta-application path never
+//! the `Update` wire type below. The `signalk` crate's own delta-application path never
 //! threads this through to stored values at all (confirmed by reading
 //! `V1Vessel::apply_update`/`update` in the cached crate source: only
 //! `value.value` — the bare value — is passed down, never `update.source`).
@@ -36,8 +36,11 @@
 //! it yet (same "don't implement speculatively" rule as the deferred
 //! `V1FullFormat.sources`/full-snapshot support below).
 
-use serde::{Deserialize, Serialize};
+use serde::de::IgnoredAny;
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value as Json;
+use serde_json::value::RawValue;
+use std::borrow::Cow;
 use std::collections::HashMap;
 use wasm_bindgen::prelude::*;
 
@@ -350,7 +353,7 @@ fn apply_leaf(vessel: &mut Vessel, path: &str, value: &Json, source: Option<&str
             }
         }
         LeafKind::Position => {
-            if let Ok(p) = serde_json::from_value::<Position>(value.clone()) {
+            if let Ok(p) = Position::deserialize(value) {
                 vessel.nav.position = Some(p);
                 vessel.nav.position_source = source.map(str::to_owned);
             }
@@ -493,8 +496,7 @@ fn apply_leaf(vessel: &mut Vessel, path: &str, value: &Json, source: Option<&str
 }
 
 fn course_point_from_value(value: &Json) -> Option<CoursePoint> {
-    let position = value.get("position")?;
-    let p: Position = serde_json::from_value(position.clone()).ok()?;
+    let p = Position::deserialize(value.get("position")?).ok()?;
     Some(CoursePoint {
         longitude: p.longitude,
         latitude: p.latitude,
@@ -518,6 +520,72 @@ fn active_route_from_value(value: &Json) -> Option<ActiveRoute> {
 }
 
 // ---------------------------------------------------------------------------
+// Wire envelope (Hello / Delta).
+// ---------------------------------------------------------------------------
+
+/// Never-failing wrapper: `Some(T)` when the JSON value has `T`'s shape,
+/// `None` when it doesn't or the key is absent. Lets one malformed piece of a
+/// message be skipped without rejecting its well-formed siblings.
+///
+/// Captures the value as a [`RawValue`] first, so it only works under a
+/// `serde_json` text deserializer (not untagged/flatten buffering).
+struct Lenient<T>(Option<T>);
+
+impl<T> Default for Lenient<T> {
+    fn default() -> Self {
+        Self(None)
+    }
+}
+
+impl<'de, T: Deserialize<'de>> Deserialize<'de> for Lenient<T> {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let raw = <&'de RawValue>::deserialize(deserializer)?;
+        Ok(Self(serde_json::from_str(raw.get()).ok()))
+    }
+}
+
+/// A JSON string, borrowed from the message text when it has no escapes and
+/// decoded into an owned `String` otherwise.
+#[derive(Deserialize)]
+#[serde(transparent)]
+struct Text<'a>(#[serde(borrow)] Cow<'a, str>);
+
+/// One Signal K stream message. Delta (`context` + `updates`) and Hello
+/// (`self`) share one struct rather than an untagged enum: untagged buffering
+/// can't carry [`RawValue`], and the Delta-vs-Hello rule lives in
+/// [`apply_message`].
+#[derive(Deserialize)]
+struct Message<'a> {
+    #[serde(borrow, default)]
+    context: Lenient<Text<'a>>,
+    #[serde(borrow, default)]
+    updates: Lenient<Vec<Lenient<Update<'a>>>>,
+    #[serde(borrow, default, rename = "self")]
+    self_: Lenient<Text<'a>>,
+    /// Only its presence matters: a `vessels` key marks a Full snapshot.
+    #[serde(default)]
+    vessels: Lenient<IgnoredAny>,
+}
+
+/// One update block; `$source` applies to every value in it.
+#[derive(Deserialize)]
+struct Update<'a> {
+    #[serde(borrow, default, rename = "$source")]
+    source: Lenient<Text<'a>>,
+    #[serde(borrow, default)]
+    values: Lenient<Vec<Lenient<PathValue<'a>>>>,
+}
+
+#[derive(Deserialize)]
+struct PathValue<'a> {
+    #[serde(borrow)]
+    path: Cow<'a, str>,
+    /// The only genuinely polymorphic part of the envelope: its shape depends
+    /// on `path`, so it's dispatched by [`apply_leaf`].
+    value: Json,
+}
+
+// ---------------------------------------------------------------------------
 // Message application.
 // ---------------------------------------------------------------------------
 
@@ -525,7 +593,7 @@ fn active_route_from_value(value: &Json) -> Option<ActiveRoute> {
 ///
 /// Returns an error only for text that isn't valid JSON at all. A
 /// syntactically valid message that isn't a recognised Hello/Delta shape — or
-/// individual leaf entries with malformed values — are silently ignored,
+/// individual updates/leaf entries that are malformed — are silently ignored,
 /// matching Signal K's "be lenient about what you don't understand" model;
 /// one bad entry in an otherwise-good stream should never stop processing the
 /// rest.
@@ -536,45 +604,41 @@ fn active_route_from_value(value: &Json) -> Option<ActiveRoute> {
 /// (not reset) — there is nothing to parse it into, and silently discarding
 /// otherwise-good retained state would be worse than ignoring the message.
 pub fn apply_message(storage: &mut Storage, json: &str) -> Result<Option<String>, String> {
-    let raw: Json = serde_json::from_str(json).map_err(|e| format!("JSON parse error: {e}"))?;
-    let Some(obj) = raw.as_object() else {
+    let raw: &RawValue =
+        serde_json::from_str(json).map_err(|e| format!("JSON parse error: {e}"))?;
+    // Only an object can be a Hello/Delta. Without this guard serde would
+    // also accept the positional (array) form of `Message`.
+    if !raw.get().trim_start().starts_with('{') {
+        return Ok(None);
+    }
+    // The text is valid JSON and every field is `Lenient`, so this only fails
+    // on a duplicated envelope key — an unrecognised shape, ignored.
+    let Ok(message) = serde_json::from_str::<Message>(raw.get()) else {
         return Ok(None);
     };
 
-    if let Some(updates) = obj.get("updates").and_then(Json::as_array) {
-        let context = obj.get("context").and_then(Json::as_str);
-        // Infer self_ from the first delta's context if not yet set by Hello.
-        // A proper Hello will already have set it; this is defensive-only.
-        if storage.self_id.is_none()
-            && let Some(ctx) = context
-            && ctx.starts_with("vessels.")
-        {
-            storage.set_self(ctx);
-        }
-        let Some(id) = context.map(strip_vessels_prefix) else {
+    if let Some(updates) = message.updates.0 {
+        let Some(Text(context)) = message.context.0 else {
             return Ok(None);
         };
-        let vessel = storage.vessel_mut(id);
-        for update in updates {
-            let source = update.get("$source").and_then(Json::as_str);
-            let Some(values) = update.get("values").and_then(Json::as_array) else {
-                continue;
-            };
-            for entry in values {
-                let (Some(path), Some(value)) =
-                    (entry.get("path").and_then(Json::as_str), entry.get("value"))
-                else {
-                    continue;
-                };
-                apply_leaf(vessel, path, value, source);
+        // Infer self_ from the first delta's context if not yet set by Hello.
+        // A proper Hello will already have set it; this is defensive-only.
+        if storage.self_id.is_none() && context.starts_with("vessels.") {
+            storage.set_self(&context);
+        }
+        let vessel = storage.vessel_mut(strip_vessels_prefix(&context));
+        for update in updates.into_iter().filter_map(|u| u.0) {
+            let source = update.source.0.as_ref().map(|Text(s)| &**s);
+            for entry in update.values.0.into_iter().flatten().filter_map(|e| e.0) {
+                apply_leaf(vessel, &entry.path, &entry.value, source);
             }
         }
-        return Ok(context.map(str::to_string));
-    } else if obj.contains_key("self")
-        && !obj.contains_key("vessels")
-        && let Some(self_) = obj.get("self").and_then(Json::as_str)
+        return Ok(Some(context.into_owned()));
+    }
+    if message.vessels.0.is_none()
+        && let Some(Text(self_)) = message.self_.0
     {
-        storage.set_self(self_);
+        storage.set_self(&self_);
     }
     // Anything else (a Full snapshot, or an unrecognised shape) — see doc comment above.
     Ok(None)
@@ -858,7 +922,14 @@ mod tests {
     #[test]
     fn valid_json_that_is_not_an_object_is_ignored() {
         let mut storage = Storage::default();
-        for msg in ["[]", "42", r#""vessels.self""#, "null", r#"[null, []]"#] {
+        // `["vessels.x", []]` is the positional form a derived struct would accept.
+        for msg in [
+            "[]",
+            "42",
+            r#""vessels.self""#,
+            "null",
+            r#"["vessels.x", []]"#,
+        ] {
             assert_eq!(apply_message(&mut storage, msg), Ok(None), "{msg}");
         }
         assert!(storage.self_id().is_none());
