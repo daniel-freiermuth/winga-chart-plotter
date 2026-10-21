@@ -89,7 +89,9 @@ export function attachExtensionFrame(opts: AttachExtensionFrameOptions): Attache
   supervisor.start();
 
   const unwatchState = opts.watchInstanceState === true && context.instanceId
-    ? plotterExtensions.onInstanceStateChanged(extensionId, context.instanceId, (keys) => {
+    ? plotterExtensions.onInstanceStateChanged(extensionId, context.instanceId, (keys, writer) => {
+        // This frame's own `state.set` already answered with state.changed.
+        if (writer === host.conn) return;
         host.conn.publish('state.changed', {
           scope: 'instance', instanceId: context.instanceId, keys,
         });

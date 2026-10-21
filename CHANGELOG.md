@@ -19,6 +19,7 @@ All notable changes to this project are documented in this file.
 - Route names, waypoint names and AIS vessel strings (name, MMSI, callsigns, skipper, type, status, flag, port) were inserted into map popups as raw HTML, so a route or waypoint named e.g. `<img src=x onerror=…>` ran script when tapped — script that could read the stored Signal K token. They are now escaped and always shown as plain text.
 - Pasting a Signal K URL on its scheme's default port into the host field (e.g. `https://boat.example.com` or `https://boat.example.com:443`) switched to `wss` but kept the old port field value (e.g. 3000), so the app connected to `wss://boat.example.com:3000` and failed. Such URLs now use port 443 (`https`/`wss`) or 80 (`http`/`ws`).
 - After switching to a Signal K server that reports no own position (GPS not fixed yet, shore/planning server), the previous server's own ship — position, COG/SOG/heading and active route — stayed on the chart as live data, was used for CPA against the new server's AIS targets, and was appended to the new server's track. The own-ship state and route are now cleared on a server switch.
+- A widget extension that saved its own instance state with `state.set` was sent two identical `state.changed` events for the one write (one from the call itself, one echoed by the listener meant for writes from its config panel), so it re-read its state and reconfigured twice. It now gets exactly one; config-panel writes still reach the widget once.
 
 ## [0.22.0] - 2026-08-08
 
