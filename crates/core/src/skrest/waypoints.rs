@@ -76,10 +76,14 @@ mod wasm {
     #[wasm_bindgen(js_name = fetchAllWaypoints)]
     pub async fn fetch_all_waypoints(server_base: String) -> Result<JsValue, JsValue> {
         let url = format!("{server_base}/signalk/v2/api/resources/waypoints");
-        let resp = http::fetch("GET", &url, &JsValue::UNDEFINED, None, None).await?;
-        if !resp.ok() {
-            return Err(http::status_error("Waypoints API error", &resp).into());
-        }
+        let resp = http::fetch_ok(
+            "GET",
+            &url,
+            &JsValue::UNDEFINED,
+            None,
+            "Waypoints API error",
+        )
+        .await?;
         let waypoints: SkWaypointRecord =
             serde_json::from_str(&resp.text).map_err(crate::Error::json("Waypoints API"))?;
         crate::skrest::to_js_object(&waypoints)
@@ -97,10 +101,14 @@ mod wasm {
     ) -> Result<Option<String>, JsValue> {
         let url = format!("{server_base}/signalk/v2/api/resources/waypoints");
         let body = build_waypoint_body(&name, lat, lon).to_string();
-        let resp = http::fetch("POST", &url, &auth_headers, Some(&body), None).await?;
-        if !resp.ok() {
-            return Err(http::status_error("Save waypoint failed", &resp).into());
-        }
+        let resp = http::fetch_ok(
+            "POST",
+            &url,
+            &auth_headers,
+            Some(&body),
+            "Save waypoint failed",
+        )
+        .await?;
         Ok(extract_created_id(&resp.text))
     }
 
@@ -118,17 +126,19 @@ mod wasm {
         let url = format!("{server_base}/signalk/v2/api/resources/waypoints/{uuid}");
         // PUT replaces the whole resource: start from the server's copy so
         // fields this app does not edit survive.
-        let current = http::fetch("GET", &url, &auth_headers, None, None).await?;
-        if !current.ok() {
-            return Err(http::status_error("Update waypoint failed", &current).into());
-        }
+        let current =
+            http::fetch_ok("GET", &url, &auth_headers, None, "Update waypoint failed").await?;
         let existing: serde_json::Value =
             serde_json::from_str(&current.text).map_err(crate::Error::json("Update waypoint"))?;
         let body = build_waypoint_update_body(&existing, &name, lat, lon).to_string();
-        let resp = http::fetch("PUT", &url, &auth_headers, Some(&body), None).await?;
-        if !resp.ok() {
-            return Err(http::status_error("Update waypoint failed", &resp).into());
-        }
+        http::fetch_ok(
+            "PUT",
+            &url,
+            &auth_headers,
+            Some(&body),
+            "Update waypoint failed",
+        )
+        .await?;
         Ok(())
     }
 
@@ -140,10 +150,14 @@ mod wasm {
         auth_headers: JsValue,
     ) -> Result<(), JsValue> {
         let url = format!("{server_base}/signalk/v2/api/resources/waypoints/{uuid}");
-        let resp = http::fetch("DELETE", &url, &auth_headers, None, None).await?;
-        if !resp.ok() {
-            return Err(http::status_error("Delete waypoint failed", &resp).into());
-        }
+        http::fetch_ok(
+            "DELETE",
+            &url,
+            &auth_headers,
+            None,
+            "Delete waypoint failed",
+        )
+        .await?;
         Ok(())
     }
 }
