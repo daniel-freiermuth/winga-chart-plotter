@@ -160,6 +160,25 @@ describe('extension frame attachment', () => {
     expect(changed()).toBe(1); // nothing published into the dead frame
   });
 
+  it('tells a widget about its own state write exactly once', async () => {
+    const { relay } = recordingRelay();
+    const frame = fakeFrame(bus.peer);
+    await attach(frame, relay);
+
+    bus.deliver(envelope({ id: '1', method: 'events.subscribe', params: { patterns: ['state.changed'] } }));
+    await Promise.resolve();
+    bus.deliver(envelope({ id: '2', method: 'state.set', params: { values: { units: 'kn' } } }));
+    await Promise.resolve();
+
+    const params = bus.posted.flatMap((p) => {
+      if (typeof p !== 'object' || p === null || !('msg' in p)) return [];
+      const { msg } = p;
+      if (typeof msg !== 'object' || msg === null || !('method' in msg)) return [];
+      return msg.method === 'state.changed' && 'params' in msg ? [msg.params] : [];
+    });
+    expect(params).toEqual([{ scope: 'instance', instanceId: 'i1', keys: ['units'] }]);
+  });
+
   it('releases the frame, its listener and its subscriptions on detach', async () => {
     const { relay, unsubscribed } = recordingRelay();
     const frame = fakeFrame(bus.peer);
