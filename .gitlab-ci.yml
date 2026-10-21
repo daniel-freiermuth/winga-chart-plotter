@@ -95,6 +95,9 @@ lint:
   script:
     - cargo fmt --check
     - cargo clippy --all-targets --all-features -- -D warnings
+    # wasm32-gated modules (e.g. crates/core/src/client.rs) are invisible to
+    # the host-target clippy run above.
+    - cargo clippy --target wasm32-unknown-unknown -p signalk-chart-core --all-features -- -D warnings
     # Build WASM with dev profile — same JS/TS bindings as release, but faster.
     # svelte-check needs the generated app/src/wasm/ files to resolve imports.
     - wasm-pack build crates/core --target web --dev --out-dir ../../app/src/wasm
