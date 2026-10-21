@@ -27,7 +27,7 @@ S57-ish charts are supported after conversion into tiles (e.g. via [quilt-tiler]
 ### Prerequisites
 - [Rust](https://rustup.rs/) + `wasm32-unknown-unknown` target
 - [wasm-pack](https://rustwasm.github.io/wasm-pack/)
-- Node.js 18+
+- Node.js 24.15+ (or 22.22.2+; CI uses Node 24)
 - A running [Signal K server](https://signalk.org/)
 
 ```sh
