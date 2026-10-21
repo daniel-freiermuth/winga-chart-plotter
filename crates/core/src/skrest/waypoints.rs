@@ -55,12 +55,19 @@ pub fn build_waypoint_update_body(
     lat: f64,
     lon: f64,
 ) -> serde_json::Value {
-    build_waypoint_body(name, lat, lon)
+    let fresh = build_waypoint_body(name, lat, lon);
+    crate::skrest::routes::merge_update(
+        existing,
+        fresh,
+        &["name"],
+        &["type", "geometry"],
+        &["name"],
+    )
 }
 
 #[cfg(target_arch = "wasm32")]
 mod wasm {
-    use super::{SkWaypointRecord, build_waypoint_body};
+    use super::{SkWaypointRecord, build_waypoint_body, build_waypoint_update_body};
     use crate::skrest::http;
     use crate::skrest::routes::extract_created_id;
     use wasm_bindgen::prelude::*;
@@ -108,7 +115,15 @@ mod wasm {
         auth_headers: JsValue,
     ) -> Result<(), JsValue> {
         let url = format!("{server_base}/signalk/v2/api/resources/waypoints/{uuid}");
-        let body = build_waypoint_body(&name, lat, lon).to_string();
+        // PUT replaces the whole resource: start from the server's copy so
+        // fields this app does not edit survive.
+        let current = http::fetch("GET", &url, &auth_headers, None, None).await?;
+        if !current.ok() {
+            return Err(http::status_error("Update waypoint failed", &current));
+        }
+        let existing: serde_json::Value = serde_json::from_str(&current.text)
+            .map_err(|e| JsValue::from_str(&format!("Update waypoint parse error: {e}")))?;
+        let body = build_waypoint_update_body(&existing, &name, lat, lon).to_string();
         let resp = http::fetch("PUT", &url, &auth_headers, Some(&body), None).await?;
         if !resp.ok() {
             return Err(http::status_error("Update waypoint failed", &resp));

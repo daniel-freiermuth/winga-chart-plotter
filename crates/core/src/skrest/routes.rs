@@ -86,7 +86,73 @@ pub fn build_route_update_body(
     name: &str,
     waypoints: &[LonLat],
 ) -> serde_json::Value {
-    build_route_body(name, waypoints)
+    let fresh = build_route_body(name, waypoints);
+    merge_update(
+        existing,
+        fresh,
+        &["name", "distance"],
+        &["type", "geometry"],
+        &[],
+    )
+}
+
+/// Overlay the edited parts of `fresh` onto `existing`: top-level `top_keys`,
+/// `feature.*` `feature_keys` and `feature.properties.*` `prop_keys` come from
+/// `fresh`; everything else in `existing` is kept. Returns `fresh` unchanged
+/// when `existing` is not a JSON object.
+pub(crate) fn merge_update(
+    existing: &serde_json::Value,
+    fresh: serde_json::Value,
+    top_keys: &[&str],
+    feature_keys: &[&str],
+    prop_keys: &[&str],
+) -> serde_json::Value {
+    let Some(mut out) = existing.as_object().cloned() else {
+        return fresh;
+    };
+    let serde_json::Value::Object(mut fresh) = fresh else {
+        return fresh;
+    };
+    for key in top_keys {
+        if let Some(v) = fresh.remove(*key) {
+            out.insert((*key).to_string(), v);
+        }
+    }
+    let mut fresh_feature = match fresh.remove("feature") {
+        Some(serde_json::Value::Object(f)) => f,
+        _ => serde_json::Map::new(),
+    };
+    let mut feature = match out.remove("feature") {
+        Some(serde_json::Value::Object(f)) => f,
+        _ => serde_json::Map::new(),
+    };
+    for key in feature_keys {
+        if let Some(v) = fresh_feature.remove(*key) {
+            feature.insert((*key).to_string(), v);
+        }
+    }
+    if !prop_keys.is_empty() {
+        let mut fresh_props = match fresh_feature.remove("properties") {
+            Some(serde_json::Value::Object(p)) => p,
+            _ => serde_json::Map::new(),
+        };
+        let mut props = match feature.remove("properties") {
+            Some(serde_json::Value::Object(p)) => p,
+            _ => serde_json::Map::new(),
+        };
+        for key in prop_keys {
+            if let Some(v) = fresh_props.remove(*key) {
+                props.insert((*key).to_string(), v);
+            }
+        }
+        feature.insert("properties".to_string(), serde_json::Value::Object(props));
+    } else if !feature.contains_key("properties")
+        && let Some(p) = fresh_feature.remove("properties")
+    {
+        feature.insert("properties".to_string(), p);
+    }
+    out.insert("feature".to_string(), serde_json::Value::Object(feature));
+    serde_json::Value::Object(out)
 }
 
 /// A POST `resources/routes`/`resources/waypoints` response: either a bare
@@ -109,7 +175,9 @@ pub fn extract_created_id(text: &str) -> String {
 
 #[cfg(target_arch = "wasm32")]
 mod wasm {
-    use super::{LonLat, SkRouteRecord, build_route_body, extract_created_id};
+    use super::{
+        LonLat, SkRouteRecord, build_route_body, build_route_update_body, extract_created_id,
+    };
     use crate::skrest::http;
     use wasm_bindgen::prelude::*;
 
@@ -155,7 +223,15 @@ mod wasm {
     ) -> Result<(), JsValue> {
         let waypoints: Vec<LonLat> = serde_wasm_bindgen::from_value(waypoints)?;
         let url = format!("{server_base}/signalk/v2/api/resources/routes/{uuid}");
-        let body = build_route_body(&name, &waypoints).to_string();
+        // PUT replaces the whole resource: start from the server's copy so
+        // fields the planner does not edit survive.
+        let current = http::fetch("GET", &url, &auth_headers, None, None).await?;
+        if !current.ok() {
+            return Err(http::status_error("Update route failed", &current));
+        }
+        let existing: serde_json::Value = serde_json::from_str(&current.text)
+            .map_err(|e| JsValue::from_str(&format!("Update route parse error: {e}")))?;
+        let body = build_route_update_body(&existing, &name, &waypoints).to_string();
         let resp = http::fetch("PUT", &url, &auth_headers, Some(&body), None).await?;
         if !resp.ok() {
             return Err(http::status_error("Update route failed", &resp));
