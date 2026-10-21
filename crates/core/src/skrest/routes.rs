@@ -76,6 +76,19 @@ pub fn build_route_body(name: &str, waypoints: &[LonLat]) -> serde_json::Value {
     })
 }
 
+/// Build the PUT body for `resources/routes/:uuid` from the server's current
+/// copy of the route. A Signal K PUT replaces the whole resource, so fields
+/// the planner does not edit (description, `feature.properties` such as
+/// `coordinatesMeta`, vendor extras) are carried over from `existing`; only
+/// the name, distance and geometry are taken from the edit.
+pub fn build_route_update_body(
+    existing: &serde_json::Value,
+    name: &str,
+    waypoints: &[LonLat],
+) -> serde_json::Value {
+    build_route_body(name, waypoints)
+}
+
 /// A POST `resources/routes`/`resources/waypoints` response: either a bare
 /// UUID string, or an object carrying `id`/`uuid`.
 pub fn extract_created_id(text: &str) -> String {
@@ -225,6 +238,47 @@ mod tests {
             serde_json::json!([[24.94, 60.17], [24.75, 59.44]])
         );
         assert!(body["distance"].as_f64().unwrap() > 0.0);
+    }
+
+    #[test]
+    fn route_update_preserves_unedited_fields() {
+        let existing = serde_json::json!({
+            "name": "Old",
+            "description": "Harbour approach",
+            "distance": 1.0,
+            "x-vendor": 7,
+            "feature": {
+                "type": "Feature",
+                "geometry": { "type": "LineString", "coordinates": [[0.0, 0.0], [1.0, 1.0]] },
+                "properties": { "coordinatesMeta": [{ "name": "A" }, { "name": "B" }] },
+                "id": "f1",
+            },
+        });
+        let body = build_route_update_body(
+            &existing,
+            "New",
+            &[LonLat { lon: 0.0, lat: 0.0 }, LonLat { lon: 0.0, lat: 1.0 }],
+        );
+        assert_eq!(body["name"], "New");
+        assert_eq!(body["description"], "Harbour approach");
+        assert_eq!(body["x-vendor"], 7);
+        assert_eq!(body["feature"]["id"], "f1");
+        assert_eq!(
+            body["feature"]["properties"]["coordinatesMeta"][1]["name"],
+            "B"
+        );
+        assert_eq!(
+            body["feature"]["geometry"]["coordinates"],
+            serde_json::json!([[0.0, 0.0], [0.0, 1.0]])
+        );
+        assert!(body["distance"].as_f64().unwrap() > 100_000.0);
+    }
+
+    #[test]
+    fn route_update_without_usable_original_is_fresh_body() {
+        let pts = [LonLat { lon: 0.0, lat: 0.0 }, LonLat { lon: 0.0, lat: 1.0 }];
+        let body = build_route_update_body(&serde_json::Value::Null, "R", &pts);
+        assert_eq!(body, build_route_body("R", &pts));
     }
 
     #[test]

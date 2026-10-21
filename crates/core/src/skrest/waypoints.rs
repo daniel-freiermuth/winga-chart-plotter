@@ -45,6 +45,19 @@ pub fn build_waypoint_body(name: &str, lat: f64, lon: f64) -> serde_json::Value 
     })
 }
 
+/// Build the PUT body for `resources/waypoints/:uuid` from the server's
+/// current copy. A Signal K PUT replaces the whole resource, so fields this
+/// app does not edit (description, other `feature.properties`, vendor extras)
+/// are carried over from `existing`; only name and position are replaced.
+pub fn build_waypoint_update_body(
+    existing: &serde_json::Value,
+    name: &str,
+    lat: f64,
+    lon: f64,
+) -> serde_json::Value {
+    build_waypoint_body(name, lat, lon)
+}
+
 #[cfg(target_arch = "wasm32")]
 mod wasm {
     use super::{SkWaypointRecord, build_waypoint_body};
@@ -141,6 +154,36 @@ mod tests {
             serde_json::json!([24.94, 60.17])
         );
         assert_eq!(body["feature"]["properties"]["name"], "My mark");
+    }
+
+    #[test]
+    fn waypoint_update_preserves_unedited_fields() {
+        let existing = serde_json::json!({
+            "name": "Old",
+            "description": "Fuel dock",
+            "type": "harbour",
+            "feature": {
+                "type": "Feature",
+                "geometry": { "type": "Point", "coordinates": [1.0, 2.0] },
+                "properties": { "name": "Old", "skIcon": "fuel" },
+            },
+        });
+        let body = build_waypoint_update_body(&existing, "New", 60.17, 24.94);
+        assert_eq!(body["name"], "New");
+        assert_eq!(body["description"], "Fuel dock");
+        assert_eq!(body["type"], "harbour");
+        assert_eq!(body["feature"]["properties"]["name"], "New");
+        assert_eq!(body["feature"]["properties"]["skIcon"], "fuel");
+        assert_eq!(
+            body["feature"]["geometry"]["coordinates"],
+            serde_json::json!([24.94, 60.17])
+        );
+    }
+
+    #[test]
+    fn waypoint_update_without_usable_original_is_fresh_body() {
+        let body = build_waypoint_update_body(&serde_json::json!("x"), "N", 1.0, 2.0);
+        assert_eq!(body, build_waypoint_body("N", 1.0, 2.0));
     }
 
     #[test]
