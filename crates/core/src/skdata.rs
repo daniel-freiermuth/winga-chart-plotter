@@ -856,6 +856,92 @@ mod tests {
     }
 
     #[test]
+    fn valid_json_that_is_not_an_object_is_ignored() {
+        let mut storage = Storage::default();
+        for msg in ["[]", "42", r#""vessels.self""#, "null", r#"[null, []]"#] {
+            assert_eq!(apply_message(&mut storage, msg), Ok(None), "{msg}");
+        }
+        assert!(storage.self_id().is_none());
+        assert!(storage.vessels.is_empty());
+    }
+
+    #[test]
+    fn malformed_envelope_parts_are_skipped_not_fatal() {
+        // Each malformed piece (non-object update, non-array values, entry
+        // without `value`, non-string `path`, non-string `$source`) is skipped
+        // individually; well-formed siblings in the same message still apply.
+        let mut storage = Storage::default();
+        storage.set_self("vessels.urn:mrn:signalk:uuid:self");
+        let ctx = apply_message(
+            &mut storage,
+            r#"{
+            "context": "vessels.urn:mrn:signalk:uuid:self",
+            "updates": [
+                7,
+                {"$source": "a", "values": {"path": "navigation.speedOverGround", "value": 1.0}},
+                {"$source": 5, "values": [
+                    {"path": "navigation.speedOverGround"},
+                    {"path": 1, "value": 2.0},
+                    "junk",
+                    {"path": "navigation.position", "value": {"longitude": 10.0, "latitude": 59.0}}
+                ]}
+            ]
+        }"#,
+        )
+        .unwrap();
+        assert_eq!(ctx.as_deref(), Some("vessels.urn:mrn:signalk:uuid:self"));
+        let state = extract_vessel_state(&storage);
+        assert_eq!(state.sog, None);
+        assert_eq!(state.position, Some(Position::new(10.0, 59.0)));
+        let vessel = &storage.vessels["urn:mrn:signalk:uuid:self"];
+        assert_eq!(vessel.nav.position_source, None);
+    }
+
+    #[test]
+    fn escaped_strings_in_envelope_are_decoded() {
+        // JSON escapes can't be borrowed from the input; they must still be
+        // decoded, not dropped.
+        let mut storage = Storage::default();
+        let ctx = apply_message(
+            &mut storage,
+            r#"{
+            "context": "vessels.urn:mrn:signalk:uuid:s\u0065lf",
+            "updates": [{"$source": "ws.\"quoted\"", "values": [
+                {"path": "navigation.p\u006fsition", "value": {"longitude": 1.0, "latitude": 2.0}}
+            ]}]
+        }"#,
+        )
+        .unwrap();
+        assert_eq!(ctx.as_deref(), Some("vessels.urn:mrn:signalk:uuid:self"));
+        assert_eq!(storage.self_id(), Some("urn:mrn:signalk:uuid:self"));
+        let vessel = &storage.vessels["urn:mrn:signalk:uuid:self"];
+        assert_eq!(vessel.nav.position, Some(Position::new(1.0, 2.0)));
+        assert_eq!(vessel.nav.position_source.as_deref(), Some("ws.\"quoted\""));
+    }
+
+    #[test]
+    fn delta_without_context_is_ignored() {
+        let mut storage = Storage::default();
+        let ctx = apply_message(
+            &mut storage,
+            r#"{"updates": [{"values": [{"path": "navigation.speedOverGround", "value": 1.0}]}]}"#,
+        )
+        .unwrap();
+        assert_eq!(ctx, None);
+        assert!(storage.vessels.is_empty());
+    }
+
+    #[test]
+    fn hello_requires_string_self_and_no_vessels_key() {
+        let mut storage = Storage::default();
+        apply_message(&mut storage, r#"{"self": 5}"#).unwrap();
+        apply_message(&mut storage, r#"{"self": "vessels.a", "vessels": null}"#).unwrap();
+        assert!(storage.self_id().is_none());
+        apply_message(&mut storage, r#"{"version": "2.0.0", "self": "vessels.b"}"#).unwrap();
+        assert_eq!(storage.self_id(), Some("b"));
+    }
+
+    #[test]
     fn ais_targets_exclude_self() {
         let mut storage = Storage::default();
         storage.set_self("vessels.urn:mrn:signalk:uuid:self");
