@@ -8,6 +8,7 @@ All notable changes to this project are documented in this file.
 
 - A Signal K `navigation.datetime` value with a non-ASCII character in its fractional seconds could panic the WASM core (byte slice inside a multi-byte character); such timestamps are now rejected as unparseable.
 - After any reconnect (server dropped the stream, returning to the tab while offline, or switching servers), AIS targets stopped arriving for the rest of the session: the subscribe messages were written to the old, closed WebSocket instead of the new one. They are now sent on the socket that just opened.
+- When the last AIS targets went stale, or after switching to a Signal K server with no AIS targets, the previous targets stayed on the chart (dead-reckoning onward) indefinitely: an empty target set was never sent to the map. It is now, and the chart clears.
 
 ## [0.22.0] - 2026-08-08
 

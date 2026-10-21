@@ -773,9 +773,12 @@ pub fn prune_stale_vessels(storage: &mut Storage, now_ms: f64, stale_ms: f64) {
 /// Whether an AIS snapshot of `count` targets must be posted to the consumer,
 /// given whether the previously posted snapshot was empty (`false` before the
 /// first post, when the consumer's state is unknown).
+///
+/// The consumer replaces its whole AIS state with each snapshot, so the drop to
+/// zero targets (last target pruned stale, server switch to one without AIS)
+/// must be posted; only repeats of an already-posted empty snapshot are skipped.
 pub fn ais_snapshot_due(count: usize, last_posted_empty: bool) -> bool {
-    let _ = last_posted_empty;
-    count > 0
+    count > 0 || !last_posted_empty
 }
 
 #[cfg(test)]
