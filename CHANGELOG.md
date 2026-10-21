@@ -14,6 +14,7 @@ All notable changes to this project are documented in this file.
 - After any reconnect (server dropped the stream, returning to the tab while offline, or switching servers), AIS targets stopped arriving for the rest of the session: the subscribe messages were written to the old, closed WebSocket instead of the new one. They are now sent on the socket that just opened.
 - When the last AIS targets went stale, or after switching to a Signal K server with no AIS targets, the previous targets stayed on the chart (dead-reckoning onward) indefinitely: an empty target set was never sent to the map. It is now, and the chart clears.
 - A WMTS chart layer that is not published in a Web Mercator tile matrix set was requested on the service's other (Web Mercator) grid anyway, giving offset or missing tiles with no error. Such a chart is now reported as "Failed to load", and such a layer offers no preview/tile URL in the picker.
+- Removing an extension widget, closing an extension panel, or an extension stopping one of its Signal K subscriptions dropped the whole Signal K connection (own vessel and AIS) until the reconnect a few seconds later: the app sent a per-path unsubscribe, which Signal K servers reject by closing the stream. Released paths are no longer unsubscribed upstream; the relay ignores them until the next reconnect.
 
 ## [0.22.0] - 2026-08-08
 
