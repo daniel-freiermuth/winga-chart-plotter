@@ -30,6 +30,7 @@
   import { auth } from '../stores/auth.svelte';
   import { fetchAisVesselTrack, navigateToPoint, clearCourse, activateRoute, setActiveRoutePointIndex, deleteRoute, saveWaypoint, updateWaypoint, deleteWaypoint } from '../lib/wasmRest';
   import { extrapolatePos } from '../lib/deadReckoning';
+  import { formatDm } from '../lib/coordFormat';
   import { SvelteMap, SvelteSet } from 'svelte/reactivity';
   import { buildTrackGradient, processTrack, processRouteCoords } from '../lib/trackProcessing';
   import { hexToRgba, dashArray } from '../lib/mapStyles';
@@ -1789,18 +1790,6 @@
       if (!t) return;
       handleGesture({ type: 'tap', target: t, lngLat, clientX: 0, clientY: 0 });
     });
-  }
-
-  /** Format a lat/lon pair as degrees and decimal minutes (marine standard). */
-  function formatDm(lat: number, lon: number): string {
-    const dm = (deg: number, isLat: boolean): string => {
-      const dir = isLat ? (deg >= 0 ? 'N' : 'S') : (deg >= 0 ? 'E' : 'W');
-      const abs = Math.abs(deg);
-      const d = Math.floor(abs);
-      const m = (abs - d) * 60;
-      return `${String(d)}°\u202f${m.toFixed(3)}'\u202f${dir}`;
-    };
-    return `${dm(lat, true)}&emsp;${dm(lon, false)}`;
   }
 
   /** Prompt for a name and save a waypoint at the given position. */
