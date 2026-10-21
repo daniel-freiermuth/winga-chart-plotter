@@ -22,7 +22,7 @@ mod wasm {
         let body = mob_body().to_string();
         let resp = http::fetch("POST", &url, &auth_headers, Some(&body), None).await?;
         if !resp.ok() {
-            return Err(http::status_error("MOB raise failed", &resp));
+            return Err(http::status_error("MOB raise failed", &resp).into());
         }
         Ok(())
     }

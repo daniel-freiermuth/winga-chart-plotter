@@ -4,6 +4,10 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- Signal K REST calls that fail on a malformed response body (or a WASM serialization failure) now reject with a JS `Error`, like HTTP status failures already did, instead of a bare string — error handlers can rely on `err instanceof Error` / `err.message` for every failure.
+
 ### Fixed
 
 - A Signal K `navigation.datetime` value with a non-ASCII character in its fractional seconds could panic the WASM core (byte slice inside a multi-byte character); such timestamps are now rejected as unparseable.

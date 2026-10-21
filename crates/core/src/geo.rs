@@ -250,7 +250,7 @@ pub fn gc_line(
     segments: u32,
 ) -> Result<JsValue, JsValue> {
     let coords = line_coords(lon_a, lat_a, lon_b, lat_b, segments);
-    serde_wasm_bindgen::to_value(&coords).map_err(|e| JsValue::from_str(&e.to_string()))
+    serde_wasm_bindgen::to_value(&coords).map_err(|e| crate::Error::from(e).into())
 }
 
 /// Compute CPA between own vessel (linear track, no RoT) and a target (arc track via RoT).
@@ -522,7 +522,7 @@ pub fn process_track(flat: &[f64]) -> Result<JsValue, JsValue> {
         overflow_segments,
         fade_stop,
     };
-    serde_wasm_bindgen::to_value(&result).map_err(|e| JsValue::from_str(&e.to_string()))
+    serde_wasm_bindgen::to_value(&result).map_err(|e| crate::Error::from(e).into())
 }
 
 /// Split raw route/line coords (flat `[lon0, lat0, lon1, lat1, …]`) at antimeridian
@@ -532,7 +532,7 @@ pub fn process_track(flat: &[f64]) -> Result<JsValue, JsValue> {
 pub fn process_route_coords(flat: &[f64]) -> Result<JsValue, JsValue> {
     let raw = pairs_from_flat(flat);
     let segs = process_route_coords_core(&raw);
-    serde_wasm_bindgen::to_value(&segs).map_err(|e| JsValue::from_str(&e.to_string()))
+    serde_wasm_bindgen::to_value(&segs).map_err(|e| crate::Error::from(e).into())
 }
 
 /// Normalize a longitude to `[-180, 180)`.

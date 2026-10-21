@@ -38,7 +38,7 @@ mod wasm {
         let body = destination_body(latitude, longitude).to_string();
         let resp = http::fetch("PUT", &url, &auth_headers, Some(&body), None).await?;
         if !resp.ok() {
-            return Err(http::status_error("Navigate to point failed", &resp));
+            return Err(http::status_error("Navigate to point failed", &resp).into());
         }
         Ok(())
     }
@@ -50,7 +50,7 @@ mod wasm {
         let url = format!("{server_base}/signalk/v2/api/vessels/self/navigation/course");
         let resp = http::fetch("DELETE", &url, &auth_headers, None, None).await?;
         if !resp.ok() {
-            return Err(http::status_error("Clear course failed", &resp));
+            return Err(http::status_error("Clear course failed", &resp).into());
         }
         Ok(())
     }
@@ -68,7 +68,7 @@ mod wasm {
         let body = active_route_body(&route_uuid).to_string();
         let resp = http::fetch("PUT", &url, &auth_headers, Some(&body), None).await?;
         if !resp.ok() {
-            return Err(http::status_error("Activate route failed", &resp));
+            return Err(http::status_error("Activate route failed", &resp).into());
         }
         Ok(())
     }
@@ -87,7 +87,7 @@ mod wasm {
         let body = point_index_body(index).to_string();
         let resp = http::fetch("PUT", &url, &auth_headers, Some(&body), None).await?;
         if !resp.ok() {
-            return Err(http::status_error("Set route point index failed", &resp));
+            return Err(http::status_error("Set route point index failed", &resp).into());
         }
         Ok(())
     }

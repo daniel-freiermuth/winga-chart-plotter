@@ -3,6 +3,7 @@
 //! lives outside this file so it stays host-testable; only the actual
 //! request/response plumbing crosses into here.
 
+use crate::Error;
 use js_sys::{Object, Reflect};
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
@@ -67,7 +68,7 @@ pub fn start_fetch(
     init.set_headers_record_from_str_to_str(&headers);
 
     let request = Request::new_with_str_and_init(url, &init)?;
-    let window = web_sys::window().ok_or_else(|| JsValue::from_str("no global window"))?;
+    let window = web_sys::window().ok_or(Error::NoWindow)?;
     Ok(window.fetch_with_request(&request))
 }
 
@@ -101,11 +102,12 @@ pub async fn fetch(
     await_response(promise).await
 }
 
-/// Build a `js_sys::Error`-backed rejection matching the ported TS code's
-/// `throw new Error("<action>: <status> <statusText>")` shape.
-pub fn status_error(action: &str, resp: &HttpResponse) -> JsValue {
-    JsValue::from(js_sys::Error::new(&format!(
-        "{action}: {} {}",
-        resp.status, resp.status_text
-    )))
+/// Typed rejection for a non-2xx response; crosses to JS as a `js_sys::Error`
+/// matching the ported TS code's `throw new Error("<action>: <status> <statusText>")`.
+pub fn status_error(action: &'static str, resp: &HttpResponse) -> Error {
+    Error::Status {
+        action,
+        status: resp.status,
+        status_text: resp.status_text.clone(),
+    }
 }

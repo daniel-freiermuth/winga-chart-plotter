@@ -263,7 +263,7 @@ mod wasm {
         } else {
             dedup_coords(&all)
         };
-        serde_wasm_bindgen::to_value(&result).map_err(|e| JsValue::from_str(&e.to_string()))
+        serde_wasm_bindgen::to_value(&result).map_err(|e| crate::Error::from(e).into())
     }
 
     /// Fetch position history for an AIS vessel (v2 history + v1 in-memory
@@ -306,7 +306,7 @@ mod wasm {
             all.extend(v1_coords);
             dedup_coords(&all)
         };
-        serde_wasm_bindgen::to_value(&result).map_err(|e| JsValue::from_str(&e.to_string()))
+        serde_wasm_bindgen::to_value(&result).map_err(|e| crate::Error::from(e).into())
     }
 }
 

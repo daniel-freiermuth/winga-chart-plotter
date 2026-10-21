@@ -603,9 +603,9 @@ struct PathValue<'a> {
 /// expected in practice. If one arrives anyway, storage is left untouched
 /// (not reset) — there is nothing to parse it into, and silently discarding
 /// otherwise-good retained state would be worse than ignoring the message.
-pub fn apply_message(storage: &mut Storage, json: &str) -> Result<Option<String>, String> {
+pub fn apply_message(storage: &mut Storage, json: &str) -> crate::Result<Option<String>> {
     let raw: &RawValue =
-        serde_json::from_str(json).map_err(|e| format!("JSON parse error: {e}"))?;
+        serde_json::from_str(json).map_err(crate::Error::json("Signal K message"))?;
     // Only an object can be a Hello/Delta. Without this guard serde would
     // also accept the positional (array) form of `Message`.
     if !raw.get().trim_start().starts_with('{') {
@@ -916,7 +916,13 @@ mod tests {
     fn malformed_json_returns_error() {
         let mut storage = Storage::default();
         let result = apply_message(&mut storage, "not json");
-        assert!(result.is_err());
+        assert!(matches!(
+            result,
+            Err(crate::Error::Json {
+                context: "Signal K message",
+                ..
+            })
+        ));
     }
 
     #[test]
@@ -930,7 +936,8 @@ mod tests {
             "null",
             r#"["vessels.x", []]"#,
         ] {
-            assert_eq!(apply_message(&mut storage, msg), Ok(None), "{msg}");
+            let result = apply_message(&mut storage, msg);
+            assert!(matches!(result, Ok(None)), "{msg}: {result:?}");
         }
         assert!(storage.self_id().is_none());
         assert!(storage.vessels.is_empty());

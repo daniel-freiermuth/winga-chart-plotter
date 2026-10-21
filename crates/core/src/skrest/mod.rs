@@ -29,7 +29,7 @@ pub fn to_js_object<T: serde::Serialize + ?Sized>(
 ) -> Result<wasm_bindgen::JsValue, wasm_bindgen::JsValue> {
     value
         .serialize(&serde_wasm_bindgen::Serializer::json_compatible())
-        .map_err(|e| wasm_bindgen::JsValue::from_str(&e.to_string()))
+        .map_err(|e| crate::Error::from(e).into())
 }
 
 pub mod charts;
