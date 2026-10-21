@@ -64,6 +64,9 @@ export class MockSignalK {
   private readonly sockets = new Set<WebSocket>();
   private readonly timers = new Set<NodeJS.Timeout>();
 
+  /** `selfId`: the own-vessel id this server announces in its Hello. */
+  constructor(readonly selfId: string = OWN_ID) {}
+
   async start(): Promise<number> {
     this.http = createServer((req, res) => {
       const url = req.url ?? '';
@@ -99,7 +102,7 @@ export class MockSignalK {
         ws.send(JSON.stringify({
           name: 'mock-signalk',
           version: '2.0.0',
-          self: `vessels.${OWN_ID}`,
+          self: `vessels.${this.selfId}`,
           roles: ['master', 'main'],
           timestamp: iso(),
         }));
@@ -167,7 +170,7 @@ export class MockSignalK {
 
   /** Own-vessel navigation delta (position + COG + SOG). */
   ownNav(nav: { lon: number; lat: number; cogRad: number; sogMs: number }): void {
-    this.delta(OWN_ID, [
+    this.delta(this.selfId, [
       { path: 'navigation.position', value: { longitude: nav.lon, latitude: nav.lat } },
       { path: 'navigation.courseOverGroundTrue', value: nav.cogRad },
       { path: 'navigation.speedOverGround', value: nav.sogMs },
