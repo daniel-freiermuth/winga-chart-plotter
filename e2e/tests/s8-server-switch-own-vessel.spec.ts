@@ -53,3 +53,37 @@ test('own-ship position from the previous server is dropped after a server switc
     await second.stop();
   }
 });
+
+// The same vessel behind another URL: Storage keeps its data, so every own
+// state on the new socket equals the last one emitted before the switch. It
+// must still reach the app, which cleared its own-ship state on the switch.
+test('an unchanged own-ship fix reappears after switching to the same vessel', async ({ page }) => {
+  const first = new MockSignalK(OWN_ID);
+  const second = new MockSignalK(OWN_ID);
+  const firstPort = await first.start();
+  const secondPort = await second.start();
+  const fix = { lon: VIEW.lon, lat: VIEW.lat, cogRad: 0.5, sogMs: 3 };
+
+  try {
+    await seedApp(page, { port: firstPort });
+    await blockExternalTiles(page);
+    const followBtn = page.locator('.nav-stack button.nav-fab').nth(1);
+    await page.goto('/');
+
+    await expect(settingsButton(page)).toHaveCSS('color', GREEN, { timeout: 20_000 });
+    first.ownNav(fix);
+    await expect(followBtn).toBeEnabled({ timeout: 10_000 });
+
+    await settingsButton(page).click();
+    await page.locator('input[type="number"][max="65535"]').fill(String(secondPort));
+    await page.getByRole('button', { name: 'Save & reconnect' }).click();
+
+    await second.waitForSubscriptions(1, ['vessels.self']);
+    await expect(settingsButton(page)).toHaveCSS('color', GREEN, { timeout: 10_000 });
+    second.ownNav(fix);
+    await expect(followBtn).toBeEnabled({ timeout: 5_000 });
+  } finally {
+    await first.stop();
+    await second.stop();
+  }
+});
