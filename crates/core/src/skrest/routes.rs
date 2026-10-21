@@ -187,10 +187,10 @@ mod wasm {
         let url = format!("{server_base}/signalk/v2/api/resources/routes");
         let resp = http::fetch("GET", &url, &JsValue::UNDEFINED, None, None).await?;
         if !resp.ok() {
-            return Err(http::status_error("Routes API error", &resp));
+            return Err(http::status_error("Routes API error", &resp).into());
         }
-        let routes: SkRouteRecord = serde_json::from_str(&resp.text)
-            .map_err(|e| JsValue::from_str(&format!("Routes API parse error: {e}")))?;
+        let routes: SkRouteRecord =
+            serde_json::from_str(&resp.text).map_err(crate::Error::json("Routes API"))?;
         crate::skrest::to_js_object(&routes)
     }
 
@@ -208,7 +208,7 @@ mod wasm {
         let body = build_route_body(&name, &waypoints).to_string();
         let resp = http::fetch("POST", &url, &auth_headers, Some(&body), None).await?;
         if !resp.ok() {
-            return Err(http::status_error("Save route failed", &resp));
+            return Err(http::status_error("Save route failed", &resp).into());
         }
         Ok(extract_created_id(&resp.text))
     }
@@ -228,14 +228,14 @@ mod wasm {
         // fields the planner does not edit survive.
         let current = http::fetch("GET", &url, &auth_headers, None, None).await?;
         if !current.ok() {
-            return Err(http::status_error("Update route failed", &current));
+            return Err(http::status_error("Update route failed", &current).into());
         }
-        let existing: serde_json::Value = serde_json::from_str(&current.text)
-            .map_err(|e| JsValue::from_str(&format!("Update route parse error: {e}")))?;
+        let existing: serde_json::Value =
+            serde_json::from_str(&current.text).map_err(crate::Error::json("Update route"))?;
         let body = build_route_update_body(&existing, &name, &waypoints).to_string();
         let resp = http::fetch("PUT", &url, &auth_headers, Some(&body), None).await?;
         if !resp.ok() {
-            return Err(http::status_error("Update route failed", &resp));
+            return Err(http::status_error("Update route failed", &resp).into());
         }
         Ok(())
     }
@@ -250,7 +250,7 @@ mod wasm {
         let url = format!("{server_base}/signalk/v2/api/resources/routes/{uuid}");
         let resp = http::fetch("DELETE", &url, &auth_headers, None, None).await?;
         if !resp.ok() {
-            return Err(http::status_error("Delete route failed", &resp));
+            return Err(http::status_error("Delete route failed", &resp).into());
         }
         Ok(())
     }

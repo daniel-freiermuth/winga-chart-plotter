@@ -1,3 +1,4 @@
+pub mod error;
 pub mod geo;
 pub mod projection;
 pub mod skdata;
@@ -6,6 +7,7 @@ pub mod skrest;
 #[cfg(target_arch = "wasm32")]
 pub mod client;
 
+pub use error::{Error, Result};
 pub use projection::{Projection, WebMercator};
 pub use skdata::{Position, VesselState};
 

@@ -114,12 +114,12 @@ mod wasm {
         if !resp.ok() {
             return Ok(js_sys::Map::new().into());
         }
-        let data: serde_json::Value = serde_json::from_str(&resp.text)
-            .map_err(|e| JsValue::from_str(&format!("Vessels API parse error: {e}")))?;
+        let data: serde_json::Value =
+            serde_json::from_str(&resp.text).map_err(crate::Error::json("Vessels API"))?;
         let info = extract_all(&data);
         // Genuine `Map` return (the original builds one explicitly) — plain
         // `to_value` is correct here, unlike the Record-shaped REST resources.
-        serde_wasm_bindgen::to_value(&info).map_err(|e| JsValue::from_str(&e.to_string()))
+        serde_wasm_bindgen::to_value(&info).map_err(|e| crate::Error::from(e).into())
     }
 }
 

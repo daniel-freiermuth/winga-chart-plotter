@@ -78,10 +78,10 @@ mod wasm {
         let url = format!("{server_base}/signalk/v2/api/resources/waypoints");
         let resp = http::fetch("GET", &url, &JsValue::UNDEFINED, None, None).await?;
         if !resp.ok() {
-            return Err(http::status_error("Waypoints API error", &resp));
+            return Err(http::status_error("Waypoints API error", &resp).into());
         }
-        let waypoints: SkWaypointRecord = serde_json::from_str(&resp.text)
-            .map_err(|e| JsValue::from_str(&format!("Waypoints API parse error: {e}")))?;
+        let waypoints: SkWaypointRecord =
+            serde_json::from_str(&resp.text).map_err(crate::Error::json("Waypoints API"))?;
         crate::skrest::to_js_object(&waypoints)
     }
 
@@ -99,7 +99,7 @@ mod wasm {
         let body = build_waypoint_body(&name, lat, lon).to_string();
         let resp = http::fetch("POST", &url, &auth_headers, Some(&body), None).await?;
         if !resp.ok() {
-            return Err(http::status_error("Save waypoint failed", &resp));
+            return Err(http::status_error("Save waypoint failed", &resp).into());
         }
         Ok(extract_created_id(&resp.text))
     }
@@ -120,14 +120,14 @@ mod wasm {
         // fields this app does not edit survive.
         let current = http::fetch("GET", &url, &auth_headers, None, None).await?;
         if !current.ok() {
-            return Err(http::status_error("Update waypoint failed", &current));
+            return Err(http::status_error("Update waypoint failed", &current).into());
         }
-        let existing: serde_json::Value = serde_json::from_str(&current.text)
-            .map_err(|e| JsValue::from_str(&format!("Update waypoint parse error: {e}")))?;
+        let existing: serde_json::Value =
+            serde_json::from_str(&current.text).map_err(crate::Error::json("Update waypoint"))?;
         let body = build_waypoint_update_body(&existing, &name, lat, lon).to_string();
         let resp = http::fetch("PUT", &url, &auth_headers, Some(&body), None).await?;
         if !resp.ok() {
-            return Err(http::status_error("Update waypoint failed", &resp));
+            return Err(http::status_error("Update waypoint failed", &resp).into());
         }
         Ok(())
     }
@@ -142,7 +142,7 @@ mod wasm {
         let url = format!("{server_base}/signalk/v2/api/resources/waypoints/{uuid}");
         let resp = http::fetch("DELETE", &url, &auth_headers, None, None).await?;
         if !resp.ok() {
-            return Err(http::status_error("Delete waypoint failed", &resp));
+            return Err(http::status_error("Delete waypoint failed", &resp).into());
         }
         Ok(())
     }
