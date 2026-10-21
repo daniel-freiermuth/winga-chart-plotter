@@ -13,8 +13,9 @@ export interface SkRelay {
   unsubscribe(subscriptionId: string): void;
   /**
    * Re-send upstream subscribe messages for every path that currently has at
-   * least one subscriber.  Call this after a WebSocket reconnect so the new
-   * server connection learns about all active subscriptions.
+   * least one subscriber.  Call this whenever a WebSocket connection opens so
+   * the new server connection learns about all active subscriptions; it also
+   * resets which paths count as already streamed.
    */
   resubscribe(): void;
 }
@@ -34,29 +35,33 @@ interface SubRecord { path: string; cb: SkValueCallback; }
 /**
  * Create a relay that fans out SK path/value/timestamp tuples to subscribers.
  *
- * `sendUpstream` is called with raw SK JSON subscribe/unsubscribe messages
- * whenever the first/last subscriber for a path is added/removed.  Pass a
- * function that forwards the string to the SignalK WebSocket (via the worker).
+ * `sendUpstream` is called with a raw SK JSON subscribe message whenever the
+ * first subscriber for a path not yet streamed on the current connection is
+ * added.  Pass a function that forwards the string to the SignalK WebSocket
+ * (via the worker).
+ *
+ * Releasing the last subscriber sends nothing upstream: Signal K servers only
+ * accept unsubscribe-all (`{"context":"*","unsubscribe":[{"path":"*"}]}`) and
+ * close the stream on any other unsubscribe, and unsubscribe-all would also
+ * cancel the app's own subscriptions on the shared socket.  The server keeps
+ * streaming the path until the next reconnect; `feed` drops it.
  */
 export function createSkRelay(sendUpstream: (msg: string) => void): SkRelay {
   // subId → {path, cb}
   const subs = new Map<string, SubRecord>();
   // path → Set<subId>  (for fan-out on incoming delta)
   const pathSubs = new Map<string, Set<string>>();
+  // Paths subscribed on the current connection.  Never sent twice: the server
+  // stacks repeated subscribes and would deliver every value once per copy.
+  const streamed = new Set<string>();
 
   // ── Upstream helpers ─────────────────────────────────────────────────────────
 
   function subscribePathUpstream(path: string): void {
+    streamed.add(path);
     sendUpstream(JSON.stringify({
       context: 'vessels.self',
       subscribe: [{ path, period: 1000 }],
-    }));
-  }
-
-  function unsubscribePathUpstream(path: string): void {
-    sendUpstream(JSON.stringify({
-      context: 'vessels.self',
-      unsubscribe: [{ path }],
     }));
   }
 
@@ -99,8 +104,9 @@ export function createSkRelay(sendUpstream: (msg: string) => void): SkRelay {
       existing.add(subId);
     } else {
       pathSubs.set(path, new Set([subId]));
-      // First listener for this path — tell the server via the worker.
-      subscribePathUpstream(path);
+      // First listener for this path — tell the server via the worker,
+      // unless it is still streaming the path for an earlier listener.
+      if (!streamed.has(path)) subscribePathUpstream(path);
     }
     return subId;
   }
@@ -113,14 +119,12 @@ export function createSkRelay(sendUpstream: (msg: string) => void): SkRelay {
     const ids = pathSubs.get(record.path);
     if (!ids) return;
     ids.delete(subId);
-    if (ids.size === 0) {
-      pathSubs.delete(record.path);
-      // Last listener gone — tell the server via the worker.
-      unsubscribePathUpstream(record.path);
-    }
+    if (ids.size === 0) pathSubs.delete(record.path);
   }
 
   function resubscribe(): void {
+    // A new connection streams nothing yet.
+    streamed.clear();
     for (const path of pathSubs.keys()) {
       subscribePathUpstream(path);
     }
