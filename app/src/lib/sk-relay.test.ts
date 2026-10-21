@@ -16,19 +16,49 @@ function delta(path: string, value: unknown) {
 }
 
 describe('sk relay', () => {
-  it('subscribes upstream once per path and unsubscribes on the last listener', () => {
+  // Signal K servers accept only unsubscribe-all
+  // (`{"context":"*","unsubscribe":[{"path":"*"}]}`) and close the stream on
+  // any other unsubscribe; unsubscribe-all would also cancel the app's own
+  // navigation/AIS subscriptions, which share the socket. Releasing a path
+  // therefore must not send anything upstream.
+  it('subscribes upstream once per path and sends no unsubscribe when the last listener leaves', () => {
     const sent: string[] = [];
     const relay = createSkRelay((m) => sent.push(m));
 
     const a = relay.subscribe('navigation.speedOverGround', () => { /* noop */ });
     const b = relay.subscribe('navigation.speedOverGround', () => { /* noop */ });
-    expect(sent).toHaveLength(1);
-
     relay.unsubscribe(a);
-    expect(sent).toHaveLength(1);   // b still listening
     relay.unsubscribe(b);
-    expect(sent).toHaveLength(2);
-    expect(sent[1]).toContain('unsubscribe');
+
+    expect(sent.map((m) => JSON.parse(m) as unknown)).toEqual([
+      { context: 'vessels.self', subscribe: [{ path: 'navigation.speedOverGround', period: 1000 }] },
+    ]);
+  });
+
+  it('does not stack a second server subscription when a released path is taken again', () => {
+    // The server is still streaming the released path; a repeated subscribe
+    // on the same socket would make it deliver every value twice.
+    const sent: string[] = [];
+    const relay = createSkRelay((m) => sent.push(m));
+
+    relay.unsubscribe(relay.subscribe('nav.x', () => { /* noop */ }));
+    relay.subscribe('nav.x', () => { /* noop */ });
+
+    expect(sent).toHaveLength(1);
+  });
+
+  it('subscribes a released path again once it is taken on a new connection', () => {
+    const sent: string[] = [];
+    const relay = createSkRelay((m) => sent.push(m));
+    relay.unsubscribe(relay.subscribe('nav.x', () => { /* noop */ }));
+    sent.length = 0;
+
+    relay.resubscribe();            // reconnected: the new socket streams nothing yet
+    relay.subscribe('nav.x', () => { /* noop */ });
+
+    expect(sent.map((m) => JSON.parse(m) as unknown)).toEqual([
+      { context: 'vessels.self', subscribe: [{ path: 'nav.x', period: 1000 }] },
+    ]);
   });
 
   it('re-announces every live path after a reconnect', () => {
