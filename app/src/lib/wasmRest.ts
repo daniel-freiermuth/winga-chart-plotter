@@ -38,15 +38,21 @@ import { ready as readyPromise } from './wasmInit';
 
 const ready: Promise<unknown> = readyPromise;
 
+/**
+ * Chart resource `type`, as canonicalized by the WASM `ChartKind` parser
+ * (case-insensitive; anything outside the known set arrives as `'unknown'`).
+ */
+export type ChartKind = 'tilelayer' | 'S-57' | 'WMS' | 'WMTS' | 'mapstyleJSON' | 'tileJSON' | 'unknown';
+
 /** Chart entry as returned by `GET /signalk/v2/api/resources/charts`. */
 export interface Chart {
   identifier: string;
   name: string;
   description?: string;
-  /** Base URL for WMS/WMTS, or XYZ tile template for tilelayer. */
+  /** Base URL for WMS/WMTS, or XYZ tile template for tilelayer/S-57. */
   url?: string;
   format: string; // "png" | "jpg" | "pbf" etc.
-  type: string; // "tilelayer" | "WMS" | "WMTS" | "mapstyleJSON"
+  type: ChartKind;
   minzoom?: number;
   maxzoom?: number;
   scale?: number;
