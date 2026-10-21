@@ -152,11 +152,15 @@ function normalizeConnection(input: Pick<SettingsData, 'signalkProtocol' | 'sign
     try {
       const parsed = new URL(host);
       host = parsed.hostname;
-      if (parsed.protocol === 'https:' || parsed.protocol === 'wss:') protocol = 'wss';
-      if (parsed.protocol === 'http:' || parsed.protocol === 'ws:') protocol = 'ws';
+      let schemeDefaultPort: number | undefined;
+      if (parsed.protocol === 'https:' || parsed.protocol === 'wss:') { protocol = 'wss'; schemeDefaultPort = 443; }
+      if (parsed.protocol === 'http:' || parsed.protocol === 'ws:') { protocol = 'ws'; schemeDefaultPort = 80; }
+      // URL.port is '' when the port is omitted or equals the scheme default.
       if (parsed.port) {
         const parsedPort = Number.parseInt(parsed.port, 10);
         if (Number.isFinite(parsedPort)) port = parsedPort;
+      } else if (schemeDefaultPort !== undefined) {
+        port = schemeDefaultPort;
       }
     } catch {
       // Keep host as-is if it is not a valid URL.
