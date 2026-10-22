@@ -289,6 +289,22 @@ describe('buildInfo REST vs KVP', () => {
     expect(info.availableLayers[0]!.tileUrl).toBe(info.tileUrlTemplate);
   });
 
+  it('REST: skips a tile template with a variable the layer cannot fill (GIBS {Time} without <Dimension>)', () => {
+    const doc = xml(capabilities({
+      tileMatrixSets: TMS,
+      layers: layer({
+        id: 'VIIRS',
+        tmsLinks: ['WebMercator'],
+        resourceUrl: 'https://gibs/VIIRS/default/{Time}/{TileMatrixSet}/{TileMatrix}/{TileRow}/{TileCol}.png',
+        extra:
+          '<ResourceURL resourceType="tile" template="https://gibs/VIIRS/default/{TileMatrixSet}/{TileMatrix}/{TileRow}/{TileCol}.png" />',
+      }),
+    }));
+    const info = parseDoc(doc, 'https://example.com');
+    expect(info.tileUrlTemplate).toBe('https://gibs/VIIRS/default/WebMercator/{z}/{y}/{x}.png');
+    expect(info.availableLayers[0]!.tileUrl).toBe(info.tileUrlTemplate);
+  });
+
   it('KVP: GetTile carries the mandatory STYLE parameter from the default style', () => {
     const doc = xml(capabilities({
       tileMatrixSets: TMS,
