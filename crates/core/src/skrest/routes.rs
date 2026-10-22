@@ -328,6 +328,33 @@ mod tests {
     }
 
     #[test]
+    fn build_route_body_wraps_unwrapped_longitudes() {
+        // Map events right of the antimeridian unproject to lon > 180.
+        let body = build_route_body(
+            "Across the dateline",
+            &[
+                LonLat {
+                    lon: 179.5,
+                    lat: -17.0,
+                },
+                LonLat {
+                    lon: 180.5,
+                    lat: -17.0,
+                },
+                LonLat {
+                    lon: -181.0,
+                    lat: -17.5,
+                },
+            ],
+        )
+        .unwrap();
+        assert_eq!(
+            body["feature"]["geometry"]["coordinates"],
+            serde_json::json!([[179.5, -17.0], [-179.5, -17.0], [179.0, -17.5]])
+        );
+    }
+
+    #[test]
     fn route_update_preserves_unedited_fields() {
         let existing = serde_json::json!({
             "name": "Old",
