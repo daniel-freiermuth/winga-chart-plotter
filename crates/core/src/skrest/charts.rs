@@ -55,16 +55,22 @@ impl<'de> Deserialize<'de> for ChartKind {
 }
 
 /// Chart entry as returned by `GET /signalk/v2/api/resources/charts`.
+///
+/// Signal K's `ChartSchema` declares `identifier`, `name` and `format`
+/// optional; [`parse_chart_record`] backfills the first two from the
+/// resource id so one sparse entry never rejects the whole catalogue.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Chart {
+    #[serde(default)]
     pub identifier: String,
+    #[serde(default)]
     pub name: String,
     pub description: Option<String>,
     /// Base URL for WMS/WMTS, or XYZ tile template for tilelayer.
     pub url: Option<String>,
-    /// "png" | "jpg" | "pbf" etc.
-    pub format: String,
+    /// "png" | "jpg" | "pbf" etc. Absent for style/TileJSON sources.
+    pub format: Option<String>,
     #[serde(rename = "type")]
     pub kind: ChartKind,
     pub minzoom: Option<f64>,
@@ -80,6 +86,28 @@ pub struct Chart {
 }
 
 pub type ChartRecord = HashMap<String, Chart>;
+
+/// Parse a charts response body. Entries without `identifier` take their
+/// resource id; entries without `name` take their identifier.
+pub fn parse_chart_record(text: &str) -> Result<ChartRecord, serde_json::Error> {
+    let mut charts: ChartRecord = serde_json::from_str(text)?;
+    for (id, chart) in &mut charts {
+        if chart.identifier.is_empty() {
+            chart.identifier.clone_from(id);
+        }
+        if chart.name.is_empty() {
+            chart.name.clone_from(&chart.identifier);
+        }
+    }
+    Ok(charts)
+}
+
+/// Image format requested from WMS/WMTS when the chart declares none.
+const DEFAULT_TILE_FORMAT: &str = "png";
+
+fn tile_format(chart: &Chart) -> &str {
+    chart.format.as_deref().unwrap_or(DEFAULT_TILE_FORMAT)
+}
 
 fn mime_type(format: &str) -> String {
     match format.to_lowercase().as_str() {
@@ -109,7 +137,7 @@ pub fn build_tile_url(chart: &Chart, server_base: &str) -> Option<String> {
     match chart.kind {
         ChartKind::Wms => {
             let layers = chart.layers.as_deref().unwrap_or(&[]).join(",");
-            let fmt = mime_type(&chart.format);
+            let fmt = mime_type(tile_format(chart));
             let ver = chart.wms_version.as_deref().unwrap_or("1.3.0");
             // CRS parameter name differs between WMS 1.1.x (SRS) and 1.3.0 (CRS).
             let crs_param = if ver.starts_with("1.1") { "SRS" } else { "CRS" };
@@ -133,7 +161,7 @@ pub fn build_tile_url(chart: &Chart, server_base: &str) -> Option<String> {
                 .as_ref()
                 .and_then(|l| l.first())
                 .map_or("", String::as_str);
-            let fmt = mime_type(&chart.format);
+            let fmt = mime_type(tile_format(chart));
             let sep = if base.contains('?') { '&' } else { '?' };
             Some(format!(
                 "{base}{sep}SERVICE=WMTS&VERSION=1.0.0&REQUEST=GetTile\
@@ -152,7 +180,7 @@ pub fn build_tile_url(chart: &Chart, server_base: &str) -> Option<String> {
 
 #[cfg(target_arch = "wasm32")]
 mod wasm {
-    use super::{Chart, ChartRecord, build_tile_url};
+    use super::{Chart, build_tile_url, parse_chart_record};
     use crate::skrest::http;
     use wasm_bindgen::prelude::*;
 
@@ -170,8 +198,7 @@ mod wasm {
         let url = format!("{server_base}/signalk/v2/api/resources/charts");
         let resp =
             http::fetch_ok("GET", &url, &JsValue::UNDEFINED, None, "Charts API error").await?;
-        let charts: ChartRecord =
-            serde_json::from_str(&resp.text).map_err(crate::Error::json("Charts API"))?;
+        let charts = parse_chart_record(&resp.text).map_err(crate::Error::json("Charts API"))?;
         crate::skrest::to_js_object(&charts)
     }
 }
@@ -193,7 +220,7 @@ mod tests {
             name: "Chart 1".into(),
             description: None,
             url: Some(url.into()),
-            format: "png".into(),
+            format: Some("png".into()),
             kind,
             minzoom: None,
             maxzoom: None,
@@ -363,9 +390,26 @@ mod tests {
             "b": {"identifier": "b", "name": "B", "type": "tilelayer",
                   "format": "png", "url": "/t/{z}/{x}/{y}"}
         }"#;
-        let charts: ChartRecord = serde_json::from_str(json).unwrap();
+        let charts = parse_chart_record(json).unwrap();
         assert_eq!(charts.len(), 2);
-        assert_eq!(charts["a"].kind, ChartKind::MapStyleJson);
-        assert_eq!(charts["b"].name, "B");
+        let a = &charts["a"];
+        assert_eq!(a.kind, ChartKind::MapStyleJson);
+        assert_eq!(a.identifier, "a");
+        assert_eq!(a.name, "a");
+        assert_eq!(a.format, None);
+        let b = &charts["b"];
+        assert_eq!(b.identifier, "b");
+        assert_eq!(b.name, "B");
+        assert_eq!(b.format.as_deref(), Some("png"));
+    }
+
+    #[test]
+    fn wms_and_wmts_without_format_request_png() {
+        for kind in [ChartKind::Wms, ChartKind::Wmts] {
+            let mut c = chart(kind, "/svc");
+            c.format = None;
+            let url = build_tile_url(&c, "http://sk.local:3000").unwrap();
+            assert!(url.contains("&FORMAT=image%2Fpng"), "{kind:?}: {url}");
+        }
     }
 }

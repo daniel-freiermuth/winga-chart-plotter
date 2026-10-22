@@ -51,7 +51,7 @@ export interface Chart {
   description?: string;
   /** Base URL for WMS/WMTS, or XYZ tile template for tilelayer/S-57. */
   url?: string;
-  format: string; // "png" | "jpg" | "pbf" etc.
+  format?: string; // "png" | "jpg" | "pbf" etc.; absent for style/TileJSON sources
   type: ChartKind;
   minzoom?: number;
   maxzoom?: number;
