@@ -180,6 +180,8 @@
   let _aisAllTracksGen = 0;
   // eslint-disable-next-line svelte/prefer-svelte-reactivity
   const _fetchedAisTrackIds = new Set<string>();
+  // base URL + history hours the cache was fetched with; a change invalidates it.
+  let _aisAllTracksKey = '';
   // CPA visualization deck.gl layers (projection lines, ghost dots).
   let cpaLayerGroup: Layer[] = [];
   // MapLibre mini-label popup near the selected vessel showing CPA/TCPA.
@@ -2619,16 +2621,33 @@
       }
       return;
     }
-    // Capture current gen without bumping — only the "toggle off" branch above should bump it.
-    // Bumping here would cancel in-flight fetches every time ais.ids changes (1 Hz).
-    const cancelAtGen = _aisAllTracksGen;
     const base  = settings.signalkHttpUrl;
     const hours = settings.appearance.ais.track.historyHours;
+    // Server or history-duration change: drop the cache and cancel in-flight fetches so
+    // every vessel is refetched from the new base with the new duration.
+    const key = `${base}|${String(hours)}`;
+    if (key !== _aisAllTracksKey) {
+      _aisAllTracksKey = key;
+      _aisAllTracksGen++;
+      _fetchedAisTrackIds.clear();
+      aisAllTracksMap.clear();
+    }
+    // Evict vessels that are no longer AIS targets (left range / pruned).
+    const current = new Set(ais.ids);
+    for (const id of [..._fetchedAisTrackIds]) {
+      if (current.has(id)) continue;
+      _fetchedAisTrackIds.delete(id);
+      aisAllTracksMap.delete(id);
+    }
+    // Capture current gen without bumping — only cache invalidation should bump it.
+    // Bumping here would cancel in-flight fetches every time ais.ids changes (1 Hz).
+    const cancelAtGen = _aisAllTracksGen;
     for (const id of ais.ids) {
       if (_fetchedAisTrackIds.has(id)) continue;
       _fetchedAisTrackIds.add(id);
       fetchAisVesselTrack(base, id, hours).then(coords => {
-        if (_aisAllTracksGen !== cancelAtGen) return;
+        // Also drop results for vessels evicted while the fetch was in flight.
+        if (_aisAllTracksGen !== cancelAtGen || !_fetchedAisTrackIds.has(id)) return;
         // Append current live position so each track reaches its vessel icon.
         // hotData/ids are read outside the reactive scope (inside async .then) so no dep created.
         const hotData = ais.hotData;
