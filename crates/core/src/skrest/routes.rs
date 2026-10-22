@@ -399,6 +399,77 @@ mod tests {
         assert_eq!(body, build_route_body("R", &pts).unwrap());
     }
 
+    fn route_with_meta(coords: serde_json::Value, meta: serde_json::Value) -> serde_json::Value {
+        serde_json::json!({
+            "name": "R",
+            "feature": {
+                "type": "Feature",
+                "geometry": { "type": "LineString", "coordinates": coords },
+                "properties": { "coordinatesMeta": meta, "keep": 1 },
+            },
+        })
+    }
+
+    fn lonlat(pts: &[[f64; 2]]) -> Vec<LonLat> {
+        pts.iter().map(|&[lon, lat]| LonLat { lon, lat }).collect()
+    }
+
+    #[test]
+    fn route_update_realigns_coordinates_meta_after_removal() {
+        let existing = route_with_meta(
+            serde_json::json!([[0.0, 0.0], [1.0, 1.0], [2.0, 2.0]]),
+            serde_json::json!([
+                { "href": "/resources/waypoints/wp1" },
+                { "href": "/resources/waypoints/wp2" },
+                { "href": "/resources/waypoints/wp3" },
+            ]),
+        );
+        let body =
+            build_route_update_body(&existing, "R", &lonlat(&[[0.0, 0.0], [2.0, 2.0]])).unwrap();
+        assert_eq!(
+            body["feature"]["properties"]["coordinatesMeta"],
+            serde_json::json!([
+                { "href": "/resources/waypoints/wp1" },
+                { "href": "/resources/waypoints/wp3" },
+            ])
+        );
+        assert_eq!(body["feature"]["properties"]["keep"], 1);
+    }
+
+    #[test]
+    fn route_update_drops_coordinates_meta_after_insertion() {
+        let existing = route_with_meta(
+            serde_json::json!([[0.0, 0.0], [2.0, 2.0]]),
+            serde_json::json!([{ "name": "A" }, { "name": "C" }]),
+        );
+        let body = build_route_update_body(
+            &existing,
+            "R",
+            &lonlat(&[[0.0, 0.0], [1.0, 1.0], [2.0, 2.0]]),
+        )
+        .unwrap();
+        let props = &body["feature"]["properties"];
+        assert!(props.get("coordinatesMeta").is_none(), "got {props}");
+        assert_eq!(props["keep"], 1);
+    }
+
+    #[test]
+    fn route_update_drops_coordinates_meta_after_same_length_reshuffle() {
+        // Remove B, append D: same length, but positions no longer line up.
+        let existing = route_with_meta(
+            serde_json::json!([[0.0, 0.0], [1.0, 1.0], [2.0, 2.0]]),
+            serde_json::json!([{ "name": "A" }, { "name": "B" }, { "name": "C" }]),
+        );
+        let body = build_route_update_body(
+            &existing,
+            "R",
+            &lonlat(&[[0.0, 0.0], [2.0, 2.0], [3.0, 3.0]]),
+        )
+        .unwrap();
+        let props = &body["feature"]["properties"];
+        assert!(props.get("coordinatesMeta").is_none(), "got {props}");
+    }
+
     #[test]
     fn build_route_body_rejects_empty_waypoints() {
         let result = build_route_body("empty", &[]);
