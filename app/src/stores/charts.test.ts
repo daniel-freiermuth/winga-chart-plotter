@@ -21,9 +21,11 @@ const CHART: Chart = {
   type: 'WMTS',
 };
 
+const COAST_URL   = 'https://wmts.example/coast/{z}/{x}/{y}.png';
+const HARBOUR_URL = 'https://wmts.example/harbour/{z}/{x}/{y}.png';
 const LAYERS = [
-  { id: 'coast',   title: 'Coast',   tileUrl: 'https://wmts.example/coast/{z}/{x}/{y}.png' },
-  { id: 'harbour', title: 'Harbour', tileUrl: 'https://wmts.example/harbour/{z}/{x}/{y}.png' },
+  { id: 'coast',   title: 'Coast',   tileUrl: COAST_URL },
+  { id: 'harbour', title: 'Harbour', tileUrl: HARBOUR_URL },
 ];
 
 vi.mock('../lib/wasmRest', () => ({
@@ -33,7 +35,7 @@ vi.mock('../lib/wasmRest', () => ({
 
 vi.mock('../lib/wmts', () => ({
   resolveWmtsTileUrl: vi.fn(() => Promise.resolve({
-    tileUrlTemplate: LAYERS[0].tileUrl,
+    tileUrlTemplate: COAST_URL,
     layerName: 'coast',
     availableLayers: LAYERS,
   })),
@@ -60,7 +62,7 @@ describe('charts.tileUrl with a stale persisted WMTS override', () => {
     await charts.load('http://sk.local');
     await vi.waitFor(() => { expect(charts.wmtsResolving.has('w1')).toBe(false); });
 
-    expect(charts.tileUrl(CHART, 'harbour')).toBe(LAYERS[1].tileUrl);
-    expect(charts.tileUrl(CHART)).toBe(LAYERS[0].tileUrl);
+    expect(charts.tileUrl(CHART, 'harbour')).toBe(HARBOUR_URL);
+    expect(charts.tileUrl(CHART)).toBe(COAST_URL);
   });
 });

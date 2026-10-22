@@ -10,29 +10,24 @@ const LAYERS: WmtsLayerInfo[] = [
 const DEFAULT_URL = 'https://wmts.example/default/{z}/{x}/{y}.png';
 
 describe('pickWmtsTileUrl', () => {
-  it('manual override wins over everything', () => {
-    expect(pickWmtsTileUrl('https://manual/{z}/{x}/{y}', LAYERS, 'harbour', DEFAULT_URL))
-      .toBe('https://manual/{z}/{x}/{y}');
-  });
-
   it("returns the pane's selected layer URL", () => {
-    expect(pickWmtsTileUrl(undefined, LAYERS, 'harbour', DEFAULT_URL))
+    expect(pickWmtsTileUrl(LAYERS, 'harbour', DEFAULT_URL))
       .toBe('https://wmts.example/harbour/{z}/{x}/{y}.png');
   });
 
   it('falls back to the resolved default when the pane layer is unknown', () => {
-    expect(pickWmtsTileUrl(undefined, LAYERS, 'gone', DEFAULT_URL)).toBe(DEFAULT_URL);
+    expect(pickWmtsTileUrl(LAYERS, 'gone', DEFAULT_URL)).toBe(DEFAULT_URL);
   });
 
   it('falls back when the selected layer has no usable URL', () => {
-    expect(pickWmtsTileUrl(undefined, LAYERS, 'broken', DEFAULT_URL)).toBe(DEFAULT_URL);
+    expect(pickWmtsTileUrl(LAYERS, 'broken', DEFAULT_URL)).toBe(DEFAULT_URL);
   });
 
   it('uses the resolved default when the pane has no layer choice', () => {
-    expect(pickWmtsTileUrl(undefined, LAYERS, undefined, DEFAULT_URL)).toBe(DEFAULT_URL);
+    expect(pickWmtsTileUrl(LAYERS, undefined, DEFAULT_URL)).toBe(DEFAULT_URL);
   });
 
   it('degrades to an empty URL before capabilities resolve', () => {
-    expect(pickWmtsTileUrl(undefined, undefined, 'harbour', undefined)).toBe('');
+    expect(pickWmtsTileUrl(undefined, 'harbour', undefined)).toBe('');
   });
 });
