@@ -13,4 +13,13 @@ describe('formatDm', () => {
   it('labels southern and western coordinates S/W with unsigned degrees', () => {
     expect(formatDm(-33.86, -151.2)).toBe("33°\u202f51.600'\u202fS\u2003151°\u202f12.000'\u202fW");
   });
+
+  it('carries minutes that round to 60 into the degrees', () => {
+    expect(formatDm(59.999995, -10.9999999)).toBe(
+      "60°\u202f0.000'\u202fN\u200311°\u202f0.000'\u202fW",
+    );
+    expect(formatDm(-59.999995, 179.9999999)).toBe(
+      "60°\u202f0.000'\u202fS\u2003180°\u202f0.000'\u202fE",
+    );
+  });
 });
