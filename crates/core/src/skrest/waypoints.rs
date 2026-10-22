@@ -35,6 +35,7 @@ pub type SkWaypointRecord = HashMap<String, SkWaypointEntry>;
 
 /// Build the POST/PUT body for `resources/waypoints`.
 pub fn build_waypoint_body(name: &str, lat: f64, lon: f64) -> serde_json::Value {
+    let lon = crate::geo::canonical_lon(lon);
     serde_json::json!({
         "name": name,
         "feature": {

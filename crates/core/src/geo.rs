@@ -540,6 +540,18 @@ fn wrap180(lon: f64) -> f64 {
     (lon + 180.0).rem_euclid(360.0) - 180.0
 }
 
+/// Canonical longitude for data leaving the app (Signal K resources, course
+/// API). MapLibre event coordinates are unwrapped when the view crosses the
+/// antimeridian (e.g. `180.5`), which is not a valid WGS84 / GeoJSON
+/// longitude. In-range values pass through untouched (no float drift).
+pub(crate) fn canonical_lon(lon: f64) -> f64 {
+    if (-180.0..=180.0).contains(&lon) {
+        lon
+    } else {
+        wrap180(lon)
+    }
+}
+
 /// Dateline-aware union of two viewport bounds.
 ///
 /// Inputs follow MapLibre's `LngLatBounds` convention: `west <= east`, with
