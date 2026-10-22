@@ -353,4 +353,19 @@ mod tests {
         assert_eq!(c.layers, Some(vec!["a".to_string(), "b".to_string()]));
         assert_eq!(c.description, None);
     }
+
+    #[test]
+    fn chart_record_tolerates_schema_optional_fields() {
+        // Signal K's ChartSchema marks identifier, name and format optional;
+        // one such chart must not discard the rest of the catalogue.
+        let json = r#"{
+            "a": {"type": "mapstyleJSON", "url": "/s.json"},
+            "b": {"identifier": "b", "name": "B", "type": "tilelayer",
+                  "format": "png", "url": "/t/{z}/{x}/{y}"}
+        }"#;
+        let charts: ChartRecord = serde_json::from_str(json).unwrap();
+        assert_eq!(charts.len(), 2);
+        assert_eq!(charts["a"].kind, ChartKind::MapStyleJson);
+        assert_eq!(charts["b"].name, "B");
+    }
 }
