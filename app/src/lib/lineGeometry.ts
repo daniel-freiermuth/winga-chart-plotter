@@ -3,12 +3,16 @@
  * Pure functions — no external dependencies.
  */
 
+/** Latitude guard (rad) keeping rhumb math away from the Mercator singularity at ±90°. */
+const POLE_GUARD = Math.PI / 2 - 1e-6;
+/** Rhumb lines starting equatorward of this latitude (rad) are cut at it (Mercator display limit). */
+const MERCATOR_CAP = (85.0 * Math.PI) / 180;
+
 /** Rhumb line destination. Returns unwrapped longitude so antimeridian crossings render correctly. */
 export function destPoint(lon: number, lat: number, bearingRad: number, distM: number): [number, number] {
   const R = 6371000;
   const δ = distM / R;
   // Guard: clamp latitude away from the Mercator singularity at ±90°.
-  const POLE_GUARD = Math.PI / 2 - 1e-6;
   const φ1 = Math.max(-POLE_GUARD, Math.min(POLE_GUARD, (lat * Math.PI) / 180));
   const φ2 = Math.max(-POLE_GUARD, Math.min(POLE_GUARD, φ1 + δ * Math.cos(bearingRad)));
   const Δψ = Math.log(Math.tan(φ2 / 2 + Math.PI / 4) / Math.tan(φ1 / 2 + Math.PI / 4));
@@ -26,7 +30,10 @@ export function rhumbCoords(lon: number, lat: number, bearingRad: number, distM:
   const φ1 = (lat * Math.PI) / 180;
   const cosB = Math.cos(bearingRad);
   if (Math.abs(cosB) > 1e-10) {
-    const capφ = cosB > 0 ? (85.0 * Math.PI) / 180 : -(85.0 * Math.PI) / 180;
+    // A line already poleward of the display cap is only stopped at the pole,
+    // so a vessel above ±85° keeps its COG line instead of collapsing to a point.
+    const sign = cosB > 0 ? 1 : -1;
+    const capφ = sign * (sign * φ1 < MERCATOR_CAP ? MERCATOR_CAP : POLE_GUARD);
     const distToCap = ((capφ - φ1) / cosB) * R;
     if (distToCap < distM) distM = Math.max(0, distToCap);
   }
