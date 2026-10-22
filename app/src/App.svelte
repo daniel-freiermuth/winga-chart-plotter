@@ -611,11 +611,16 @@
     target?.setProjection(p.view.projection === 'mercator' ? 'globe' : 'mercator');
   }
 
+  // A failed raise must be visible: the crew would otherwise assume the alarm
+  // is up. Cleared when a later raise succeeds or the crew dismisses it.
+  let mobError = $state<string | null>(null);
   async function mobRaise() {
     try {
       await raiseMob(settings.signalkHttpUrl, auth.authHeaders);
+      mobError = null;
     } catch (e) {
       console.error('[mob] raise failed', e);
+      mobError = String(e);
     }
   }
 
@@ -811,6 +816,13 @@
 
   <!-- MOB (Man Overboard) button — bottom-right -->
   <div class="mob-container">
+    {#if mobError}
+      <div class="mob-error" role="alert">
+        <strong>MOB alarm NOT raised</strong>
+        <span>{mobError}</span>
+        <button class="mob-error-dismiss" title="Dismiss" aria-label="Dismiss" onclick={() => { mobError = null; }}>✕</button>
+      </div>
+    {/if}
     <button class="mob-btn" onclick={() => void mobRaise()} title="Man Overboard — raise alarm">
       <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
         <path d="M12.0166 9.49274C13.5334 9.49274 14.763 8.26315 14.763 6.74637C14.763 5.22959 13.5334 4 12.0166 4C10.4998 4 9.27023 5.22959 9.27023 6.74637C9.27023 8.26315 10.4998 9.49274 12.0166 9.49274Z" fill="currentColor"/>
@@ -986,4 +998,31 @@
     .mob-btn:hover { background: #991b1b; transform: scale(1.04); }
   }
   .mob-btn:active { transform: scale(0.97); }
+
+  .mob-error {
+    position: relative;
+    max-width: 260px;
+    background: rgba(127,29,29,0.95);
+    border: 2px solid #fca5a5;
+    border-radius: 8px;
+    color: white;
+    padding: 8px 28px 8px 10px;
+    font-size: 13px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.5);
+  }
+  .mob-error span { color: #fecaca; font-size: 12px; overflow-wrap: anywhere; }
+  .mob-error-dismiss {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    background: none;
+    border: none;
+    color: #fecaca;
+    cursor: pointer;
+    font-size: 13px;
+    padding: 2px 4px;
+  }
 </style>
