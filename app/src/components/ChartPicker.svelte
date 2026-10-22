@@ -391,23 +391,29 @@
             {/if}
           {/if}
           {#if item.kind === 'wmts'}
-            {@const isActive = chartSel.selected.has(item.chartId) && chartSel.getLayerSel(item.chartId) === item.wmtsLayer.id}
-            <button
-              class="card"
-              class:selected={isActive}
-              aria-pressed={isActive}
-              onclick={() => { clickWmts(item.chartId, item.wmtsLayer.id); close(); }}
-            >
-              <div class="card-preview">
-                {#if item.wmtsLayer.tileUrl}
+            {#if item.wmtsLayer.tileUrl}
+              {@const isActive = chartSel.selected.has(item.chartId) && chartSel.getLayerSel(item.chartId) === item.wmtsLayer.id}
+              <button
+                class="card"
+                class:selected={isActive}
+                aria-pressed={isActive}
+                onclick={() => { clickWmts(item.chartId, item.wmtsLayer.id); close(); }}
+              >
+                <div class="card-preview">
                   <LazyMapThumb style={rasterStyle(item.wmtsLayer.tileUrl)} bounds={item.chart.bounds} view={pane.view} />
-                {:else}
-                  <div class="card-preview--pulse" style="width:100%;height:100%"></div>
-                {/if}
+                </div>
+                <div class="card-label">{item.chart.name}</div>
+                <div class="card-sub">{item.wmtsLayer.title}</div>
+              </button>
+            {:else}
+              <!-- No usable tile URL (the layer links no Web Mercator TileMatrixSet):
+                   not selectable — the map would silently draw the chart's default layer. -->
+              <div class="card card--disabled">
+                <div class="card-preview"></div>
+                <div class="card-label">{item.chart.name}</div>
+                <div class="card-sub">{item.wmtsLayer.title} — no Web Mercator tiles</div>
               </div>
-              <div class="card-label">{item.chart.name}</div>
-              <div class="card-sub">{item.wmtsLayer.title}</div>
-            </button>
+            {/if}
           {/if}
           {#if item.kind === 'wmts-placeholder'}
             {#if charts.wmtsResolving.has(item.id)}
