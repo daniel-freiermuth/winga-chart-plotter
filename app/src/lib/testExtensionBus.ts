@@ -97,6 +97,7 @@ export function recordingRelay(): RecordingRelay {
       },
       unsubscribe: (id) => { unsubscribed.push(id); },
       resubscribe: () => { /* exercised in sk-relay tests */ },
+      disconnected: () => { /* exercised in sk-relay tests */ },
     },
   };
 }

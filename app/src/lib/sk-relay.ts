@@ -15,9 +15,17 @@ export interface SkRelay {
    * Re-send upstream subscribe messages for every path that currently has at
    * least one subscriber.  Call this whenever a WebSocket connection opens so
    * the new server connection learns about all active subscriptions; it also
-   * resets which paths count as already streamed.
+   * resets which paths count as already streamed.  Until the first call the
+   * relay sends nothing upstream.
    */
   resubscribe(): void;
+  /**
+   * Stop sending upstream until the next `resubscribe()`.  Call this when the
+   * connection drops or is replaced: a subscribe sent then can reach the next
+   * socket before its open is announced, and that announcement's
+   * `resubscribe()` would send the path a second time.
+   */
+  disconnected(): void;
 }
 
 // ── SK delta shape (minimal) ──────────────────────────────────────────────────
@@ -37,8 +45,8 @@ interface SubRecord { path: string; cb: SkValueCallback; }
  *
  * `sendUpstream` is called with a raw SK JSON subscribe message whenever the
  * first subscriber for a path not yet streamed on the current connection is
- * added.  Pass a function that forwards the string to the SignalK WebSocket
- * (via the worker).
+ * added while the connection is open.  Pass a function that forwards the
+ * string to the SignalK WebSocket (via the worker).
  *
  * Releasing the last subscriber sends nothing upstream: Signal K servers only
  * accept unsubscribe-all (`{"context":"*","unsubscribe":[{"path":"*"}]}`) and
@@ -54,6 +62,10 @@ export function createSkRelay(sendUpstream: (msg: string) => void): SkRelay {
   // Paths subscribed on the current connection.  Never sent twice: the server
   // stacks repeated subscribes and would deliver every value once per copy.
   const streamed = new Set<string>();
+  // Whether a connection is announced open (`resubscribe`) and not since
+  // dropped (`disconnected`).  Paths taken while it is not wait for the next
+  // `resubscribe`, which sends every live path exactly once.
+  let linkUp = false;
 
   // ── Upstream helpers ─────────────────────────────────────────────────────────
 
@@ -104,9 +116,10 @@ export function createSkRelay(sendUpstream: (msg: string) => void): SkRelay {
       existing.add(subId);
     } else {
       pathSubs.set(path, new Set([subId]));
-      // First listener for this path — tell the server via the worker,
-      // unless it is still streaming the path for an earlier listener.
-      if (!streamed.has(path)) subscribePathUpstream(path);
+      // First listener for this path — tell the server via the worker, unless
+      // it is still streaming the path for an earlier listener or the link is
+      // not open yet (the next resubscribe() sends it).
+      if (linkUp && !streamed.has(path)) subscribePathUpstream(path);
     }
     return subId;
   }
@@ -123,6 +136,7 @@ export function createSkRelay(sendUpstream: (msg: string) => void): SkRelay {
   }
 
   function resubscribe(): void {
+    linkUp = true;
     // A new connection streams nothing yet.
     streamed.clear();
     for (const path of pathSubs.keys()) {
@@ -130,5 +144,9 @@ export function createSkRelay(sendUpstream: (msg: string) => void): SkRelay {
     }
   }
 
-  return { feed, subscribe, unsubscribe, resubscribe };
+  function disconnected(): void {
+    linkUp = false;
+  }
+
+  return { feed, subscribe, unsubscribe, resubscribe, disconnected };
 }
