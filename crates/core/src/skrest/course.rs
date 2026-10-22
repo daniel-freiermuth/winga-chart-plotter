@@ -4,6 +4,7 @@
 
 /// Body for `PUT .../course/destination`.
 pub fn destination_body(latitude: f64, longitude: f64) -> serde_json::Value {
+    let longitude = crate::geo::canonical_lon(longitude);
     serde_json::json!({ "position": { "latitude": latitude, "longitude": longitude } })
 }
 
@@ -135,7 +136,10 @@ mod tests {
             b,
             serde_json::json!({ "position": { "latitude": -17.0, "longitude": -179.5 } })
         );
-        assert_eq!(destination_body(-17.0, -180.5)["position"]["longitude"], 179.5);
+        assert_eq!(
+            destination_body(-17.0, -180.5)["position"]["longitude"],
+            179.5
+        );
     }
 
     #[test]

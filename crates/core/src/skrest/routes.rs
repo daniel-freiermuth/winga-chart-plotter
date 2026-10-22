@@ -75,7 +75,10 @@ pub fn build_route_body(name: &str, waypoints: &[LonLat]) -> crate::Result<serde
             "type": "Feature",
             "geometry": {
                 "type": "LineString",
-                "coordinates": waypoints.iter().map(|w| [w.lon, w.lat]).collect::<Vec<_>>(),
+                "coordinates": waypoints
+                    .iter()
+                    .map(|w| [crate::geo::canonical_lon(w.lon), w.lat])
+                    .collect::<Vec<_>>(),
             },
             "properties": {},
         },
