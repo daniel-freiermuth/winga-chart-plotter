@@ -128,6 +128,17 @@ mod tests {
     }
 
     #[test]
+    fn destination_body_wraps_unwrapped_longitude() {
+        // A map event right of the antimeridian unprojects to lon > 180.
+        let b = destination_body(-17.0, 180.5);
+        assert_eq!(
+            b,
+            serde_json::json!({ "position": { "latitude": -17.0, "longitude": -179.5 } })
+        );
+        assert_eq!(destination_body(-17.0, -180.5)["position"]["longitude"], 179.5);
+    }
+
+    #[test]
     fn active_route_body_shape() {
         let b = active_route_body("abc-123", false);
         assert_eq!(

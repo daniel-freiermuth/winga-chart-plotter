@@ -187,6 +187,21 @@ mod tests {
     }
 
     #[test]
+    fn build_waypoint_body_wraps_unwrapped_longitude() {
+        // A map event right of the antimeridian unprojects to lon > 180.
+        let body = build_waypoint_body("Fiji", -17.0, 180.5);
+        assert_eq!(
+            body["feature"]["geometry"]["coordinates"],
+            serde_json::json!([-179.5, -17.0])
+        );
+        let moved = build_waypoint_update_body(&serde_json::json!({}), "Fiji", -17.0, -539.5);
+        assert_eq!(
+            moved["feature"]["geometry"]["coordinates"],
+            serde_json::json!([-179.5, -17.0])
+        );
+    }
+
+    #[test]
     fn waypoint_update_preserves_unedited_fields() {
         let existing = serde_json::json!({
             "name": "Old",
