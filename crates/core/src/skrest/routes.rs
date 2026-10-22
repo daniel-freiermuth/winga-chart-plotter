@@ -87,9 +87,11 @@ pub fn build_route_body(name: &str, waypoints: &[LonLat]) -> crate::Result<serde
 
 /// Build the PUT body for `resources/routes/:uuid` from the server's current
 /// copy of the route. A Signal K PUT replaces the whole resource, so fields
-/// the planner does not edit (description, `feature.properties` such as
-/// `coordinatesMeta`, vendor extras) are carried over from `existing`; only
-/// the name, distance and geometry are taken from the edit.
+/// the planner does not edit (description, `feature.properties`, vendor
+/// extras) are carried over from `existing`; only the name, distance and
+/// geometry are taken from the edit. The index-aligned
+/// `feature.properties.coordinatesMeta` is realigned to the new geometry, or
+/// dropped when that is not possible (see [`realign_coordinates_meta`]).
 ///
 /// Returns `Err` under the same conditions as [`build_route_body`].
 pub fn build_route_update_body(
@@ -98,13 +100,79 @@ pub fn build_route_update_body(
     waypoints: &[LonLat],
 ) -> crate::Result<serde_json::Value> {
     let fresh = build_route_body(name, waypoints)?;
-    Ok(merge_update(
+    let mut body = merge_update(
         existing,
         fresh,
         &["name", "distance"],
         &["type", "geometry"],
         &[],
-    ))
+    );
+    if let Some(props) = body
+        .pointer_mut("/feature/properties")
+        .and_then(serde_json::Value::as_object_mut)
+        && props.contains_key("coordinatesMeta")
+    {
+        match realign_coordinates_meta(existing, waypoints) {
+            Some(meta) => {
+                props.insert(
+                    "coordinatesMeta".to_string(),
+                    serde_json::Value::Array(meta),
+                );
+            }
+            None => {
+                props.remove("coordinatesMeta");
+            }
+        }
+    }
+    Ok(body)
+}
+
+/// Map the existing route's `coordinatesMeta` (entry `i` describes coordinate
+/// `i`) onto the edited geometry. Each new vertex is matched, in order, to an
+/// unchanged existing vertex. Returns:
+/// - the matched entries when every new vertex matched (points removed);
+/// - the entries unchanged when the length is the same and every match sits
+///   at its original index (points moved in place);
+/// - `None` otherwise (points inserted or reordered), or when the existing
+///   meta is not a coordinate-aligned array — stale metadata would attach
+///   names / waypoint hrefs to the wrong vertices.
+fn realign_coordinates_meta(
+    existing: &serde_json::Value,
+    waypoints: &[LonLat],
+) -> Option<Vec<serde_json::Value>> {
+    let meta = existing
+        .pointer("/feature/properties/coordinatesMeta")?
+        .as_array()?;
+    let old: Vec<[f64; 2]> =
+        serde_json::from_value(existing.pointer("/feature/geometry/coordinates")?.clone()).ok()?;
+    if meta.len() != old.len() {
+        return None;
+    }
+    let mut realigned = Vec::with_capacity(waypoints.len());
+    let mut in_place = old.len() == waypoints.len();
+    let mut any_moved = false;
+    let mut cursor = 0;
+    for (i, w) in waypoints.iter().enumerate() {
+        let found = old.get(cursor..)?.iter().position(|&[lon, lat]| {
+            // Exact identity: unedited vertices round-trip bit-for-bit.
+            lon.to_bits() == w.lon.to_bits() && lat.to_bits() == w.lat.to_bits()
+        });
+        match found {
+            Some(offset) => {
+                let j = cursor + offset;
+                in_place &= i == j;
+                realigned.push(meta.get(j)?.clone());
+                cursor = j + 1;
+            }
+            None if in_place => {
+                any_moved = true;
+                realigned.push(meta.get(i)?.clone());
+            }
+            None => return None,
+        }
+    }
+    // A moved vertex only keeps its entry if nothing around it shifted.
+    (in_place || !any_moved).then_some(realigned)
 }
 
 /// Overlay the edited parts of `fresh` onto `existing`: top-level `top_keys`,
@@ -399,7 +467,7 @@ mod tests {
         assert_eq!(body, build_route_body("R", &pts).unwrap());
     }
 
-    fn route_with_meta(coords: serde_json::Value, meta: serde_json::Value) -> serde_json::Value {
+    fn route_with_meta(coords: &serde_json::Value, meta: &serde_json::Value) -> serde_json::Value {
         serde_json::json!({
             "name": "R",
             "feature": {
@@ -417,8 +485,8 @@ mod tests {
     #[test]
     fn route_update_realigns_coordinates_meta_after_removal() {
         let existing = route_with_meta(
-            serde_json::json!([[0.0, 0.0], [1.0, 1.0], [2.0, 2.0]]),
-            serde_json::json!([
+            &serde_json::json!([[0.0, 0.0], [1.0, 1.0], [2.0, 2.0]]),
+            &serde_json::json!([
                 { "href": "/resources/waypoints/wp1" },
                 { "href": "/resources/waypoints/wp2" },
                 { "href": "/resources/waypoints/wp3" },
@@ -439,8 +507,8 @@ mod tests {
     #[test]
     fn route_update_drops_coordinates_meta_after_insertion() {
         let existing = route_with_meta(
-            serde_json::json!([[0.0, 0.0], [2.0, 2.0]]),
-            serde_json::json!([{ "name": "A" }, { "name": "C" }]),
+            &serde_json::json!([[0.0, 0.0], [2.0, 2.0]]),
+            &serde_json::json!([{ "name": "A" }, { "name": "C" }]),
         );
         let body = build_route_update_body(
             &existing,
@@ -455,19 +523,23 @@ mod tests {
 
     #[test]
     fn route_update_drops_coordinates_meta_after_same_length_reshuffle() {
-        // Remove B, append D: same length, but positions no longer line up.
         let existing = route_with_meta(
-            serde_json::json!([[0.0, 0.0], [1.0, 1.0], [2.0, 2.0]]),
-            serde_json::json!([{ "name": "A" }, { "name": "B" }, { "name": "C" }]),
+            &serde_json::json!([[0.0, 0.0], [1.0, 1.0], [2.0, 2.0]]),
+            &serde_json::json!([{ "name": "A" }, { "name": "B" }, { "name": "C" }]),
         );
-        let body = build_route_update_body(
-            &existing,
-            "R",
-            &lonlat(&[[0.0, 0.0], [2.0, 2.0], [3.0, 3.0]]),
-        )
-        .unwrap();
-        let props = &body["feature"]["properties"];
-        assert!(props.get("coordinatesMeta").is_none(), "got {props}");
+        // Same length, but positions no longer line up: remove B and append
+        // D; insert X before B and drop C.
+        for edited in [
+            [[0.0, 0.0], [2.0, 2.0], [3.0, 3.0]],
+            [[0.0, 0.0], [9.0, 9.0], [1.0, 1.0]],
+        ] {
+            let body = build_route_update_body(&existing, "R", &lonlat(&edited)).unwrap();
+            let props = &body["feature"]["properties"];
+            assert!(
+                props.get("coordinatesMeta").is_none(),
+                "{edited:?}: got {props}"
+            );
+        }
     }
 
     #[test]
