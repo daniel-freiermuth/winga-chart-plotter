@@ -115,6 +115,23 @@ describe('pickLayer fallback tiers', () => {
     expect(info.layerName).toBe('mercator');
   });
 
+  it('tier 2: first layer linking a compatible TMS when preferLayer links none', () => {
+    // The preferred layer is only served in WGS84. It must neither be resolved
+    // onto a grid it never declares nor fail the whole service: other layers
+    // are usable, exactly as when the hint names an absent layer.
+    const doc = xml(capabilities({
+      tileMatrixSets: TILE_MATRIX_SETS,
+      layers: [
+        layer({ id: 'wgs-only', tmsLinks: ['WGS84'] }),
+        layer({ id: 'mercator', tmsLinks: ['WebMercator'] }),
+      ].join(''),
+    }));
+    const info = parseDoc(doc, 'https://example.com', 'wgs-only');
+    expect(info.layerName).toBe('mercator');
+    expect(info.tileMatrixSet).toBe('WebMercator');
+    expect(info.availableLayers.map(l => l.id)).toEqual(['wgs-only', 'mercator']);
+  });
+
   it('tier 3: throws when no layer links a compatible TMS', () => {
     // Neither layer links a WebMercator TMS, so no layer can be served on a
     // grid MapLibre can render — there is nothing valid to fall back to.
@@ -145,23 +162,6 @@ describe('pickTileMatrixSet fallback', () => {
     }));
     const info = parseDoc(doc, 'https://example.com');
     expect(info.tileMatrixSet).toBe('GoogleMapsCompatible');
-  });
-
-  it('throws when the preferred layer links no compatible TMS', () => {
-    // The preferred layer is only served in WGS84. Substituting the document's
-    // WebMercator TMS would request tiles on a grid this layer never declares.
-    const doc = xml(capabilities({
-      tileMatrixSets: [
-        tms('WebMercator', 'EPSG:3857'),
-        tms('WGS84', 'EPSG:4326'),
-      ].join(''),
-      layers: [
-        layer({ id: 'wgs-only', tmsLinks: ['WGS84'] }),
-        layer({ id: 'mercator', tmsLinks: ['WebMercator'] }),
-      ].join(''),
-    }));
-    expect(() => parseDoc(doc, 'https://example.com', 'wgs-only'))
-      .toThrow('Layer "wgs-only" links no EPSG:3857 / WebMercatorQuad tile matrix set');
   });
 });
 
