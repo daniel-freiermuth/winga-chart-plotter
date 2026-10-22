@@ -175,10 +175,12 @@ function pickLayer(
   compatibleTms: Map<string, string>,
   preferLayer?: string,
 ): Element {
-  // First try: exact preferred layer
+  // First try: exact preferred layer, if it links a compatible TMS. A hint
+  // naming a layer served only on other grids falls through like an absent
+  // hint, so the rest of the service stays usable.
   if (preferLayer) {
     const found = layers.find(l => qs(l, 'Identifier') === preferLayer);
-    if (found) return found;
+    if (found && pickTileMatrixSet(found, compatibleTms) !== null) return found;
   }
   // Second try: first layer that links to a compatible TMS
   for (const l of layers) {
