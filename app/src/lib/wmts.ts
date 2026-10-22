@@ -87,14 +87,9 @@ function buildInfo(
 
   // Prefer REST-style ResourceURL when available. A ResourceURL without a
   // usable `template` is not a REST endpoint — fall through to KVP.
-  const template = targetLayer
-    .querySelector('ResourceURL[resourceType="tile"]')
-    ?.getAttribute('template');
-  if (template) {
-    const tileUrlTemplate = expandResourceTemplate(
-      template, targetLayer, tmsId, compatibleTms.get(tmsId) ?? '',
-    );
-    return { tileUrlTemplate, layerName, tileMatrixSet: tmsId, format: fmt, availableLayers };
+  const restUrl = restTileUrl(targetLayer, tmsId, compatibleTms.get(tmsId) ?? '');
+  if (restUrl !== null) {
+    return { tileUrlTemplate: restUrl, layerName, tileMatrixSet: tmsId, format: fmt, availableLayers };
   }
 
   // KVP-style fallback
@@ -245,6 +240,24 @@ function expandResourceTemplate(
 }
 
 /**
+ * Expanded REST tile URL for a layer, or null when it has no tile ResourceURL
+ * with a `template`. Layers may list several tile templates (GIBS lists a
+ * `{Time}` variant first even for layers without a <Dimension>); the first one
+ * whose variables all resolve wins, else the first expanded one.
+ */
+function restTileUrl(layer: Element, tmsId: string, tileMatrixPrefix: string): string | null {
+  let first: string | null = null;
+  for (const res of layer.querySelectorAll('ResourceURL[resourceType="tile"]')) {
+    const template = res.getAttribute('template');
+    if (!template) continue;
+    const url = expandResourceTemplate(template, layer, tmsId, tileMatrixPrefix);
+    if (!/\{(?![zxy]\})[^{}]+\}/.test(url)) return url;
+    first ??= url;
+  }
+  return first;
+}
+
+/**
  * Build a MapLibre-compatible tile URL template for a single layer element.
  * Handles both REST-style (ResourceURL) and KVP-style WMTS services.
  */
@@ -261,12 +274,8 @@ function layerTileUrl(
   // picker and pickWmtsTileUrl skip.
   if (tmsId === null) return '';
 
-  const template = layer
-    .querySelector('ResourceURL[resourceType="tile"]')
-    ?.getAttribute('template');
-  if (template) {
-    return expandResourceTemplate(template, layer, tmsId, compatibleTms.get(tmsId) ?? '');
-  }
+  const restUrl = restTileUrl(layer, tmsId, compatibleTms.get(tmsId) ?? '');
+  if (restUrl !== null) return restUrl;
 
   return `${baseUrl}${sep}SERVICE=WMTS&VERSION=1.0.0&REQUEST=GetTile` +
     `&LAYER=${encodeURIComponent(layerName)}` +
