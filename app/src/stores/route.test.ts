@@ -8,10 +8,10 @@ describe('route.clear', () => {
     const fetchMock = vi.fn(() => pending.promise);
     vi.stubGlobal('fetch', fetchMock);
     // The fetch chain is internal; its settlement is announced via console.debug.
-    const settled = Promise.withResolvers<void>();
+    const settled = Promise.withResolvers<undefined>();
     const debugSpy = vi.spyOn(console, 'debug').mockImplementation((...args: unknown[]) => {
       const m = String(args[0]);
-      if (m === '[route] geometry loaded:' || m === '[route] discarding stale geometry') settled.resolve();
+      if (m === '[route] geometry loaded:' || m === '[route] discarding stale geometry') settled.resolve(undefined);
     });
     try {
       route.update('http://server-a', {
