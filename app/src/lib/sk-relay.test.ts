@@ -24,6 +24,7 @@ describe('sk relay', () => {
   it('subscribes upstream once per path and sends no unsubscribe when the last listener leaves', () => {
     const sent: string[] = [];
     const relay = createSkRelay((m) => sent.push(m));
+    relay.resubscribe();            // connected
 
     const a = relay.subscribe('navigation.speedOverGround', () => { /* noop */ });
     const b = relay.subscribe('navigation.speedOverGround', () => { /* noop */ });
@@ -40,6 +41,7 @@ describe('sk relay', () => {
     // on the same socket would make it deliver every value twice.
     const sent: string[] = [];
     const relay = createSkRelay((m) => sent.push(m));
+    relay.resubscribe();            // connected
 
     relay.unsubscribe(relay.subscribe('nav.x', () => { /* noop */ }));
     relay.subscribe('nav.x', () => { /* noop */ });
@@ -50,6 +52,7 @@ describe('sk relay', () => {
   it('subscribes a released path again once it is taken on a new connection', () => {
     const sent: string[] = [];
     const relay = createSkRelay((m) => sent.push(m));
+    relay.resubscribe();            // connected
     relay.unsubscribe(relay.subscribe('nav.x', () => { /* noop */ }));
     sent.length = 0;
 
@@ -64,9 +67,11 @@ describe('sk relay', () => {
   it('re-announces every live path after a reconnect', () => {
     const sent: string[] = [];
     const relay = createSkRelay((m) => sent.push(m));
+    relay.resubscribe();            // connected
     relay.subscribe('a.b', () => { /* noop */ });
     relay.subscribe('c.d', () => { /* noop */ });
     sent.length = 0;
+    relay.disconnected();
 
     relay.resubscribe();
 
@@ -84,6 +89,22 @@ describe('sk relay', () => {
 
     relay.subscribe('nav.x', () => { /* noop */ });   // Connected still in flight
     relay.resubscribe();                                // Connected handled
+
+    expect(sent.map((m) => JSON.parse(m) as unknown)).toEqual([
+      { context: 'vessels.self', subscribe: [{ path: 'nav.x', period: 1000 }] },
+    ]);
+  });
+
+  it('holds a path taken while disconnected for the next connection', () => {
+    // The worker may already have opened the replacement socket while its
+    // Connected status is still in flight to the main thread.
+    const sent: string[] = [];
+    const relay = createSkRelay((m) => sent.push(m));
+    relay.resubscribe();            // connected
+    relay.disconnected();           // dropped
+
+    relay.subscribe('nav.x', () => { /* noop */ });
+    relay.resubscribe();            // next socket's Connected handled
 
     expect(sent.map((m) => JSON.parse(m) as unknown)).toEqual([
       { context: 'vessels.self', subscribe: [{ path: 'nav.x', period: 1000 }] },
