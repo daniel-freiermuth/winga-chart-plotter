@@ -522,4 +522,25 @@ describe('TileMatrix identifier mapping', () => {
     }));
     expect(() => parseDoc(doc, 'https://x.com')).toThrow(/No EPSG:3857/);
   });
+
+  // MapProxy names its matrices '00', '01', … and parses TILEMATRIX as an integer.
+  it('zero-padded integer matrix identifiers map to {z}', () => {
+    const padded = Array.from({ length: 20 }, (_, z) => String(z).padStart(2, '0'));
+    const doc = xml(capabilities({
+      tileMatrixSets: tmsWithMatrices('GLOBAL_WEBMERCATOR', 'urn:ogc:def:crs:EPSG::900913', padded),
+      layers: layer({ id: 'L', tmsLinks: ['GLOBAL_WEBMERCATOR'] }),
+    }));
+    expect(parseDoc(doc, 'https://x.com').tileUrlTemplate).toContain('&TILEMATRIX={z}&');
+  });
+
+  it.each([
+    [['10', '11', '12']],
+    [['EPSG:3857:10', 'EPSG:3857:11', 'EPSG:3857:12']],
+  ])('rejects sets starting at zoom 10 (%j)', (ids) => {
+    const doc = xml(capabilities({
+      tileMatrixSets: tmsWithMatrices('custom', 'EPSG:3857', ids),
+      layers: layer({ id: 'L', tmsLinks: ['custom'] }),
+    }));
+    expect(() => parseDoc(doc, 'https://x.com')).toThrow(/No EPSG:3857/);
+  });
 });
