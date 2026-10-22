@@ -138,6 +138,9 @@ function findCompatibleTileMatrixSets(doc: Document): Map<string, string> {
 /**
  * Common prefix of the set's TileMatrix identifiers when they read
  * `<prefix>0`, `<prefix>1`, … in document order; null otherwise.
+ * Pure integer identifiers whose value is the zoom yield '' even when
+ * zero-padded: MapProxy names its matrices '00', '01', … and parses
+ * TILEMATRIX / {TileMatrix} as an integer.
  * A set without TileMatrix children yields '' (identifiers assumed to be zooms).
  */
 function tileMatrixPrefix(tms: Element): string | null {
@@ -145,9 +148,10 @@ function tileMatrixPrefix(tms: Element): string | null {
     .filter(c => c.localName === 'TileMatrix')
     .map(m => Array.from(m.children).find(c => c.localName === 'Identifier')?.textContent ?? '');
   if (ids.length === 0) return '';
-  const first = ids[0] ?? '';
-  if (!first.endsWith('0')) return null;
-  const prefix = first.slice(0, -1);
+  if (ids.every((m, z) => /^\d+$/.test(m) && Number(m) === z)) return '';
+  // Strip the whole trailing number so a prefix never ends in a digit: '10'
+  // must not read as prefix '1' + zoom 0.
+  const prefix = (ids[0] ?? '').replace(/\d+$/, '');
   return ids.every((m, z) => m === `${prefix}${String(z)}`) ? prefix : null;
 }
 
