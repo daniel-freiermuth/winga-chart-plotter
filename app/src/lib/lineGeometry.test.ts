@@ -99,10 +99,46 @@ describe('rhumbCoords', () => {
     for (const [lon, lat] of coords) {
       expect(Number.isFinite(lon)).toBe(true);
       expect(Number.isFinite(lat)).toBe(true);
+      expect(lat).toBeLessThan(90);
     }
-    // With the cap fix, distance is clamped to 0 so all coords equal start
     expect(coords[0]![0]).toBeCloseTo(0, 8);
     expect(coords[0]![1]).toBeCloseTo(86, 8);
+    // The line runs into the pole: it stops there instead of overshooting.
+    expect(coords[coords.length - 1]![1]).toBeCloseTo(90, 3);
+  });
+
+  it('keeps a poleward line starting above 85° that does not reach the pole', () => {
+    const dist = 50_000;
+    const coords = rhumbCoords(10, 86, 80 * DEG, dist);
+    for (const [lon, lat] of coords) {
+      expect(Number.isFinite(lon)).toBe(true);
+      expect(Number.isFinite(lat)).toBe(true);
+      expect(lat).toBeLessThan(90);
+    }
+    const [endLon, endLat] = coords[coords.length - 1]!;
+    expect(endLat).toBeCloseTo(86 + (dist * Math.cos(80 * DEG)) / M_PER_DEG_LAT, 3);
+    expect(endLon).toBeGreaterThan(10);
+  });
+
+  it('keeps a poleward line starting below −85° (southern mirror)', () => {
+    const dist = 50_000;
+    const coords = rhumbCoords(10, -86, 100 * DEG, dist);
+    for (const [lon, lat] of coords) {
+      expect(Number.isFinite(lon)).toBe(true);
+      expect(Number.isFinite(lat)).toBe(true);
+      expect(lat).toBeGreaterThan(-90);
+    }
+    const [endLon, endLat] = coords[coords.length - 1]!;
+    expect(endLat).toBeCloseTo(-86 + (dist * Math.cos(100 * DEG)) / M_PER_DEG_LAT, 3);
+    expect(endLon).toBeGreaterThan(10);
+  });
+
+  it('line end is continuous across due east above 85°', () => {
+    const ends = [89.99, 90, 90.01].map(b => rhumbCoords(10, 86, b * DEG, 50_000).at(-1)!);
+    for (const [lon, lat] of ends) {
+      expect(lon).toBeCloseTo(ends[1]![0], 2);
+      expect(lat).toBeCloseTo(ends[1]![1], 2);
+    }
   });
 
   it('produces no NaN/Infinity when starting at −87° heading south', () => {
