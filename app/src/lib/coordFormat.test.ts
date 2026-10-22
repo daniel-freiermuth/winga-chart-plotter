@@ -9,4 +9,8 @@ describe('formatDm', () => {
     expect(s).not.toMatch(/&[a-z#0-9]+;/i);
     expect(s).toBe("59°\u202f54.600'\u202fN\u200310°\u202f45.000'\u202fE");
   });
+
+  it('labels southern and western coordinates S/W with unsigned degrees', () => {
+    expect(formatDm(-33.86, -151.2)).toBe("33°\u202f51.600'\u202fS\u2003151°\u202f12.000'\u202fW");
+  });
 });

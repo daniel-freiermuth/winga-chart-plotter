@@ -1615,7 +1615,7 @@
       row('Status',       t.navState   ?? null),
       row('Flag',         t.flag       ?? null),
       row('Port',         t.port       ?? null),
-      row('Position', `${lat.toFixed(5)}°N, ${lon.toFixed(5)}°E`),
+      row('Position', formatDm(lat, lon)),
       `<tr><td>Updated</td><td><b>${lastSeenTime} <span id="ais-age" data-posms="${String(posMs)}" style="opacity:0.6;font-size:0.85em">(${ageStr})</span></b></td></tr>`,
     ].join('');
 
