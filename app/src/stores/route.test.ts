@@ -1,5 +1,41 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { route } from './route.svelte';
 import { mirrorRouteIndex, reanchorPointIndex } from './routeLogic';
+
+describe('route.clear', () => {
+  it('discards a geometry fetch that was still in flight when cleared (server switch)', async () => {
+    const pending = Promise.withResolvers<Response>();
+    const fetchMock = vi.fn(() => pending.promise);
+    vi.stubGlobal('fetch', fetchMock);
+    // The fetch chain is internal; its settlement is announced via console.debug.
+    const settled = Promise.withResolvers<void>();
+    const debugSpy = vi.spyOn(console, 'debug').mockImplementation((...args: unknown[]) => {
+      const m = String(args[0]);
+      if (m === '[route] geometry loaded:' || m === '[route] discarding stale geometry') settled.resolve();
+    });
+    try {
+      route.update('http://server-a', {
+        nextPoint: null,
+        previousPoint: null,
+        activeRoute: { href: '/resources/routes/a', pointIndex: 0, reverse: false },
+      } as never);
+      expect(fetchMock).toHaveBeenCalledOnce();
+
+      route.clear();
+      pending.resolve(new Response(JSON.stringify({
+        type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: [[0, 0], [1, 1]] },
+      })));
+      await settled.promise;
+
+      expect(route.geometry).toBeNull();
+      expect(route.loading).toBe(false);
+    } finally {
+      debugSpy.mockRestore();
+      vi.unstubAllGlobals();
+      route.clear();
+    }
+  });
+});
 
 /**
  * Signal K's `activeRoute.pointIndex` is relative to the direction of travel:
