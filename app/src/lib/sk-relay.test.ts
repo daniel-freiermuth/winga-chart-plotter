@@ -75,6 +75,21 @@ describe('sk relay', () => {
     expect(sent.join()).toContain('"path":"c.d"');
   });
 
+  it('sends a path taken before the connection is announced open exactly once', () => {
+    // The worker reports Connected from the socket's onopen; a subscribe the
+    // main thread handles before that status arrives already reaches the open
+    // socket, and the resubscribe() the status triggers must not stack a copy.
+    const sent: string[] = [];
+    const relay = createSkRelay((m) => sent.push(m));
+
+    relay.subscribe('nav.x', () => { /* noop */ });   // Connected still in flight
+    relay.resubscribe();                                // Connected handled
+
+    expect(sent.map((m) => JSON.parse(m) as unknown)).toEqual([
+      { context: 'vessels.self', subscribe: [{ path: 'nav.x', period: 1000 }] },
+    ]);
+  });
+
   it('keeps delivering to other subscribers when one throws', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => { /* silence */ });
     const relay = createSkRelay(() => { /* noop */ });
