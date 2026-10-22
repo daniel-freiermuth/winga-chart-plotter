@@ -14,9 +14,10 @@ help:
 install:
     cd {{app}} && pnpm install
 
-# Install the pinned wasm-pack (wasm_pack_version) via cargo
+# Install the pinned wasm-pack (wasm_pack_version) via cargo; --force replaces
+# binaries cargo does not track (e.g. from the upstream installer script)
 install-wasm-pack:
-    cargo install wasm-pack --locked --version {{wasm_pack_version}}
+    cargo install wasm-pack --locked --force --version {{wasm_pack_version}}
 
 # Fail unless the local wasm-pack is the pinned version CI builds with
 check-wasm-pack:
