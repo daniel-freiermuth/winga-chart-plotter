@@ -31,6 +31,8 @@ let _reverse:       boolean                     = $state(false);
 let _geometry:      Feature<LineString> | null  = $state(null);
 let _loading:       boolean                     = $state(false);
 let _error:         string | null               = $state(null);
+/** Bumped by `clear()` and on every href change, so a superseded geometry fetch can't land. */
+let _fetchGen = 0;
 
 /**
  * Fetch a route GeoJSON from the Signal K REST API.
@@ -122,12 +124,19 @@ function createRoute() {
         _activeHref = newHref;
         _geometry   = null;
         _error      = null;
+        const gen = ++_fetchGen;
 
         if (newHref) {
           _loading = true;
           fetchRouteGeometry(serverBase, newHref)
-            .then(geo => { _geometry = geo; _loading = false; console.debug('[route] geometry loaded:', !!geo); })
-            .catch((e: unknown) => { _error = String(e); _loading = false; console.warn('[route] fetch error:', e); });
+            .then(geo => {
+              if (gen !== _fetchGen) { console.debug('[route] discarding stale geometry'); return; }
+              _geometry = geo; _loading = false; console.debug('[route] geometry loaded:', !!geo);
+            })
+            .catch((e: unknown) => {
+              if (gen !== _fetchGen) return;
+              _error = String(e); _loading = false; console.warn('[route] fetch error:', e);
+            });
         } else {
           _loading = false;
         }
@@ -135,6 +144,7 @@ function createRoute() {
     },
 
     clear(): void {
+      _fetchGen++;
       _nextPoint = _previousPoint = _activeHref = _routeName = _geometry = _error = null;
       _pointIndex = 0;
       _reverse = _loading = false;

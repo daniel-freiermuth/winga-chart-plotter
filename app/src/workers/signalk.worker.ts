@@ -12,7 +12,7 @@
 import __wbg_init, { SignalKClient } from '../wasm/signalk_chart_core.js';
 
 type InMessage =
-  | { type: 'connect'; url: string }
+  | { type: 'connect'; url: string; serverGen: number }
   | { type: 'disconnect' }
   | { type: 'send'; msg: string }
   | { type: 'pause' }   // tab went to background — hold updates
@@ -44,10 +44,12 @@ let wasmReady = false;
 let paused = false;
 let pendingState: unknown = null;
 let pendingAis: { hot: ArrayBuffer; ids: string[]; cold: AisWasmPayload['cold'] } | null = null;
+/** Server generation of the latest 'connect'; stamped on own-state so the main thread can drop stale servers' state. */
+let serverGen = 0;
 
 function onState(state: unknown): void {
   if (paused) { pendingState = state; return; }
-  self.postMessage({ type: 'state', state });
+  self.postMessage({ type: 'state', state, serverGen });
 }
 
 function onStatus(status: number): void {
@@ -75,7 +77,7 @@ function onRaw(text: string): void {
 
 function flushPending(): void {
   if (pendingState !== null) {
-    self.postMessage({ type: 'state', state: pendingState });
+    self.postMessage({ type: 'state', state: pendingState, serverGen });
     pendingState = null;
   }
   if (pendingAis !== null) {
@@ -101,6 +103,8 @@ async function ensureWasm(): Promise<void> {
 self.onmessage = async (e: MessageEvent<InMessage>): Promise<void> => {
   const msg = e.data;
   if (msg.type === 'connect') {
+    if (msg.serverGen !== serverGen) pendingState = null; // held state belongs to the old server
+    serverGen = msg.serverGen;
     await ensureWasm();
     try {
       if (client) {
