@@ -10,6 +10,7 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- With browser location on, the own-vessel heading from the device compass ignored the screen rotation, so on a tablet or phone in landscape the boat icon, heading line and heading-up chart rotation were off by 90° (180° upside down). The compass heading now follows `screen.orientation.angle`, i.e. the direction the top of the screen points.
 - A Signal K `navigation.datetime` value with a non-ASCII character in its fractional seconds could panic the WASM core (byte slice inside a multi-byte character); such timestamps are now rejected as unparseable.
 - After any reconnect (server dropped the stream, returning to the tab while offline, or switching servers), AIS targets stopped arriving for the rest of the session: the subscribe messages were written to the old, closed WebSocket instead of the new one. They are now sent on the socket that just opened.
 - When the last AIS targets went stale, or after switching to a Signal K server with no AIS targets, the previous targets stayed on the chart (dead-reckoning onward) indefinitely: an empty target set was never sent to the map. It is now, and the chart clears.

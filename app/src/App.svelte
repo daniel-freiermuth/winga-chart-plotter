@@ -72,6 +72,7 @@
   import { ais } from './stores/ais.svelte';
   import { fetchVesselInfo } from './lib/wasmRest';
   import { acquireWakeLock, releaseWakeLock } from './lib/wakeLock';
+  import { headingFromAlpha, headingFromWebkitCompass } from './lib/compassHeading';
   import { route } from './stores/route.svelte';
   import { track } from './stores/track.svelte';
   import { routes } from './stores/routes.svelte';
@@ -338,6 +339,8 @@
   // Subscribe to the device compass (DeviceOrientation API) when browser geo is active.
   // - Chrome/Android/Firefox: 'deviceorientationabsolute' with alpha (CCW from true north)
   // - iOS Safari:             'deviceorientation' with webkitCompassHeading (CW from north)
+  // Both are in the device frame (portrait top edge); screen.orientation.angle turns
+  // them into the bearing of the screen's "up" edge so landscape reads correctly.
   $effect(() => {
     if (!settings.useGeoLocation || !('DeviceOrientationEvent' in window)) return;
 
@@ -345,11 +348,6 @@
     let gotAbsolute = false;
     // rAF coalescing: only flush one store update per animation frame.
     let rafPending = false;
-
-    function headingFromAlpha(alpha: number): number {
-      // alpha is a CCW rotation from geographic north; flip to CW compass bearing.
-      return ((360 - alpha) % 360) * (Math.PI / 180);
-    }
 
     function scheduleFlush() {
       if (rafPending) return;
@@ -363,7 +361,7 @@
     function onAbsolute(e: DeviceOrientationEvent) {
       if (e.alpha === null) return;
       gotAbsolute = true;
-      latestCompassHeadingRad = headingFromAlpha(e.alpha);
+      latestCompassHeadingRad = headingFromAlpha(e.alpha, 'orientation' in screen ? screen.orientation.angle : 0);
       scheduleFlush();
     }
 
@@ -371,10 +369,11 @@
       if (gotAbsolute) return; // prefer absolute events when available
       // iOS: webkitCompassHeading is already a CW bearing from true north.
       const webkit = (e as unknown as { webkitCompassHeading?: number }).webkitCompassHeading;
+      const screenAngleDeg = 'orientation' in screen ? screen.orientation.angle : 0;
       if (typeof webkit === 'number' && isFinite(webkit)) {
-        latestCompassHeadingRad = webkit * (Math.PI / 180);
+        latestCompassHeadingRad = headingFromWebkitCompass(webkit, screenAngleDeg);
       } else if (e.absolute && e.alpha !== null) {
-        latestCompassHeadingRad = headingFromAlpha(e.alpha);
+        latestCompassHeadingRad = headingFromAlpha(e.alpha, screenAngleDeg);
       } else {
         return;
       }
