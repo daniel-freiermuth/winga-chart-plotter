@@ -6,20 +6,6 @@ import { pickWmtsTileUrl } from '../lib/wmtsUrl';
 export type { Chart };
 export type { WmtsLayerInfo };
 
-const LS_OVERRIDES_KEY  = 'chart-wmts-overrides';
-
-function loadLS(key: string): Map<string, string> {
-  try {
-    const raw = localStorage.getItem(key);
-    if (raw) return new Map(JSON.parse(raw) as [string, string][]);
-  } catch { /* ignore */ }
-  return new Map();
-}
-
-function saveLS(key: string, m: Map<string, string>) {
-  localStorage.setItem(key, JSON.stringify([...m]));
-}
-
 function createChartsStore() {
   let available     = $state<ChartRecord>({});
   let loading       = $state(false);
@@ -32,8 +18,6 @@ function createChartsStore() {
   const wmtsFailed        = new SvelteSet<string>();
   // Charts currently fetching their WMTS capabilities
   const wmtsResolving     = new SvelteSet<string>();
-  // Manual URL overrides (persisted)
-  const wmtsOverrides     = loadLS(LS_OVERRIDES_KEY);
   // All layers from capabilities
   const wmtsAllLayers     = new SvelteMap<string, WmtsLayerInfo[]>();
   // Filtered layers (from chart.layers hint) — empty map entry means "no filter"
@@ -65,24 +49,6 @@ function createChartsStore() {
       else wmtsShowAll.add(id);
     },
 
-    needsManualUrl(id: string): boolean {
-      const chart = available[id];
-      return !!chart && chart.type === 'WMTS' && wmtsFailed.has(id) && !wmtsOverrides.has(id);
-    },
-
-    getOverride(id: string):  string { return wmtsOverrides.get(id)  ?? ''; },
-
-    setOverride(id: string, tileUrlTemplate: string) {
-      if (tileUrlTemplate.trim()) {
-        wmtsOverrides.set(id, tileUrlTemplate.trim());
-      } else {
-        wmtsOverrides.delete(id);
-      }
-      saveLS(LS_OVERRIDES_KEY, wmtsOverrides);
-      wmtsFailed.delete(id);
-      wmtsFailed.add(id);
-    },
-
 
     /**
      * Tile URL for a chart. For WMTS charts, `paneLayerId` — the calling
@@ -92,7 +58,6 @@ function createChartsStore() {
     tileUrl(chart: Chart, paneLayerId?: string): string {
       if (chart.type === 'WMTS') {
         return pickWmtsTileUrl(
-          wmtsOverrides.get(chart.identifier),
           wmtsAllLayers.get(chart.identifier),
           paneLayerId,
           wmtsResolved.get(chart.identifier),
@@ -125,7 +90,7 @@ function createChartsStore() {
       // Resolve WMTS capabilities in the background — each chart row updates
       // reactively as its request completes, without blocking the panel.
       const wmtsTasks = Object.values(available)
-        .filter(c => c.type === 'WMTS' && !wmtsOverrides.has(c.identifier))
+        .filter(c => c.type === 'WMTS')
         .map(async c => {
           const url = c.url?.startsWith('/') ? `${base}${c.url}` : (c.url ?? '');
           if (!url) { wmtsFailed.add(c.identifier); return; }
