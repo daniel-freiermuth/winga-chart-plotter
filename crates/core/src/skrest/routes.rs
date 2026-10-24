@@ -543,6 +543,42 @@ mod tests {
     }
 
     #[test]
+    fn route_update_matches_full_precision_vertices_parsed_from_wire_text() {
+        // `update_route` parses the server's copy with serde_json, while the
+        // planner's coordinates come from JS `JSON.parse` (correctly rounded,
+        // like Rust float literals). Unedited vertices must still match.
+        let existing: serde_json::Value = serde_json::from_str(
+            r#"{"name":"R","feature":{"type":"Feature",
+                "geometry":{"type":"LineString","coordinates":
+                    [[10.5,54.25],[11.75,54.5],[-111.97804110201159,26.692267191179354]]},
+                "properties":{"coordinatesMeta":[
+                    {"href":"/resources/waypoints/wp1"},
+                    {"href":"/resources/waypoints/wp2"},
+                    {"href":"/resources/waypoints/wp3"}]}}}"#,
+        )
+        .unwrap();
+        // Remove B, append D: same length, positions shifted.
+        let edited = [
+            [10.5, 54.25],
+            [-111.978_041_102_011_59, 26.692_267_191_179_354],
+            [12.0, 55.0],
+        ];
+        let body = build_route_update_body(&existing, "R", &lonlat(&edited)).unwrap();
+        let props = &body["feature"]["properties"];
+        assert!(props.get("coordinatesMeta").is_none(), "got {props}");
+
+        // Remove B only: the remaining entries are realigned.
+        let body = build_route_update_body(&existing, "R", &lonlat(&edited[..2])).unwrap();
+        assert_eq!(
+            body["feature"]["properties"]["coordinatesMeta"],
+            serde_json::json!([
+                { "href": "/resources/waypoints/wp1" },
+                { "href": "/resources/waypoints/wp3" },
+            ])
+        );
+    }
+
+    #[test]
     fn build_route_body_rejects_empty_waypoints() {
         let result = build_route_body("empty", &[]);
         assert!(
