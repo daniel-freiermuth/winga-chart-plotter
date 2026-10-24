@@ -289,3 +289,19 @@ describe('extension manifest loading', () => {
     expect(store.status).toBe('error');
   });
 });
+
+describe('widget removal', () => {
+  it('drops the removed instance state and keeps the others', async () => {
+    const store = await freshStore();
+    const gone = store.addWidget('ext', 'w');
+    const kept = store.addWidget('ext', 'w');
+    store.setInstanceState('ext', gone, { a: 1 });
+    store.setInstanceState('ext', kept, { b: 2 });
+
+    store.removeWidget(gone);
+
+    expect(store.layout.map((p) => p.instanceId)).toEqual([kept]);
+    expect(localStorage.getItem(`plotterext:state:ext:${gone}`)).toBeNull();
+    expect(store.getInstanceState('ext', kept)).toEqual({ b: 2 });
+  });
+});
