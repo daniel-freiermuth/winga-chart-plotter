@@ -79,3 +79,34 @@ test('a successful MOB raise clears the previous failure', async ({ page }) => {
     await sk.stop();
   }
 });
+
+test('a MOB raise the server never answers shows pending, then times out into an alert', async ({ page }) => {
+  const sk = new MockSignalK();
+  const port = await sk.start();
+  try {
+    await seedApp(page, { port });
+    await blockExternalTiles(page);
+    await page.goto('/');
+    await expect(settingsButton(page)).toHaveCSS('color', GREEN, { timeout: 20_000 });
+
+    // Half-up server / black-holed route: the request is accepted but never answered.
+    let posted = false;
+    await page.route(`**${MOB_PATH}`, (route) => {
+      if (route.request().method() === 'POST') posted = true;
+      // Never fulfilled, aborted or continued.
+    });
+    await mobButton(page).click();
+    await expect.poll(() => posted).toBe(true);
+
+    // While in flight the crew must see the raise is not confirmed yet.
+    const mobPending = page.locator('.mob-container').getByRole('status');
+    await expect(mobPending).toBeVisible({ timeout: 2_000 });
+    await expect(mobAlert(page)).toHaveCount(0);
+
+    // A hung request must not stay pending forever: it times out into the alert.
+    await expect(mobAlert(page)).toBeVisible({ timeout: 20_000 });
+    await expect(mobPending).toHaveCount(0);
+  } finally {
+    await sk.stop();
+  }
+});
