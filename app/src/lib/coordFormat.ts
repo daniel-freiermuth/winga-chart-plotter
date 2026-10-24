@@ -24,3 +24,8 @@ export function formatDm(lat: number, lon: number): string {
   };
   return `${dm(lat, true)}\u2003${dm(canonicalLon, false)}`;
 }
+
+/** Formats a true bearing in [0, 360) as a whole-degree label, e.g. "045° T". */
+export function formatBearingTrue(bearing: number): string {
+  return bearing.toFixed(0).padStart(3, '0') + '° T';
+}

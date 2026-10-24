@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatDm } from './coordFormat';
+import { formatBearingTrue, formatDm } from './coordFormat';
 
 describe('formatDm', () => {
   // The result is also the default waypoint name persisted to the Signal K
@@ -31,5 +31,19 @@ describe('formatDm', () => {
     expect(formatDm(-17, 180.5)).toBe("17°\u202f0.000'\u202fS\u2003179°\u202f30.000'\u202fW");
     expect(formatDm(-17, -180.5)).toBe("17°\u202f0.000'\u202fS\u2003179°\u202f30.000'\u202fE");
     expect(formatDm(10, 370.25)).toBe("10°\u202f0.000'\u202fN\u200310°\u202f15.000'\u202fE");
+  });
+});
+
+describe('formatBearingTrue', () => {
+  it('wraps bearings that round up to 360 back to 000', () => {
+    // Initial GC bearing (10.75, 59.91) -> (10.7485, 60.0), just west of north.
+    expect(formatBearingTrue(359.5225)).toBe('000° T');
+    expect(formatBearingTrue(359.999)).toBe('000° T');
+  });
+
+  it('zero-pads and rounds to whole degrees', () => {
+    expect(formatBearingTrue(0)).toBe('000° T');
+    expect(formatBearingTrue(5.4)).toBe('005° T');
+    expect(formatBearingTrue(359.4)).toBe('359° T');
   });
 });
