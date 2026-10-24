@@ -24,8 +24,16 @@ export function destPoint(lon: number, lat: number, bearingRad: number, distM: n
 /**
  * Generate densified rhumb line coords with progressive unwrapping.
  * Unwrapped longitude keeps antimeridian crossings continuous for both Mercator and Globe.
+ * `mercatorCap` cuts lines starting equatorward of ±85° at the Mercator display limit;
+ * pass `false` on globe, which shows those latitudes, so lines only stop at the pole.
  */
-export function rhumbCoords(lon: number, lat: number, bearingRad: number, distM: number): [number, number][] {
+export function rhumbCoords(
+  lon: number,
+  lat: number,
+  bearingRad: number,
+  distM: number,
+  { mercatorCap = true }: { mercatorCap?: boolean } = {},
+): [number, number][] {
   const R = 6371000;
   const φ1 = (lat * Math.PI) / 180;
   const cosB = Math.cos(bearingRad);
@@ -33,7 +41,7 @@ export function rhumbCoords(lon: number, lat: number, bearingRad: number, distM:
     // A line already poleward of the display cap is only stopped at the pole,
     // so a vessel above ±85° keeps its COG line instead of collapsing to a point.
     const sign = cosB > 0 ? 1 : -1;
-    const capφ = sign * (sign * φ1 < MERCATOR_CAP ? MERCATOR_CAP : POLE_GUARD);
+    const capφ = sign * (mercatorCap && sign * φ1 < MERCATOR_CAP ? MERCATOR_CAP : POLE_GUARD);
     const distToCap = ((capφ - φ1) / cosB) * R;
     if (distToCap < distM) distM = Math.max(0, distToCap);
   }
