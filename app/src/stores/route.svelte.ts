@@ -84,6 +84,20 @@ async function fetchRouteGeometry(serverBase: string, href: string): Promise<Fea
   return null;
 }
 
+function loadGeometry(serverBase: string, href: string): void {
+  const gen = ++_fetchGen;
+  _loading = true;
+  fetchRouteGeometry(serverBase, href)
+    .then(geo => {
+      if (gen !== _fetchGen) { console.debug('[route] discarding stale geometry'); return; }
+      _geometry = geo; _loading = false; console.debug('[route] geometry loaded:', !!geo);
+    })
+    .catch((e: unknown) => {
+      if (gen !== _fetchGen) return;
+      _error = String(e); _loading = false; console.warn('[route] fetch error:', e);
+    });
+}
+
 function createRoute() {
   return {
     get nextPoint()     { return _nextPoint; },
@@ -124,23 +138,22 @@ function createRoute() {
         _activeHref = newHref;
         _geometry   = null;
         _error      = null;
-        const gen = ++_fetchGen;
-
         if (newHref) {
-          _loading = true;
-          fetchRouteGeometry(serverBase, newHref)
-            .then(geo => {
-              if (gen !== _fetchGen) { console.debug('[route] discarding stale geometry'); return; }
-              _geometry = geo; _loading = false; console.debug('[route] geometry loaded:', !!geo);
-            })
-            .catch((e: unknown) => {
-              if (gen !== _fetchGen) return;
-              _error = String(e); _loading = false; console.warn('[route] fetch error:', e);
-            });
+          loadGeometry(serverBase, newHref);
         } else {
+          _fetchGen++;
           _loading = false;
         }
       }
+    },
+
+    /**
+     * Refetch the geometry of the current active route. Needed after the route
+     * resource was edited in place (same uuid, same href), which `update()`
+     * cannot detect — consumers mirror pointIndex against its coordinate count.
+     */
+    refreshGeometry(serverBase: string): void {
+      if (_activeHref) loadGeometry(serverBase, _activeHref);
     },
 
     clear(): void {

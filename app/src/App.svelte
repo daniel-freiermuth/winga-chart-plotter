@@ -47,6 +47,8 @@
       // Re-anchor navigation to the closest waypoint in the updated route.
       if (wasEditingActiveRoute && editingUuid) {
         await activateRoute(settings.signalkHttpUrl, editingUuid, reverse, auth.authHeaders);
+        // Same href → route.update() won't refetch; the cached geometry is pre-edit.
+        route.refreshGeometry(settings.signalkHttpUrl);
         const pointIndex = anchorPoint ? reanchorPointIndex(newWaypoints, anchorPoint, reverse, gcDistanceNm) : null;
         if (pointIndex !== null) {
           await setActiveRoutePointIndex(settings.signalkHttpUrl, pointIndex, auth.authHeaders);
