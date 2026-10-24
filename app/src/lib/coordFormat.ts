@@ -27,5 +27,7 @@ export function formatDm(lat: number, lon: number): string {
 
 /** Formats a true bearing in [0, 360) as a whole-degree label, e.g. "045° T". */
 export function formatBearingTrue(bearing: number): string {
-  return bearing.toFixed(0).padStart(3, '0') + '° T';
+  // Round first, then wrap: [359.5, 360) rounds to 360, which is 000 on a compass.
+  const whole = Math.round(bearing) % 360;
+  return String(whole).padStart(3, '0') + '° T';
 }
