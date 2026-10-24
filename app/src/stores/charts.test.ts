@@ -66,3 +66,27 @@ describe('charts.tileUrl with a stale persisted WMTS override', () => {
     expect(charts.tileUrl(CHART)).toBe(COAST_URL);
   });
 });
+
+describe('charts.visibleLayers with a layers hint naming only unusable layers', () => {
+  it('still offers a selectable Web Mercator layer instead of only disabled cards', async () => {
+    // 'wgs-only' links no Web Mercator TileMatrixSet → tileUrl '' (picker
+    // renders it as a disabled card). resolveWmtsTileUrl falls back to the
+    // first Web Mercator layer for the default URL.
+    const hinted: Chart = { ...CHART, layers: ['wgs-only'] };
+    const { fetchCharts } = await import('../lib/wasmRest');
+    const { resolveWmtsTileUrl } = await import('../lib/wmts');
+    vi.mocked(fetchCharts).mockResolvedValueOnce({ w1: hinted });
+    vi.mocked(resolveWmtsTileUrl).mockResolvedValueOnce({
+      tileUrlTemplate: COAST_URL,
+      layerName: 'coast',
+      availableLayers: [{ id: 'wgs-only', title: 'WGS only', tileUrl: '' }, ...LAYERS],
+    });
+    const { charts } = await import('./charts.svelte');
+
+    await charts.load('http://sk.local');
+    await vi.waitFor(() => { expect(charts.wmtsResolving.has('w1')).toBe(false); });
+
+    const selectable = charts.visibleLayers('w1').filter(l => l.tileUrl !== '');
+    expect(selectable.map(l => l.id)).toContain('coast');
+  });
+});
