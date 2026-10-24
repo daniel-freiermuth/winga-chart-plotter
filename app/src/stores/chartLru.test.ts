@@ -84,7 +84,7 @@ describe('chartLru persistence failures', () => {
     });
 
     // ChartPicker.close() calls this before onClose(); a throw would keep the sheet open.
-    expect(() => touchVisibleSelections()).not.toThrow();
+    expect(() => { touchVisibleSelections(); }).not.toThrow();
     expect(chartLru.rank('osm')).toBeGreaterThan(0);
   });
 });
