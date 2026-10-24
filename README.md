@@ -33,7 +33,7 @@ S57-ish charts are supported after conversion into tiles (e.g. via [quilt-tiler]
 
 ```sh
 rustup target add wasm32-unknown-unknown
-just install-wasm-pack   # cargo install wasm-pack --locked --version <wasm_pack_version>
+just install-wasm-pack   # cargo install wasm-pack --locked --force --version <wasm_pack_version>
 ```
 
 ### Run
