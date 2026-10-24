@@ -6,10 +6,18 @@ function createConnectionStore() {
   // per (re)connect — rather than on every read of `connected` — key off this:
   // a boolean that is already true carries no edge to react to.
   let epoch = $state(0);
+  // Bumped on every server (URL) switch and sent with each 'connect'; the worker
+  // stamps own-state messages with it, so state from the previous server that was
+  // still in flight when the switch reset own-ship/route is dropped instead of
+  // resurrecting it. Reactive so consumers can tell that reset apart from data loss.
+  let serverGen = $state(0);
   return {
     get connected() { return connected; },
     get error() { return error; },
     get epoch() { return epoch; },
+    get serverGen() { return serverGen; },
+    /** Starts the next server generation (call on a server switch) and returns it. */
+    nextServerGen(): number { return ++serverGen; },
     setConnected(v: boolean) {
       if (v && !connected) epoch++;
       connected = v;
