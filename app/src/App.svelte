@@ -445,7 +445,9 @@
           // that a server which was down or restarting is serving again.
           void plotterExtensions.load(settings.signalkHttpUrl);
         } else if (msg.status === 2 || msg.status === 3) {
-          // Disconnected or error — schedule reconnect.
+          // Disconnected or error — hold relay subscribes for the next socket's
+          // Connected, then schedule reconnect.
+          relay.disconnected();
           if (msg.status === 3) connection.setError('Connection error');
           scheduleReconnect();
         }
@@ -461,6 +463,7 @@
         // without this the retry chain stops dead and the app stays offline
         // until the user reloads the page.
         connection.setConnected(false);
+        relay.disconnected();
         scheduleReconnect();
       }
     };
@@ -565,6 +568,8 @@
     if (url === lastUrl) return;
     lastUrl = url;
     connection.setConnected(false);
+    // The worker replaces the socket without the old one reporting Disconnected.
+    relay.disconnected();
     connection.setError(null);
     reconnectDelay = 2000;
     if (reconnectTimer !== null) { clearTimeout(reconnectTimer); reconnectTimer = null; }
