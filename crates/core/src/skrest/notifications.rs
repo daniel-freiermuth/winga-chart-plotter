@@ -14,13 +14,25 @@ mod wasm {
     use crate::skrest::http;
     use wasm_bindgen::prelude::*;
 
+    /// Abort a raise the server never answers (half-up host, black-holed
+    /// route) so the UI can show "NOT raised" instead of pending forever.
+    const MOB_RAISE_TIMEOUT_MS: u32 = 10_000;
+
     /// Raise a Man Overboard alarm.
     ///   `POST /signalk/v2/api/notifications/mob`
     #[wasm_bindgen(js_name = raiseMob)]
     pub async fn raise_mob(server_base: String, auth_headers: JsValue) -> Result<(), JsValue> {
         let url = format!("{server_base}/signalk/v2/api/notifications/mob");
         let body = mob_body().to_string();
-        http::fetch_ok("POST", &url, &auth_headers, Some(&body), "MOB raise failed").await?;
+        http::fetch_ok_with_timeout(
+            "POST",
+            &url,
+            &auth_headers,
+            Some(&body),
+            "MOB raise failed",
+            Some(MOB_RAISE_TIMEOUT_MS),
+        )
+        .await?;
         Ok(())
     }
 }
