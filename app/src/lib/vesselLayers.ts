@@ -41,7 +41,7 @@ export function buildOwnVesselLayers(
     const cogDashProps = { getDashArray: lineStyleDash(ap.cog.style, ap.cog.width) };
     layers.push(new PathLayer<[number, number][]>({
       id: 'vessel-cog-line',
-      data: [rhumbCoords(longitude, latitude, state.cog, lineDistM(ap.cog, state.sog))],
+      data: [rhumbCoords(longitude, latitude, state.cog, lineDistM(ap.cog, state.sog), { mercatorCap: projection === 'mercator' })],
       getPath: d => d,
       getColor: hexToRgba(ap.cog.color, 255),
       getWidth: ap.cog.width,
