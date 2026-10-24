@@ -29,6 +29,7 @@
   import { mapStyles } from '../stores/mapStyles.svelte';
   import { auth } from '../stores/auth.svelte';
   import { fetchAisVesselTrack, navigateToPoint, clearCourse, activateRoute, setActiveRoutePointIndex, deleteRoute, saveWaypoint, updateWaypoint, deleteWaypoint } from '../lib/wasmRest';
+  import { AIS_TRACK_LIVE_EXTEND_MS, AisTrackFetchSchedule, appendLivePoint, refreshedTrack } from '../lib/aisAllTracks';
   import { extrapolatePos } from '../lib/deadReckoning';
   import { formatBearingTrue, formatDm } from '../lib/coordFormat';
   import { SvelteMap, SvelteSet } from 'svelte/reactivity';
@@ -178,8 +179,10 @@
   // Per-vessel track cache for all-tracks mode (visibility.aisTracks ON).
   const aisAllTracksMap = new SvelteMap<string, [number, number][]>();
   let _aisAllTracksGen = 0;
-  // eslint-disable-next-line svelte/prefer-svelte-reactivity
-  const _fetchedAisTrackIds = new Set<string>();
+  // When each vessel's history is (re)fetched; plain class, not reactive state.
+  const _aisTrackSchedule = new AisTrackFetchSchedule();
+  // Last time cached tracks were extended to the vessels' live positions.
+  let _aisTracksLiveExtendedAt = 0;
   // base URL + history hours the cache was fetched with; a change invalidates it.
   let _aisAllTracksKey = '';
   // CPA visualization deck.gl layers (projection lines, ghost dots).
@@ -2610,13 +2613,23 @@
     }
   });
 
-  // Fetch all AIS vessel tracks when the all-tracks toggle is on.
+  /** Live [lon, lat] of AIS target `id`, or null when it is not in the current batch. */
+  function aisLivePosition(id: string): [number, number] | null {
+    const hotData = ais.hotData;
+    const idx = ais.ids.indexOf(id);
+    if (idx < 0 || !hotData) return null;
+    return [hotData[idx * AIS_HOT_STRIDE + AIS_F_LON]!, hotData[idx * AIS_HOT_STRIDE + AIS_F_LAT]!];
+  }
+
+  // Fetch all AIS vessel tracks when the all-tracks toggle is on, refetch them once stale,
+  // retry failed fetches, and keep every cached track extended to its vessel's live position.
+  // Re-runs on every AIS batch (ais.ids is replaced per batch), which drives the schedule.
   // Increments _aisAllTracksGen to discard in-flight results when toggled off.
   $effect(() => {
     if (!visibility.aisTracks || !mapLoaded) {
-      if (_fetchedAisTrackIds.size > 0) {
+      if (_aisTrackSchedule.size > 0) {
         _aisAllTracksGen++;
-        _fetchedAisTrackIds.clear();
+        _aisTrackSchedule.clear();
         aisAllTracksMap.clear();
       }
       return;
@@ -2629,42 +2642,45 @@
     if (key !== _aisAllTracksKey) {
       _aisAllTracksKey = key;
       _aisAllTracksGen++;
-      _fetchedAisTrackIds.clear();
+      _aisTrackSchedule.clear();
       aisAllTracksMap.clear();
     }
+    const ids = ais.ids;
     // Evict vessels that are no longer AIS targets (left range / pruned).
-    const current = new Set(ais.ids);
-    for (const id of [..._fetchedAisTrackIds]) {
-      if (current.has(id)) continue;
-      _fetchedAisTrackIds.delete(id);
-      aisAllTracksMap.delete(id);
+    for (const id of _aisTrackSchedule.retain(new Set(ids))) aisAllTracksMap.delete(id);
+    const now = Date.now();
+    // Extend cached tracks so each one keeps reaching its moving vessel icon between fetches.
+    // Throttled: every extension rebuilds the whole all-tracks GeoJSON source.
+    if (now - _aisTracksLiveExtendedAt >= AIS_TRACK_LIVE_EXTEND_MS) {
+      _aisTracksLiveExtendedAt = now;
+      untrack(() => {
+        const hotData = ais.hotData;
+        if (!hotData) return;
+        for (let i = 0; i < ids.length; i++) {
+          const id = ids[i]!;
+          const coords = aisAllTracksMap.get(id);
+          if (!coords) continue;
+          const next = appendLivePoint(coords, hotData[i * AIS_HOT_STRIDE + AIS_F_LON]!, hotData[i * AIS_HOT_STRIDE + AIS_F_LAT]!);
+          if (next !== coords) aisAllTracksMap.set(id, next);
+        }
+      });
     }
     // Capture current gen without bumping — only cache invalidation should bump it.
     // Bumping here would cancel in-flight fetches every time ais.ids changes (1 Hz).
     const cancelAtGen = _aisAllTracksGen;
-    for (const id of ais.ids) {
-      if (_fetchedAisTrackIds.has(id)) continue;
-      _fetchedAisTrackIds.add(id);
+    for (const id of _aisTrackSchedule.takeDue(ids, now)) {
       fetchAisVesselTrack(base, id, hours).then(coords => {
         // Also drop results for vessels evicted while the fetch was in flight.
-        if (_aisAllTracksGen !== cancelAtGen || !_fetchedAisTrackIds.has(id)) return;
-        // Append current live position so each track reaches its vessel icon.
-        // hotData/ids are read outside the reactive scope (inside async .then) so no dep created.
-        const hotData = ais.hotData;
-        const idx = ais.ids.indexOf(id);
-        if (idx >= 0 && hotData) {
-          const lon = hotData[idx * AIS_HOT_STRIDE + AIS_F_LON]!;
-          const lat = hotData[idx * AIS_HOT_STRIDE + AIS_F_LAT]!;
-          if (!isNaN(lon) && !isNaN(lat)) {
-            const last = coords[coords.length - 1];
-            const dx = last ? last[0] - lon : Infinity;
-            const dy = last ? last[1] - lat : Infinity;
-            // ~5 m threshold — skip if history already ends at the live position.
-            if (!last || dx * dx + dy * dy >= 2.02e-9) coords = [...coords, [lon, lat] as [number, number]];
-          }
-        }
-        if (coords.length >= 2) aisAllTracksMap.set(id, coords);
-      }).catch(() => { /* no history for this vessel — silently skip */ });
+        if (_aisAllTracksGen !== cancelAtGen || !_aisTrackSchedule.has(id)) return;
+        _aisTrackSchedule.succeeded(id, Date.now());
+        // Read outside the reactive scope (inside async .then) so no dep is created.
+        const live = aisLivePosition(id) ?? [NaN, NaN];
+        const track = refreshedTrack(coords, aisAllTracksMap.get(id), live[0], live[1]);
+        if (track.length > 0) aisAllTracksMap.set(id, track);
+      }).catch(() => {
+        // No history or transient error — retry later rather than never.
+        if (_aisAllTracksGen === cancelAtGen) _aisTrackSchedule.failed(id, Date.now());
+      });
     }
   });
 
