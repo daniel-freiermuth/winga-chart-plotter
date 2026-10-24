@@ -126,3 +126,40 @@ test('the chosen rotation mode survives a server switch', async ({ page }) => {
     await second.stop();
   }
 });
+
+// Two servers on one boat announce the same self (e.g. both derive it from the
+// configured MMSI), so Storage keeps the old server's own-vessel data. Until
+// the new server reports own data of its own, that retained state must not be
+// handed back to the app as if the new server had sent it.
+test('the previous server\'s own-ship fix is not re-emitted by a same-self server without a fix', async ({ page }) => {
+  const first = new MockSignalK(OWN_ID);
+  const second = new MockSignalK(OWN_ID);
+  const firstPort = await first.start();
+  const secondPort = await second.start();
+
+  try {
+    await seedApp(page, { port: firstPort });
+    await blockExternalTiles(page);
+    const followBtn = page.locator('.nav-stack button.nav-fab').nth(1);
+    await page.goto('/');
+
+    await expect(settingsButton(page)).toHaveCSS('color', GREEN, { timeout: 20_000 });
+    first.ownNav({ lon: VIEW.lon, lat: VIEW.lat, cogRad: 0.5, sogMs: 3 });
+    await expect(followBtn).toBeEnabled({ timeout: 10_000 });
+
+    // Server B never reports an own position.
+    await settingsButton(page).click();
+    await page.locator('input[type="number"][max="65535"]').fill(String(secondPort));
+    await page.getByRole('button', { name: 'Save & reconnect' }).click();
+
+    await second.waitForSubscriptions(1, ['vessels.self']);
+    await expect(settingsButton(page)).toHaveCSS('color', GREEN, { timeout: 10_000 });
+    // Let B's Hello reach the app (and with it any re-emitted state).
+    await page.waitForTimeout(1500);
+
+    await expect(followBtn).toBeDisabled();
+  } finally {
+    await first.stop();
+    await second.stop();
+  }
+});
