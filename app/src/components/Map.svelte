@@ -30,7 +30,7 @@
   import { auth } from '../stores/auth.svelte';
   import { fetchAisVesselTrack, navigateToPoint, clearCourse, activateRoute, setActiveRoutePointIndex, deleteRoute, saveWaypoint, updateWaypoint, deleteWaypoint } from '../lib/wasmRest';
   import { extrapolatePos } from '../lib/deadReckoning';
-  import { formatDm } from '../lib/coordFormat';
+  import { formatBearingTrue, formatDm } from '../lib/coordFormat';
   import { SvelteMap, SvelteSet } from 'svelte/reactivity';
   import { buildTrackGradient, processTrack, processRouteCoords } from '../lib/trackProcessing';
   import { hexToRgba, dashArray } from '../lib/mapStyles';
@@ -1115,7 +1115,7 @@
                   const distStr = dist < 10 ? dist.toFixed(2) : dist.toFixed(1);
                   segmentLabels.push({
                     lon: mid[0], lat: mid[1],
-                    text: `${distStr} NM · ${brg.toFixed(0).padStart(3, '0')}° T`,
+                    text: `${distStr} NM · ${formatBearingTrue(brg)}`,
                   });
                 }
               }
