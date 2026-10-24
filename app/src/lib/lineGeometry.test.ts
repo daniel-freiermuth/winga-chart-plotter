@@ -92,6 +92,24 @@ describe('rhumbCoords', () => {
     expect(minLat).toBeGreaterThanOrEqual(-85.001);
   });
 
+  // ── globe: no Mercator display cap ──
+
+  it('does not cut a line at 85° when the Mercator cap is off (globe)', () => {
+    const dist = 10_000;
+    const north = rhumbCoords(10, 84.99, 0, dist, { mercatorCap: false });
+    expect(north[north.length - 1]![1]).toBeCloseTo(84.99 + dist / M_PER_DEG_LAT, 4);
+    const south = rhumbCoords(10, -84.99, Math.PI, dist, { mercatorCap: false });
+    expect(south[south.length - 1]![1]).toBeCloseTo(-84.99 - dist / M_PER_DEG_LAT, 4);
+  });
+
+  it('keeps line length continuous across 85° when the Mercator cap is off (globe)', () => {
+    const dist = 10_000;
+    for (const start of [84.99, 85.01]) {
+      const coords = rhumbCoords(10, start, 0, dist, { mercatorCap: false });
+      expect(coords[coords.length - 1]![1] - start).toBeCloseTo(dist / M_PER_DEG_LAT, 4);
+    }
+  });
+
   // ── pole cap: starting AT or ABOVE 85° (the former bug) ──
 
   it('produces no NaN/Infinity when starting at 86° heading poleward', () => {
