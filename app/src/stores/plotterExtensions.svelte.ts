@@ -123,6 +123,16 @@ function lsSet(key: string, values: Record<string, unknown>): void {
   } catch { /* ignore */ }
 }
 
+function lsRemove(key: string): void {
+  try {
+    localStorage.removeItem(key);
+  } catch { /* ignore */ }
+}
+
+function instanceStateKey(extensionId: string, instanceId: string): string {
+  return `plotterext:state:${extensionId}:${instanceId}`;
+}
+
 // ── Store interface ───────────────────────────────────────────────────────────
 
 /** Lifecycle of the extension-manifest fetch — drives widget placeholders. */
@@ -393,8 +403,12 @@ function createPlotterExtensions(): PlotterExtensions {
   }
 
   function removeWidget(instanceId: string): void {
+    const removed = layout.find((p) => p.instanceId === instanceId);
     layout = layout.filter((p) => p.instanceId !== instanceId);
     saveLayout(layout);
+    // Instance ids are never reused (addWidget mints a fresh UUID), so the
+    // removed instance's state would otherwise be orphaned in localStorage.
+    if (removed) lsRemove(instanceStateKey(removed.extensionId, instanceId));
   }
 
   // ── Panel helpers ──────────────────────────────────────────────────────────
@@ -422,7 +436,7 @@ function createPlotterExtensions(): PlotterExtensions {
     instanceId: string,
     keys?: string[],
   ): Record<string, unknown> {
-    const key = `plotterext:state:${extensionId}:${instanceId}`;
+    const key = instanceStateKey(extensionId, instanceId);
     const all = lsGet(key);
     if (!keys) return all;
     return Object.fromEntries(keys.map((k) => [k, all[k]]));
@@ -434,7 +448,7 @@ function createPlotterExtensions(): PlotterExtensions {
     values: Record<string, unknown>,
     writer?: object,
   ): void {
-    lsSet(`plotterext:state:${extensionId}:${instanceId}`, values);
+    lsSet(instanceStateKey(extensionId, instanceId), values);
     const key = `${extensionId}:${instanceId}`;
     const handlers = instanceStateListeners.get(key);
     if (handlers) {

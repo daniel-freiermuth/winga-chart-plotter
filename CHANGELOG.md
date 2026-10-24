@@ -10,6 +10,7 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- Removing an extension widget kept its saved per-widget settings in browser storage forever (a new widget always gets a fresh id, so they were never read again), slowly filling the storage the app shares with its settings, layout and chart caches. Removing a widget now deletes its saved state.
 - With browser location on, the own-vessel heading from the device compass ignored the screen rotation, so on a tablet or phone in landscape the boat icon, heading line and heading-up chart rotation were off by 90° (180° upside down). The compass heading now follows `screen.orientation.angle`, i.e. the direction the top of the screen points.
 - A Signal K chart resource without `format`, `name` or `identifier` (all optional in Signal K's chart schema — typical for mapstyleJSON/TileJSON/WMS sources, or an MBTiles file without a `format` key) made the whole chart catalogue fail to load, leaving no charts at all. Such entries now load: a missing identifier falls back to the resource id, a missing name to the identifier, and WMS/WMTS without a format request PNG.
 - A Signal K `navigation.datetime` value with a non-ASCII character in its fractional seconds could panic the WASM core (byte slice inside a multi-byte character); such timestamps are now rejected as unparseable.
