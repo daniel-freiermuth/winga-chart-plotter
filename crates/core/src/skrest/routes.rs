@@ -154,7 +154,8 @@ fn realign_coordinates_meta(
     let mut cursor = 0;
     for (i, w) in waypoints.iter().enumerate() {
         let found = old.get(cursor..)?.iter().position(|&[lon, lat]| {
-            // Exact identity: unedited vertices round-trip bit-for-bit.
+            // Exact identity: unedited vertices round-trip bit-for-bit (needs
+            // serde_json's `float_roundtrip` to match JS `JSON.parse`).
             lon.to_bits() == w.lon.to_bits() && lat.to_bits() == w.lat.to_bits()
         });
         match found {
