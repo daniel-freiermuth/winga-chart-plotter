@@ -621,14 +621,23 @@
 
   // A failed raise must be visible: the crew would otherwise assume the alarm
   // is up. Cleared when a later raise succeeds or the crew dismisses it.
+  // While a raise is in flight a pending status is shown, so "not answered
+  // yet" never looks like "raised". Only the latest tap's outcome is shown:
+  // a slow earlier raise must not overwrite a later one's result.
   let mobError = $state<string | null>(null);
+  let mobPending = $state(0);
+  let mobSeq = 0;
   async function mobRaise() {
+    const seq = ++mobSeq;
+    mobPending++;
     try {
       await raiseMob(settings.signalkHttpUrl, auth.authHeaders);
-      mobError = null;
+      if (seq === mobSeq) mobError = null;
     } catch (e) {
       console.error('[mob] raise failed', e);
-      mobError = String(e);
+      if (seq === mobSeq) mobError = String(e);
+    } finally {
+      mobPending--;
     }
   }
 
@@ -831,6 +840,9 @@
         <button class="mob-error-dismiss" title="Dismiss" aria-label="Dismiss" onclick={() => { mobError = null; }}>✕</button>
       </div>
     {/if}
+    {#if mobPending > 0}
+      <div class="mob-pending" role="status">Raising MOB alarm… not confirmed yet</div>
+    {/if}
     <button class="mob-btn" onclick={() => void mobRaise()} title="Man Overboard — raise alarm">
       <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
         <path d="M12.0166 9.49274C13.5334 9.49274 14.763 8.26315 14.763 6.74637C14.763 5.22959 13.5334 4 12.0166 4C10.4998 4 9.27023 5.22959 9.27023 6.74637C9.27023 8.26315 10.4998 9.49274 12.0166 9.49274Z" fill="currentColor"/>
@@ -1006,6 +1018,18 @@
     .mob-btn:hover { background: #991b1b; transform: scale(1.04); }
   }
   .mob-btn:active { transform: scale(0.97); }
+
+  .mob-pending {
+    max-width: 260px;
+    background: rgba(120,53,15,0.95);
+    border: 2px solid #fcd34d;
+    border-radius: 8px;
+    color: #fef3c7;
+    padding: 6px 10px;
+    font-size: 12px;
+    font-weight: 600;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.5);
+  }
 
   .mob-error {
     position: relative;

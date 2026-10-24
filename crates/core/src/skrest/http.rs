@@ -112,7 +112,20 @@ pub async fn fetch_ok(
     body: Option<&str>,
     action: &'static str,
 ) -> Result<HttpResponse, JsValue> {
-    let resp = fetch(method, url, extra_headers, body, None).await?;
+    fetch_ok_with_timeout(method, url, extra_headers, body, action, None).await
+}
+
+/// [`fetch_ok`] with an optional abort timeout, for call sites where a hung
+/// server must surface as a rejection instead of a forever-pending promise.
+pub async fn fetch_ok_with_timeout(
+    method: &str,
+    url: &str,
+    extra_headers: &JsValue,
+    body: Option<&str>,
+    action: &'static str,
+    timeout_ms: Option<u32>,
+) -> Result<HttpResponse, JsValue> {
+    let resp = fetch(method, url, extra_headers, body, timeout_ms).await?;
     if !resp.ok() {
         return Err(status_error(action, &resp).into());
     }
