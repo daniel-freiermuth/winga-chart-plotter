@@ -100,11 +100,14 @@ function createChartsStore() {
             const info = await resolveWmtsTileUrl(url, preferLayer);
             wmtsResolved.set(c.identifier, info.tileUrlTemplate);
             wmtsAllLayers.set(c.identifier, info.availableLayers);
-            // Build filtered list from chart.layers hints (preserving server order)
+            // Build filtered list from chart.layers hints (preserving server order).
+            // Apply it only if a hinted layer has Web Mercator tiles: otherwise the
+            // picker would offer nothing selectable, so show all layers (which
+            // include the first-Web-Mercator fallback the chart opens on).
             if (c.layers && c.layers.length > 0) {
               const allById = new Map(info.availableLayers.map(l => [l.id, l]));
               const filtered = c.layers.map(id => allById.get(id)).filter(Boolean) as WmtsLayerInfo[];
-              if (filtered.length > 0) wmtsFilteredLayers.set(c.identifier, filtered);
+              if (filtered.some(l => l.tileUrl !== '')) wmtsFilteredLayers.set(c.identifier, filtered);
             }
           } catch {
             wmtsFailed.add(c.identifier);

@@ -79,6 +79,8 @@ describe('charts.visibleLayers with a layers hint naming only unusable layers', 
     vi.mocked(resolveWmtsTileUrl).mockResolvedValueOnce({
       tileUrlTemplate: COAST_URL,
       layerName: 'coast',
+      tileMatrixSet: 'GoogleMapsCompatible',
+      format: 'image/png',
       availableLayers: [{ id: 'wgs-only', title: 'WGS only', tileUrl: '' }, ...LAYERS],
     });
     const { charts } = await import('./charts.svelte');
