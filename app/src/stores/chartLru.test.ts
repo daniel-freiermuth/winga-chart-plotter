@@ -75,3 +75,16 @@ describe('touchVisibleSelections', () => {
     expect(chartLru.rank('w1:layerA')).toBe(0);
   });
 });
+
+describe('chartLru persistence failures', () => {
+  it('a throwing localStorage.setItem does not escape touch; the in-memory LRU still updates', async () => {
+    const { chartLru, touchVisibleSelections } = await boot('solo0');
+    vi.spyOn(localStorage, 'setItem').mockImplementation(() => {
+      throw new DOMException('quota exceeded', 'QuotaExceededError');
+    });
+
+    // ChartPicker.close() calls this before onClose(); a throw would keep the sheet open.
+    expect(() => touchVisibleSelections()).not.toThrow();
+    expect(chartLru.rank('osm')).toBeGreaterThan(0);
+  });
+});
