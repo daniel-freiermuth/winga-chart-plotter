@@ -121,3 +121,29 @@ describe('reanchorPointIndex', () => {
     expect(reanchorPointIndex([], { lon: 0, lat: 0 }, true, planar)).toBeNull();
   });
 });
+
+describe('route.refreshGeometry', () => {
+  it('refetches the geometry of the unchanged active href (route edited in place)', async () => {
+    const coords = [[[0, 0], [1, 1], [2, 2]], [[0, 0], [1, 1], [2, 2], [3, 3]]];
+    let call = 0;
+    const fetchMock = vi.fn(() => Promise.resolve(new Response(JSON.stringify({
+      type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: coords[call++] },
+    }))));
+    vi.stubGlobal('fetch', fetchMock);
+    const course = {
+      nextPoint: null, previousPoint: null,
+      activeRoute: { href: '/resources/routes/a', pointIndex: 0, reverse: true },
+    } as never;
+    try {
+      route.update('http://s', course);
+      await vi.waitFor(() => { expect(route.geometry?.geometry.coordinates.length).toBe(3); });
+      // Planner saved an edit under the same uuid: the delta keeps the same href.
+      route.refreshGeometry('http://s');
+      route.update('http://s', course);
+      await vi.waitFor(() => { expect(route.geometry?.geometry.coordinates.length).toBe(4); });
+    } finally {
+      vi.unstubAllGlobals();
+      route.clear();
+    }
+  });
+});
