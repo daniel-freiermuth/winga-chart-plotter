@@ -22,4 +22,14 @@ describe('formatDm', () => {
       "60°\u202f0.000'\u202fS\u2003180°\u202f0.000'\u202fE",
     );
   });
+
+  // MapLibre's click lngLat is unwrapped across the antimeridian (e.g. 180.5).
+  // The default waypoint name must describe the same position the server
+  // stores, and build_waypoint_body wraps that longitude via
+  // geo::canonical_lon (crates/core/src/skrest/waypoints.rs).
+  it('names unwrapped longitudes by their canonical hemisphere', () => {
+    expect(formatDm(-17, 180.5)).toBe("17°\u202f0.000'\u202fS\u2003179°\u202f30.000'\u202fW");
+    expect(formatDm(-17, -180.5)).toBe("17°\u202f0.000'\u202fS\u2003179°\u202f30.000'\u202fE");
+    expect(formatDm(10, 370.25)).toBe("10°\u202f0.000'\u202fN\u200310°\u202f15.000'\u202fE");
+  });
 });
