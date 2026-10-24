@@ -87,3 +87,42 @@ test('an unchanged own-ship fix reappears after switching to the same vessel', a
     await second.stop();
   }
 });
+
+// The switch clears own-ship COG/heading and the route until the new server
+// streams them. That gap means "not received yet", not "lost": the chosen
+// chart orientation must survive it instead of collapsing to north-up.
+test('the chosen rotation mode survives a server switch', async ({ page }) => {
+  const first = new MockSignalK(OWN_ID);
+  const second = new MockSignalK(OTHER_SELF);
+  const firstPort = await first.start();
+  const secondPort = await second.start();
+  const fix = { lon: VIEW.lon, lat: VIEW.lat, cogRad: 0.5, sogMs: 3 };
+
+  try {
+    await seedApp(page, { port: firstPort });
+    await blockExternalTiles(page);
+    const compassBtn = page.locator('.nav-stack button.compass-fab').first();
+    await page.goto('/');
+
+    await expect(settingsButton(page)).toHaveCSS('color', GREEN, { timeout: 20_000 });
+    first.every(500, () => first.ownNav(fix));
+    await expect(page.locator('.nav-stack button.nav-fab').nth(1)).toBeEnabled({ timeout: 10_000 });
+
+    await compassBtn.click(); // north → COG (the only other available mode)
+    await expect(compassBtn).toHaveAttribute('aria-label', /Rotation mode: COG /);
+
+    await settingsButton(page).click();
+    await page.locator('input[type="number"][max="65535"]').fill(String(secondPort));
+    await page.getByRole('button', { name: 'Save & reconnect' }).click();
+
+    await second.waitForSubscriptions(1, ['vessels.self']);
+    await expect(settingsButton(page)).toHaveCSS('color', GREEN, { timeout: 10_000 });
+    second.every(500, () => second.ownNav(fix));
+    await expect(page.locator('.nav-stack button.nav-fab').nth(1)).toBeEnabled({ timeout: 10_000 });
+
+    await expect(compassBtn).toHaveAttribute('aria-label', /Rotation mode: COG /);
+  } finally {
+    await first.stop();
+    await second.stop();
+  }
+});
