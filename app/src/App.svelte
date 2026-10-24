@@ -197,11 +197,6 @@
   let worker: Worker | null = null;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let reconnectDelay = 2000; // ms, doubles on each failure up to 30s
-  // Bumped on every server (URL) switch and sent with each 'connect'; the worker
-  // stamps own-state messages with it, so state from the previous server that was
-  // still in flight when the switch reset own-ship/route is dropped instead of
-  // resurrecting it.
-  let serverGen = 0;
 
   // Plotter-extensions relay and control objects
   const relay = createSkRelay((msg) => worker?.postMessage({ type: 'send', msg }));
@@ -403,7 +398,7 @@
     reconnectTimer = setTimeout(() => {
       reconnectTimer = null;
       const url = settings.signalkUrl;
-      if (url) worker?.postMessage({ type: 'connect', url, serverGen });
+      if (url) worker?.postMessage({ type: 'connect', url, serverGen: connection.serverGen });
     }, reconnectDelay);
     reconnectDelay = Math.min(reconnectDelay * 2, 30_000);
   }
@@ -417,7 +412,7 @@
     worker.onmessage = (e: MessageEvent<WorkerMsg>) => {
       const msg = e.data;
       if (msg.type === 'state') {
-        if (msg.serverGen !== serverGen) return;
+        if (msg.serverGen !== connection.serverGen) return;
         const pos = msg.state.position;
         if (settings.useGeoLocation) {
           // Geo mode: browser provides position/heading; SK course data is still used.
@@ -479,7 +474,7 @@
         if (!connection.connected) {
           if (reconnectTimer !== null) { clearTimeout(reconnectTimer); reconnectTimer = null; }
           const url = settings.signalkUrl;
-          if (url) worker?.postMessage({ type: 'connect', url, serverGen });
+          if (url) worker?.postMessage({ type: 'connect', url, serverGen: connection.serverGen });
         }
       } else {
         worker?.postMessage({ type: 'pause' });
@@ -582,8 +577,7 @@
       vessel.set({ position: null, cog: null, sog: null, heading: null });
     }
     route.clear();
-    serverGen++;
-    worker?.postMessage({ type: 'connect', url, serverGen });
+    worker?.postMessage({ type: 'connect', url, serverGen: connection.nextServerGen() });
   });
 
   function handleOpenSettings(tab: SettingsTab): void {

@@ -28,6 +28,7 @@
   import { gcLine, gcBearingDeg, gcDistanceNm } from '../lib/wasmGeo';
   import { mapStyles } from '../stores/mapStyles.svelte';
   import { auth } from '../stores/auth.svelte';
+  import { connection } from '../stores/connection.svelte';
   import { fetchAisVesselTrack, navigateToPoint, clearCourse, activateRoute, setActiveRoutePointIndex, deleteRoute, saveWaypoint, updateWaypoint, deleteWaypoint } from '../lib/wasmRest';
   import { AIS_TRACK_LIVE_EXTEND_MS, AisTrackFetchSchedule, appendLivePoint, refreshedTrack } from '../lib/aisAllTracks';
   import { extrapolatePos } from '../lib/deadReckoning';
@@ -242,7 +243,9 @@
   // One-shot guard: the restored rotation mode (from localStorage) must not be collapsed
   // by ensureAvailable() just because cog/heading/route haven't arrived yet on a fresh
   // page load — that data starting out null means "not received yet", not "lost".
+  // Re-armed per server generation: a server switch clears own-ship state and the route.
   let _receivedVesselData = false;
+  let _receivedVesselDataGen = 0;
 
   // Camera deduplication state: used to avoid redundant easeTo/flyTo calls.
   let _easedLon = NaN;
@@ -2850,8 +2853,15 @@
   // Auto-fallback: if the current rotation mode becomes unavailable (e.g. route cleared),
   // drop back to COG → north. Gated on _receivedVesselData so a mode restored from
   // localStorage on a fresh load isn't collapsed before real data has even arrived —
-  // null cog/heading/route at mount means "not received yet", not "lost".
+  // null cog/heading/route at mount means "not received yet", not "lost". The same holds
+  // after a server switch: App bumps serverGen in the same effect that clears own-ship
+  // state and the route, so this run sees the new generation together with the reset.
   $effect(() => {
+    const gen = connection.serverGen;
+    if (gen !== _receivedVesselDataGen) {
+      _receivedVesselDataGen = gen;
+      _receivedVesselData = false;
+    }
     const hasCog     = vessel.cog     !== null;
     const hasHeading = vessel.heading !== null;
     const hasCourse  = route.nextPoint      !== null;
