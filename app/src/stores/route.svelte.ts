@@ -75,7 +75,7 @@ async function fetchRouteGeometry(serverBase: string, href: string): Promise<Fea
   // FeatureCollection (some plugins wrap it)
   if (data.type === 'FeatureCollection') {
     const f = (data.features ?? []).find((f: unknown) =>
-      (f as Feature).geometry.type === 'LineString'
+      (f as Partial<Feature> | null)?.geometry?.type === 'LineString'
     );
     if (f) return f as Feature<LineString>;
   }
