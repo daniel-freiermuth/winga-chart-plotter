@@ -39,6 +39,9 @@ pub struct SignalKClient {
     on_close: Closure<dyn FnMut(CloseEvent)>,
     /// Last own-vessel state handed to `on_state_change`, used to skip repeats.
     last_vessel_state: Rc<RefCell<Option<VesselState>>>,
+    /// Set by `reconnect()`: own-vessel state is held back until the new
+    /// socket delivers an own-vessel delta (see `reconnect`).
+    awaiting_own_delta: Rc<Cell<bool>>,
 }
 
 #[wasm_bindgen]
@@ -132,6 +135,8 @@ impl SignalKClient {
         let state_cb = on_state_change.clone();
         let last_vessel_state: Rc<RefCell<Option<VesselState>>> = Rc::new(RefCell::new(None));
         let last_vessel_state_clone = last_vessel_state.clone();
+        let awaiting_own_delta = Rc::new(Cell::new(false));
+        let awaiting_own_delta_clone = awaiting_own_delta.clone();
 
         // Helper closure that does the actual AIS emit — shared between the immediate
         // path and the debounce timer. Wrapped in Rc so both paths can hold it.
@@ -218,9 +223,18 @@ impl SignalKClient {
                 log_err("SignalKClient: on_delta callback threw", &err);
             }
 
+            // A reconnect keeps the Storage, including own-vessel data from the
+            // previous socket. A new server announcing the same self (e.g. both
+            // derive it from the boat's MMSI) would otherwise have that data
+            // re-emitted on its Hello, before it reported anything of its own.
+            let own_state_due = !awaiting_own_delta_clone.get() || (delta_ctx.is_some() && forward);
+            if own_state_due {
+                awaiting_own_delta_clone.set(false);
+            }
+
             // Always forward own-vessel state immediately — it's a single cheap struct.
-            let state = extract_vessel_state(&storage_clone.borrow());
-            if state.position.is_some() {
+            let state = own_state_due.then(|| extract_vessel_state(&storage_clone.borrow()));
+            if let Some(state) = state.filter(|s| s.position.is_some()) {
                 // Only emit when something relevant actually changed — many incoming
                 // WebSocket messages are AIS deltas that don't touch own-vessel state.
                 let changed = last_vessel_state_clone.borrow().as_ref() != Some(&state);
@@ -302,6 +316,7 @@ impl SignalKClient {
             on_error,
             on_close,
             last_vessel_state,
+            awaiting_own_delta,
         })
     }
 
@@ -325,8 +340,11 @@ impl SignalKClient {
         let _ = self.ws.close();
         // The app drops its own-ship state on a server switch, so the first
         // state from the new socket must be emitted even if it equals the
-        // last one (same server under another URL, vessel not moving).
+        // last one (same server under another URL, vessel not moving) — but
+        // only once the new socket has reported own data: until then Storage
+        // holds nothing but the previous socket's.
         *self.last_vessel_state.borrow_mut() = None;
+        self.awaiting_own_delta.set(true);
         self.ws = WebSocket::new(url)?;
         self.ws
             .set_onopen(Some(self.on_open.as_ref().unchecked_ref()));
