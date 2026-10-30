@@ -28,6 +28,11 @@ mod wasm {
     use crate::skrest::http;
     use wasm_bindgen::prelude::*;
 
+    /// Abort a request the server never answers (half-up host, black-holed
+    /// route): `handleSaveRoute` awaits route (re)activation, and its Save
+    /// stays disabled until it settles.
+    const ROUTE_COURSE_TIMEOUT_MS: u32 = 15_000;
+
     /// Set the active course destination to a single point. Replaces any
     /// existing course (active route or previous waypoint).
     ///   `PUT /signalk/v2/api/vessels/self/navigation/course/destination`
@@ -73,12 +78,13 @@ mod wasm {
         let url =
             format!("{server_base}/signalk/v2/api/vessels/self/navigation/course/activeRoute");
         let body = active_route_body(&route_uuid, reverse).to_string();
-        http::fetch_ok(
+        http::fetch_ok_with_timeout(
             "PUT",
             &url,
             &auth_headers,
             Some(&body),
             "Activate route failed",
+            Some(ROUTE_COURSE_TIMEOUT_MS),
         )
         .await?;
         Ok(())
@@ -96,12 +102,13 @@ mod wasm {
             "{server_base}/signalk/v2/api/vessels/self/navigation/course/activeRoute/pointIndex"
         );
         let body = point_index_body(index).to_string();
-        http::fetch_ok(
+        http::fetch_ok_with_timeout(
             "PUT",
             &url,
             &auth_headers,
             Some(&body),
             "Set route point index failed",
+            Some(ROUTE_COURSE_TIMEOUT_MS),
         )
         .await?;
         Ok(())
