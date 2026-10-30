@@ -1180,6 +1180,43 @@ mod tests {
     }
 
     #[test]
+    fn prune_stale_vessels_keeps_self_with_stale_datetime() {
+        // Own GPS / N2K system time publishes `navigation.datetime` for self too
+        // (the `vessels.*` subscription matches self). A device clock ahead of
+        // that datetime must not delete the own vessel — it is not an AIS target.
+        let mut storage = Storage::default();
+        apply_message(
+            &mut storage,
+            r#"{"version": "2.0.0", "self": "vessels.urn:mrn:signalk:uuid:self"}"#,
+        )
+        .unwrap();
+        apply_message(
+            &mut storage,
+            r#"{
+            "context": "vessels.urn:mrn:signalk:uuid:self",
+            "updates": [{"values": [
+                {"path": "navigation.position", "value": {"longitude": 10.0, "latitude": 59.0}},
+                {"path": "navigation.courseOverGroundTrue", "value": 1.0},
+                {"path": "navigation.headingTrue", "value": 1.1},
+                {"path": "navigation.datetime", "value": "1970-01-01T00:01:00.000Z"}
+            ]}]
+        }"#,
+        )
+        .unwrap();
+
+        // now = 12 minutes, stale = 10 minutes → self's datetime is 11 minutes old.
+        prune_stale_vessels(&mut storage, 12.0 * 60.0 * 1000.0, 10.0 * 60.0 * 1000.0);
+
+        let state = extract_vessel_state(&storage);
+        assert_eq!(
+            state.position.map(|p| (p.longitude, p.latitude)),
+            Some((10.0, 59.0))
+        );
+        assert_eq!(state.cog, Some(1.0));
+        assert_eq!(state.heading, Some(1.1));
+    }
+
+    #[test]
     fn ais_snapshot_due_posts_non_empty_snapshots() {
         assert!(ais_snapshot_due(1, false));
         assert!(ais_snapshot_due(3, true));
