@@ -1661,6 +1661,8 @@
   }
 
   let aisAgeTimer: ReturnType<typeof setInterval> | null = null;
+  /** The open AIS detail popup — refreshed from each AIS batch while open. Not $state. */
+  let aisPopup: maplibregl.Popup | null = null;
 
   function formatAge(posMs: number): string {
     const ageSec = Math.round((Date.now() - posMs) / 1000);
@@ -1729,6 +1731,7 @@
       .setLngLat([anchorPos?.longitude ?? t.position.longitude, anchorPos?.latitude ?? t.position.latitude])
       .setHTML(buildAisPopupHtml(t))
     ).addTo(map);
+    aisPopup = popup;
     const timerId = setInterval(() => {
       const el = document.getElementById('ais-age');
       if (!el) { clearInterval(timerId); aisAgeTimer = null; return; }
@@ -1740,6 +1743,7 @@
     // click-away). Programmatic disposal via claimPopup detaches this first.
     const closeHandler = () => {
       if (aisAgeTimer !== null) { clearInterval(aisAgeTimer); aisAgeTimer = null; }
+      if (aisPopup === popup) aisPopup = null;
       ais.releasePopup();
       ais.clear(); // triggers reactive cleanup of track + CPA label + layers
     };
@@ -1750,6 +1754,7 @@
     ais.claimPopup(() => {
       popup.off('close', closeHandler); // detach → popup.remove() won't call ais.clear()
       if (aisAgeTimer !== null) { clearInterval(aisAgeTimer); aisAgeTimer = null; }
+      if (aisPopup === popup) aisPopup = null;
       popup.remove();
     });
     popup.getElement().addEventListener('click', (ev) => {
@@ -2435,6 +2440,35 @@
 
     aisLayerGroup = buildAisLayers(hotData, ids, coldMap, settings.appearance.ais, uploadTs, settings.targetFps, ais.selectedIndex);
     flushLayers();
+  });
+
+  // Refresh the open AIS detail popup (title, rows, age baseline, button coordinates, anchor)
+  // from the latest batch so it tracks the live target like its icon and CPA label instead of
+  // freezing at tap time. Only the data parts are swapped — the buttons and links stay the
+  // same DOM nodes so a click in progress is not lost to a batch arriving mid-press.
+  $effect(() => {
+    const hotData = ais.hotData;
+    void ais.coldVersion; // REST vessel info (dimensions, type…) can arrive while open
+    if (ais.selectionPhase !== 'popup' || !aisPopup || !hotData) return;
+    const idx = ais.selectedIndex;
+    if (idx === null) return; // target dropped from the snapshot — keep its last data
+    const t = ais.getTarget(idx);
+    if (!t) return;
+    // computeDrAnchor reads the rAF snapshot; only trust it if it is this batch.
+    const anchor = aisHotSnapshot === hotData ? computeDrAnchor(idx) : undefined;
+    aisPopup.setLngLat([anchor?.longitude ?? t.position.longitude, anchor?.latitude ?? t.position.latitude]);
+    const root = aisPopup.getElement().querySelector('.ais-popup');
+    if (!root) return;
+    const fresh = document.createElement('template');
+    fresh.innerHTML = buildAisPopupHtml(t);
+    for (const sel of ['.ais-popup-title', 'table']) {
+      const next = fresh.content.querySelector(sel);
+      if (next) root.querySelector(sel)?.replaceWith(next);
+    }
+    for (const btn of root.querySelectorAll<HTMLElement>('.add-waypoint-here-btn, .route-here-btn')) {
+      btn.dataset['lat'] = String(t.position.latitude);
+      btn.dataset['lon'] = String(t.position.longitude);
+    }
   });
 
   // Clean up track, CPA label, and age timer when the AIS selection is cleared.
