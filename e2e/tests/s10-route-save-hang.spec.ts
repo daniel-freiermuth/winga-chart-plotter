@@ -60,7 +60,7 @@ test('a route save the server never answers times out into an error and re-enabl
     // and the crew can retry without losing the planned route.
     await expect(saveButton(page)).toHaveText('Save', { timeout: 20_000 });
     await expect(saveButton(page)).toBeEnabled();
-    await expect(page.getByText(/Save route failed/)).toBeVisible();
+    await expect(page.getByText(/timed out/i)).toBeVisible();
     await expect(page.getByPlaceholder('Route name…')).toHaveValue('E2E hung save');
   } finally {
     await sk.stop();
