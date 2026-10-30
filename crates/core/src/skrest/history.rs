@@ -123,7 +123,9 @@ pub fn dedup_coords(coords: &[[f64; 2]]) -> Vec<[f64; 2]> {
     out
 }
 
-/// Parse the v2 History API's `{ data?: [string, {longitude?,latitude?}|null][] }` shape.
+/// Parse the v2 History API's `{ data?: [string, [lon, lat]|{longitude?,latitude?}|null][] }`
+/// shape. The spec/reference providers emit a GeoJSON `[lon, lat]` pair; the
+/// `{longitude, latitude}` object form is still accepted for older providers.
 pub fn extract_history_coords(body_text: &str) -> Vec<[f64; 2]> {
     let Ok(v) = serde_json::from_str::<Json>(body_text) else {
         return Vec::new();
@@ -138,8 +140,12 @@ pub fn extract_history_coords(body_text: &str) -> Vec<[f64; 2]> {
             if pos.is_null() {
                 return None;
             }
-            let lon = pos.get("longitude").and_then(Json::as_f64)?;
-            let lat = pos.get("latitude").and_then(Json::as_f64)?;
+            let (lon, lat) = match pos.as_array() {
+                Some(arr) => (arr.first(), arr.get(1)),
+                None => (pos.get("longitude"), pos.get("latitude")),
+            };
+            let lon = lon.and_then(Json::as_f64)?;
+            let lat = lat.and_then(Json::as_f64)?;
             Some([lon, lat])
         })
         .collect()
@@ -421,6 +427,21 @@ mod tests {
                 ["2026-06-29T12:00:00Z", { "longitude": 24.9, "latitude": 60.1 }],
                 ["2026-06-29T12:00:01Z", null],
                 ["2026-06-29T12:00:02Z", { "longitude": 24.95 }],
+            ],
+        })
+        .to_string();
+        assert_eq!(extract_history_coords(&body), vec![[24.9, 60.1]]);
+    }
+
+    #[test]
+    fn extract_history_coords_reads_geojson_pair_cells() {
+        // Signal K History API / signalk-to-influxdb2 emit position cells as
+        // a GeoJSON `[longitude, latitude]` pair.
+        let body = json!({
+            "data": [
+                ["2026-06-29T12:00:00Z", [24.9, 60.1]],
+                ["2026-06-29T12:00:01Z", null],
+                ["2026-06-29T12:00:02Z", [24.95]],
             ],
         })
         .to_string();
