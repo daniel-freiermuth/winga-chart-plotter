@@ -851,21 +851,29 @@ pub fn extract_ais_binary(
     (Float64Array::from(hot.as_slice()), ids, cold)
 }
 
-/// Drop vessels whose `navigation.datetime` is more than `stale_ms` milliseconds
-/// relative to `now_ms`.
+/// Drop non-self vessels whose `navigation.datetime` is more than `stale_ms`
+/// milliseconds relative to `now_ms`.
 ///
 /// This bounds memory usage — without it, vessels never seen again would
 /// accumulate indefinitely. Call periodically (e.g. at each AIS emit tick).
 ///
+/// The self vessel is never pruned: it is not an AIS target, and its own
+/// `navigation.datetime` may lag the device clock (unsynced clock, stalled time
+/// source, replayed data) while its position keeps updating.
+///
 /// Vessels that lack a parseable datetime are left in place — they will never appear
 /// in AIS target snapshots but also don't consume significant memory.
 pub fn prune_stale_vessels(storage: &mut Storage, now_ms: f64, stale_ms: f64) {
-    storage
-        .vessels
-        .retain(|_id, vessel| match vessel.nav.datetime_ms {
+    let self_id = storage.self_id.as_deref();
+    storage.vessels.retain(|id, vessel| {
+        if Some(id.as_str()) == self_id {
+            return true;
+        }
+        match vessel.nav.datetime_ms {
             Some(ms) => now_ms - ms <= stale_ms,
             None => true, // no parseable datetime → keep
-        });
+        }
+    });
 }
 
 /// Whether an AIS snapshot of `count` targets must be posted to the consumer,
