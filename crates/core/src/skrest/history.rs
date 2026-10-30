@@ -102,8 +102,14 @@ pub fn extract_track_coords(geojson: &Json) -> Vec<[f64; 2]> {
 /// response, an object keyed by vessel context whose values are
 /// `MultiLineString`s flagged with `isSelf`.
 pub fn extract_self_tracks_coords(body: &Json) -> Vec<[f64; 2]> {
-    let _ = body;
-    Vec::new()
+    body.as_object()
+        .and_then(|vessels| {
+            vessels
+                .values()
+                .find(|v| v.get("isSelf").and_then(Json::as_bool) == Some(true))
+        })
+        .map(extract_track_coords)
+        .unwrap_or_default()
 }
 
 /// ~5 metres in degrees² — fast planar dedup approximation (matches the TS constant).
@@ -178,7 +184,7 @@ pub fn v1_self_track_url(server_base: &str, hours: i64) -> String {
 }
 
 pub fn v1_tracks_url(server_base: &str) -> String {
-    format!("{server_base}/signalk/v1/api/tracks?context=vessels.self&radius=500000")
+    format!("{server_base}/signalk/v1/api/tracks?radius=500000")
 }
 
 pub fn v1_vessel_track_url(server_base: &str, vessel_id: &str, hours: i64) -> String {
@@ -189,9 +195,9 @@ pub fn v1_vessel_track_url(server_base: &str, vessel_id: &str, hours: i64) -> St
 #[cfg(target_arch = "wasm32")]
 mod wasm {
     use super::{
-        dedup_coords, extract_history_coords, extract_track_coords, ms_to_iso8601,
-        v1_self_track_url, v1_tracks_url, v1_vessel_track_url, v2_history_url_for_vessel,
-        v2_history_url_own_vessel,
+        dedup_coords, extract_history_coords, extract_self_tracks_coords, extract_track_coords,
+        ms_to_iso8601, v1_self_track_url, v1_tracks_url, v1_vessel_track_url,
+        v2_history_url_for_vessel, v2_history_url_own_vessel,
     };
     use crate::skrest::http;
     use wasm_bindgen::prelude::*;
@@ -256,7 +262,7 @@ mod wasm {
         .await;
         let tracks_coords = coords_or_empty(tracks_promise, |t| {
             serde_json::from_str(t)
-                .map(|g| extract_track_coords(&g))
+                .map(|g| extract_self_tracks_coords(&g))
                 .unwrap_or_default()
         })
         .await;
