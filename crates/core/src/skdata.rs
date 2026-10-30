@@ -851,21 +851,29 @@ pub fn extract_ais_binary(
     (Float64Array::from(hot.as_slice()), ids, cold)
 }
 
-/// Drop vessels whose `navigation.datetime` is more than `stale_ms` milliseconds
-/// relative to `now_ms`.
+/// Drop non-self vessels whose `navigation.datetime` is more than `stale_ms`
+/// milliseconds relative to `now_ms`.
 ///
 /// This bounds memory usage — without it, vessels never seen again would
 /// accumulate indefinitely. Call periodically (e.g. at each AIS emit tick).
 ///
+/// The self vessel is never pruned: it is not an AIS target, and its own
+/// `navigation.datetime` may lag the device clock (unsynced clock, stalled time
+/// source, replayed data) while its position keeps updating.
+///
 /// Vessels that lack a parseable datetime are left in place — they will never appear
 /// in AIS target snapshots but also don't consume significant memory.
 pub fn prune_stale_vessels(storage: &mut Storage, now_ms: f64, stale_ms: f64) {
-    storage
-        .vessels
-        .retain(|_id, vessel| match vessel.nav.datetime_ms {
+    let self_id = storage.self_id.as_deref();
+    storage.vessels.retain(|id, vessel| {
+        if Some(id.as_str()) == self_id {
+            return true;
+        }
+        match vessel.nav.datetime_ms {
             Some(ms) => now_ms - ms <= stale_ms,
             None => true, // no parseable datetime → keep
-        });
+        }
+    });
 }
 
 /// Whether an AIS snapshot of `count` targets must be posted to the consumer,
@@ -1177,6 +1185,43 @@ mod tests {
             !storage.vessels.contains_key("urn:mrn:imo:mmsi:999999999"),
             "stale vessel should be pruned"
         );
+    }
+
+    #[test]
+    fn prune_stale_vessels_keeps_self_with_stale_datetime() {
+        // Own GPS / N2K system time publishes `navigation.datetime` for self too
+        // (the `vessels.*` subscription matches self). A device clock ahead of
+        // that datetime must not delete the own vessel — it is not an AIS target.
+        let mut storage = Storage::default();
+        apply_message(
+            &mut storage,
+            r#"{"version": "2.0.0", "self": "vessels.urn:mrn:signalk:uuid:self"}"#,
+        )
+        .unwrap();
+        apply_message(
+            &mut storage,
+            r#"{
+            "context": "vessels.urn:mrn:signalk:uuid:self",
+            "updates": [{"values": [
+                {"path": "navigation.position", "value": {"longitude": 10.0, "latitude": 59.0}},
+                {"path": "navigation.courseOverGroundTrue", "value": 1.0},
+                {"path": "navigation.headingTrue", "value": 1.1},
+                {"path": "navigation.datetime", "value": "1970-01-01T00:01:00.000Z"}
+            ]}]
+        }"#,
+        )
+        .unwrap();
+
+        // now = 12 minutes, stale = 10 minutes → self's datetime is 11 minutes old.
+        prune_stale_vessels(&mut storage, 12.0 * 60.0 * 1000.0, 10.0 * 60.0 * 1000.0);
+
+        let state = extract_vessel_state(&storage);
+        assert_eq!(
+            state.position.map(|p| (p.longitude, p.latitude)),
+            Some((10.0, 59.0))
+        );
+        assert_eq!(state.cog, Some(1.0));
+        assert_eq!(state.heading, Some(1.1));
     }
 
     #[test]
