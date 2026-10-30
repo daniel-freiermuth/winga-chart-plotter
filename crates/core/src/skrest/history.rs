@@ -428,6 +428,21 @@ mod tests {
     }
 
     #[test]
+    fn extract_history_coords_reads_geojson_pair_cells() {
+        // Signal K History API / signalk-to-influxdb2 emit position cells as
+        // a GeoJSON `[longitude, latitude]` pair.
+        let body = json!({
+            "data": [
+                ["2026-06-29T12:00:00Z", [24.9, 60.1]],
+                ["2026-06-29T12:00:01Z", null],
+                ["2026-06-29T12:00:02Z", [24.95]],
+            ],
+        })
+        .to_string();
+        assert_eq!(extract_history_coords(&body), vec![[24.9, 60.1]]);
+    }
+
+    #[test]
     fn extract_history_coords_malformed_json_returns_empty() {
         assert_eq!(extract_history_coords("not json"), Vec::<[f64; 2]>::new());
         assert_eq!(
