@@ -184,6 +184,8 @@
   const _aisTrackSchedule = new AisTrackFetchSchedule();
   // Last time cached tracks were extended to the vessels' live positions.
   let _aisTracksLiveExtendedAt = 0;
+  // Last time the selected vessel's track (aisTrackRaw) was extended to its live position.
+  let _aisTrackRawExtendedAt = 0;
   // base URL + history hours the cache was fetched with; a change invalidates it.
   let _aisAllTracksKey = '';
   // CPA visualization deck.gl layers (projection lines, ghost dots).
@@ -1711,14 +1713,11 @@
     const historyHours = settings.appearance.ais.track.historyHours;
     fetchAisVesselTrack(settings.signalkHttpUrl, t.id, historyHours).then(coords => {
       if (gen !== _aisTrackGen) return;
-      // Append live position so track reaches the vessel icon.
-      const livePt: [number, number] = [t.position.longitude, t.position.latitude];
-      const last = coords[coords.length - 1];
-      const dx = last ? last[0] - livePt[0] : Infinity;
-      const dy = last ? last[1] - livePt[1] : Infinity;
-      // ~5 m threshold (matches server-side dedup).
-      aisTrackRaw = (last && dx * dx + dy * dy < 2.02e-9) ? coords : [...coords, livePt];
-    }).catch(() => { /* server may not have history — silently skip */ });
+      // Extend to the vessel's position now (not at click time) so the track reaches its icon.
+      // Without drawable history, keep the track grown from live positions while in flight.
+      const live = aisLivePosition(t.id) ?? [t.position.longitude, t.position.latitude];
+      aisTrackRaw = refreshedTrack(coords, aisTrackRaw, live[0], live[1]);
+    }).catch(() => { /* server may not have history — the live-extension effect still grows a track */ });
   }
 
   /** Open the detail popup for an already-selected (highlighted) vessel. */
@@ -2444,6 +2443,24 @@
     aisTrackRaw = [];
     resetCpaVisuals();
     if (aisAgeTimer !== null) { clearInterval(aisAgeTimer); aisAgeTimer = null; }
+  });
+
+  // Keep the highlighted/popup vessel's track reaching its moving icon after the one-time
+  // history fetch, and grow a track from live positions when the server has no history.
+  // Re-runs on every AIS batch (ais.ids is replaced per batch); throttled like all-tracks mode.
+  $effect(() => {
+    void ais.ids;
+    const selId = ais.selectedId;
+    if (selId === null || ais.selectionPhase === null) return;
+    const now = Date.now();
+    if (now - _aisTrackRawExtendedAt < AIS_TRACK_LIVE_EXTEND_MS) return;
+    _aisTrackRawExtendedAt = now;
+    untrack(() => {
+      const live = aisLivePosition(selId);
+      if (!live) return;
+      const next = appendLivePoint(aisTrackRaw, live[0], live[1]);
+      if (next !== aisTrackRaw) aisTrackRaw = next;
+    });
   });
 
   // Recompute Rust CPA and rebuild CPA visualization whenever selection, AIS data or own
