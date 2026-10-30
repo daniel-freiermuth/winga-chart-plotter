@@ -10,6 +10,7 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- The server-computed CPA for AIS targets (`navigation.closestApproach`, e.g. from signalk-derived-data) never reached the app from a real Signal K server, so the SK CPA ghost dots and the "SK: x nm" label never appeared: the AIS (`vessels.*`) subscription did not request that path. It is now subscribed.
 - On the globe, the own-vessel COG line of a vessel just below 85° N/S was cut at 85° (the Mercator display limit, which the globe does not have), shrinking to almost nothing and snapping back to full length once the vessel crossed 85°. On the globe it now runs its full length and only stops at the pole; Mercator keeps the 85° cut.
 - Removing an extension widget kept its saved per-widget settings in browser storage forever (a new widget always gets a fresh id, so they were never read again), slowly filling the storage the app shares with its settings, layout and chart caches. Removing a widget now deletes its saved state.
 - A Man Overboard raise against a Signal K server that accepted the connection but never answered (half-up host, dropped Wi-Fi, black-holed route) stayed pending indefinitely with nothing on screen, which looked the same as a successful raise. The MOB button now shows a "Raising MOB alarm… not confirmed yet" status while the request is in flight, and the raise times out after 10 s into the "MOB alarm NOT raised" alert. With several taps in flight, only the latest tap's outcome is shown, so a slow earlier failure can no longer replace a later success.

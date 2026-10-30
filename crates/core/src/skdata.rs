@@ -894,7 +894,8 @@ pub const AIS_SUBSCRIBE_MSG: &str = r#"{
         {"path": "navigation.speedOverGround",      "period": 1000},
         {"path": "navigation.headingTrue",          "period": 1000},
         {"path": "navigation.rateOfTurn",           "period": 1000},
-        {"path": "navigation.speedThroughWater",    "period": 1000}
+        {"path": "navigation.speedThroughWater",    "period": 1000},
+        {"path": "navigation.closestApproach",      "period": 1000}
     ]
 }"#;
 
