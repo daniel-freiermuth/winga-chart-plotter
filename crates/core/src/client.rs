@@ -3,7 +3,7 @@
 //! Calls back into JS when state or connection status changes.
 
 use crate::skdata::{
-    Storage, VesselState, ais_snapshot_due, apply_message, extract_ais_binary,
+    AIS_SUBSCRIBE_MSG, Storage, VesselState, ais_snapshot_due, apply_message, extract_ais_binary,
     extract_vessel_state, prune_stale_vessels,
 };
 use js_sys::Function;
@@ -96,24 +96,11 @@ impl SignalKClient {
                     {"path": "navigation.course",               "period": 1000}
                 ]
             }"#;
-            let ais_subscribe_msg = r#"{
-                "context": "vessels.*",
-                "subscribe": [
-                    {"path": "name",                            "period": 60000},
-                    {"path": "navigation.datetime",             "period": 1000},
-                    {"path": "navigation.position",             "period": 1000},
-                    {"path": "navigation.courseOverGroundTrue", "period": 1000},
-                    {"path": "navigation.speedOverGround",      "period": 1000},
-                    {"path": "navigation.headingTrue",          "period": 1000},
-                    {"path": "navigation.rateOfTurn",           "period": 1000},
-                    {"path": "navigation.speedThroughWater",    "period": 1000}
-                ]
-            }"#;
             // A failed subscribe leaves an open socket that will never deliver
             // self/AIS data — that is not a healthy connection.
             if let Err(err) = ws
                 .send_with_str(subscribe_msg)
-                .and_then(|()| ws.send_with_str(ais_subscribe_msg))
+                .and_then(|()| ws.send_with_str(AIS_SUBSCRIBE_MSG))
             {
                 log_err("SignalKClient: subscribe send failed", &err);
                 report_status(&status_cb, ConnectionStatus::Error);

@@ -879,6 +879,25 @@ pub fn ais_snapshot_due(count: usize, last_posted_empty: bool) -> bool {
     count > 0 || !last_posted_empty
 }
 
+/// Subscribe message for AIS targets (`vessels.*`).
+///
+/// The stream URL only carries `?subscribe=self`, so a non-self context
+/// delivers exactly the paths listed here — a leaf `apply_leaf` handles for
+/// AIS targets but missing from this list never arrives from a real server.
+pub const AIS_SUBSCRIBE_MSG: &str = r#"{
+    "context": "vessels.*",
+    "subscribe": [
+        {"path": "name",                            "period": 60000},
+        {"path": "navigation.datetime",             "period": 1000},
+        {"path": "navigation.position",             "period": 1000},
+        {"path": "navigation.courseOverGroundTrue", "period": 1000},
+        {"path": "navigation.speedOverGround",      "period": 1000},
+        {"path": "navigation.headingTrue",          "period": 1000},
+        {"path": "navigation.rateOfTurn",           "period": 1000},
+        {"path": "navigation.speedThroughWater",    "period": 1000}
+    ]
+}"#;
+
 #[cfg(test)]
 #[allow(
     clippy::unwrap_used,
@@ -1716,5 +1735,38 @@ mod tests {
             "cleared sk_cpa must serialize as an explicit null so the app can \
              distinguish retraction from absence, got: {json}"
         );
+    }
+
+    #[test]
+    fn ais_subscription_requests_every_ais_leaf() {
+        // With `?subscribe=self`, a `vessels.*` context only delivers the
+        // subscribed paths. Every leaf `apply_leaf` stores for AIS targets must
+        // therefore be subscribed — otherwise a real server never sends it.
+        // `mmsi` is derived from the context id; `navigation.course*` is
+        // own-vessel only (subscribed on `vessels.self`).
+        let msg: Json = serde_json::from_str(AIS_SUBSCRIBE_MSG).unwrap();
+        assert_eq!(msg["context"], "vessels.*");
+        let subscribed: Vec<&str> = msg["subscribe"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s["path"].as_str().unwrap())
+            .collect();
+        for (path, kind) in &LEAF_DISPATCH {
+            let ais_leaf = !matches!(
+                kind,
+                LeafKind::Mmsi
+                    | LeafKind::Course
+                    | LeafKind::CourseNextPoint
+                    | LeafKind::CoursePreviousPoint
+                    | LeafKind::CourseActiveRoute
+            );
+            if ais_leaf {
+                assert!(
+                    subscribed.contains(path),
+                    "AIS leaf `{path}` is dispatched but never subscribed on vessels.*"
+                );
+            }
+        }
     }
 }
