@@ -98,6 +98,14 @@ pub fn extract_track_coords(geojson: &Json) -> Vec<[f64; 2]> {
     }
 }
 
+/// Extract the own vessel's coordinates from an `@signalk/tracks` `/tracks`
+/// response, an object keyed by vessel context whose values are
+/// `MultiLineString`s flagged with `isSelf`.
+pub fn extract_self_tracks_coords(body: &Json) -> Vec<[f64; 2]> {
+    let _ = body;
+    Vec::new()
+}
+
 /// ~5 metres in degrees² — fast planar dedup approximation (matches the TS constant).
 const TRACK_DEDUP_SQ_DEG: f64 = (5.0 / 111_320.0) * (5.0 / 111_320.0);
 
@@ -465,10 +473,33 @@ mod tests {
     }
 
     #[test]
-    fn v1_tracks_url_shape() {
+    fn v1_tracks_url_only_uses_plugin_accepted_params() {
+        // @signalk/tracks rejects unknown query keys (e.g. `context`) with 400.
         assert_eq!(
             v1_tracks_url("http://sk.local:3000"),
-            "http://sk.local:3000/signalk/v1/api/tracks?context=vessels.self&radius=500000"
+            "http://sk.local:3000/signalk/v1/api/tracks?radius=500000"
+        );
+    }
+
+    #[test]
+    fn extract_self_tracks_coords_reads_is_self_entry_of_plugin_body() {
+        let body = json!({
+            "vessels.urn:mrn:imo:mmsi:2": {
+                "type": "MultiLineString",
+                "coordinates": [[[1.0, 2.0]]],
+                "isSelf": false,
+                "name": "Other"
+            },
+            "vessels.urn:mrn:imo:mmsi:1": {
+                "type": "MultiLineString",
+                "coordinates": [[[24.9, 60.1], [25.0, 60.2]]],
+                "isSelf": true,
+                "name": "Own Ship"
+            }
+        });
+        assert_eq!(
+            extract_self_tracks_coords(&body),
+            vec![[24.9, 60.1], [25.0, 60.2]]
         );
     }
 
