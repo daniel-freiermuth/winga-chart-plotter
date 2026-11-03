@@ -229,6 +229,9 @@
       if (!charts.loading && !charts.error) {
         for (const [cid, chart] of Object.entries(charts.available)) {
           if (chart.type !== 'WMTS') {
+            // No style and no tile template (e.g. tileJSON): selecting it would
+            // replace the base layer with nothing, so don't offer it.
+            if (charts.styleUrl(chart) === null && charts.tileUrl(chart) === '') continue;
             items.push({ kind: 'chart', id: cid, chart });
           } else {
             const layers = charts.visibleLayers(cid);
