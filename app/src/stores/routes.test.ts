@@ -15,10 +15,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * is hoisted above the imports below by vitest's transform, so `routes`
  * (which transitively imports fetchAllRoutes) sees the mock.
  */
-let pending: { resolve: (v: Record<string, unknown>) => void }[] = [];
+let pending: { resolve: (v: Record<string, unknown>) => void; reject: (e: unknown) => void }[] = [];
 vi.mock('../lib/wasmRest', () => ({
-  fetchAllRoutes: vi.fn(() => new Promise<Record<string, unknown>>((resolve) => {
-    pending.push({ resolve });
+  fetchAllRoutes: vi.fn(() => new Promise<Record<string, unknown>>((resolve, reject) => {
+    pending.push({ resolve, reject });
   })),
 }));
 
@@ -91,5 +91,32 @@ describe('routes.load', () => {
     await first;
     expect(routes.entries).toBe(before);
     expect(routes.loading).toBe(false);
+  });
+
+  it('a failed load for a different server drops the previous server\'s routes', async () => {
+    // After a server switch the new server's fetch can fail (down, no v2
+    // resources provider → 404). The old server's routes must not stay on the
+    // chart: their Edit/Delete/Activate actions would target the new server.
+    const a = routes.load('http://a');
+    pending[0]!.resolve({ r: entry('alpha') });
+    await a;
+    expect(routes.entries.map(r => r.name)).toEqual(['alpha']);
+
+    const b = routes.load('http://b');
+    pending[1]!.reject(new Error('404'));
+    await b;
+    expect(routes.entries).toEqual([]);
+    expect(routes.error).toContain('404');
+  });
+
+  it('a failed load for the same server keeps the last good routes', async () => {
+    const a = routes.load('http://a');
+    pending[0]!.resolve({ r: entry('alpha') });
+    await a;
+
+    const again = routes.load('http://a');
+    pending[1]!.reject(new Error('server restarting'));
+    await again;
+    expect(routes.entries.map(r => r.name)).toEqual(['alpha']);
   });
 });
