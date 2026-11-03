@@ -67,14 +67,13 @@ describe('waypoints.load', () => {
   });
 
   it('an empty serverBase still invalidates an earlier in-flight request and clears loading', async () => {
-    const before = waypoints.entries;
     const first = waypoints.load('http://sk');
     await waypoints.load('');
     expect(waypoints.loading).toBe(false);
 
     pending[0]!.resolve({ a: entry('first') });
     await first;
-    expect(waypoints.entries).toBe(before);
+    expect(waypoints.entries).toEqual([]);
     expect(waypoints.loading).toBe(false);
   });
 
