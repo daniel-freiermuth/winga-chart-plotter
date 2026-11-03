@@ -92,3 +92,12 @@ describe('charts.visibleLayers with a layers hint naming only unusable layers', 
     expect(selectable.map(l => l.id)).toContain('coast');
   });
 });
+
+describe('charts.styleUrl for a Signal K mapstyleJSON chart', () => {
+  it('uses the style document carried in url when no vendor style field is set', async () => {
+    const { charts } = await import('./charts.svelte');
+    await charts.load('http://sk.local');
+    const chart: Chart = { identifier: 'a', name: 'a', type: 'mapstyleJSON', url: '/s.json' };
+    expect(charts.styleUrl(chart)).toBe('http://sk.local/s.json');
+  });
+});
