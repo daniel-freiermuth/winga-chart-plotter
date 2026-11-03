@@ -37,6 +37,11 @@ export function createStaleGuardedResource<T>(
   // Bumped on every load() call; a response is only committed if no newer
   // load() has started since it was issued.
   let _requestSeq = 0;
+  // The server `_entries` belong to.  A load() for any other base voids them
+  // up front: if that server's fetch then fails, the old server's entries
+  // must not stay on screen with actions that would target the new server.
+  // Same-server failures keep the last good list (rides out restarts).
+  let _base = '';
 
   return {
     get entries() { return _entries; },
@@ -47,6 +52,11 @@ export function createStaleGuardedResource<T>(
       // Bump the sequence even for an empty serverBase — an earlier
       // in-flight request must not be able to commit after this call.
       const seq = ++_requestSeq;
+      if (serverBase !== _base) {
+        _base = serverBase;
+        _entries = [];
+        _error = null;
+      }
       if (!serverBase) { _loading = false; return; }
       _loading = true;
       _error = null;

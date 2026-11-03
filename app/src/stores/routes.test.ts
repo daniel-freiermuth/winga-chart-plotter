@@ -81,15 +81,15 @@ describe('routes.load', () => {
     // not be able to commit once a no-op load('') has superseded it, and
     // the loading indicator must not stay stuck on: the invalidated
     // request's own `finally` no longer fires (its seq is now stale), so
-    // load('') must clear `loading` itself.
-    const before = routes.entries;
+    // load('') must clear `loading` itself. Clearing the base is a server
+    // change too, so the old server's list is dropped as well.
     const first = routes.load('http://sk');
     await routes.load('');
     expect(routes.loading).toBe(false);
 
     pending[0]!.resolve({ a: entry('first') });
     await first;
-    expect(routes.entries).toBe(before);
+    expect(routes.entries).toEqual([]);
     expect(routes.loading).toBe(false);
   });
 
