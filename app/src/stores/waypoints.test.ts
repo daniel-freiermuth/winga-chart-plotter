@@ -77,4 +77,28 @@ describe('waypoints.load', () => {
     expect(waypoints.entries).toBe(before);
     expect(waypoints.loading).toBe(false);
   });
+
+  it('a failed load for a different server drops the previous server\'s waypoints', async () => {
+    const a = waypoints.load('http://a');
+    pending[0]!.resolve({ w: entry('alpha') });
+    await a;
+    expect(waypoints.entries.map(w => w.name)).toEqual(['alpha']);
+
+    const b = waypoints.load('http://b');
+    pending[1]!.reject(new Error('404'));
+    await b;
+    expect(waypoints.entries).toEqual([]);
+    expect(waypoints.error).toContain('404');
+  });
+
+  it('a failed load for the same server keeps the last good waypoints', async () => {
+    const a = waypoints.load('http://a');
+    pending[0]!.resolve({ w: entry('alpha') });
+    await a;
+
+    const again = waypoints.load('http://a');
+    pending[1]!.reject(new Error('server restarting'));
+    await again;
+    expect(waypoints.entries.map(w => w.name)).toEqual(['alpha']);
+  });
 });
