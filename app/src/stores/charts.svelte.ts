@@ -66,12 +66,17 @@ function createChartsStore() {
       return buildTileUrl(chart, serverBase) ?? '';
     },
 
-    /** Resolve chart.style against the SK server base (handles relative paths). */
+    /**
+     * Resolve the chart's MapLibre style against the SK server base (handles
+     * relative paths). Signal K mapstyleJSON charts carry the style document in
+     * `url`; the vendor `style` field takes precedence when set.
+     */
     styleUrl(chart: Chart): string | null {
-      if (!chart.style) return null;
-      return chart.style.startsWith('/')
-        ? `${serverBase}${chart.style}`
-        : chart.style;
+      const style = chart.style ?? (chart.type === 'mapstyleJSON' ? chart.url : undefined);
+      if (!style) return null;
+      return style.startsWith('/')
+        ? `${serverBase}${style}`
+        : style;
     },
 
     async load(base: string) {

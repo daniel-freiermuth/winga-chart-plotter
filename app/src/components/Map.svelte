@@ -2132,7 +2132,7 @@
   const styleChartSpec = $derived.by((): StyleChartSpec | null => {
     const sel = chartSel.selected;
     // Find the first selected chart that provides a full MapLibre style.
-    const styleChart = Object.values(charts.available).find(c => sel.has(c.identifier) && !!c.style);
+    const styleChart = Object.values(charts.available).find(c => sel.has(c.identifier) && charts.styleUrl(c) !== null);
     if (!styleChart) return null;
     const styleUrl = charts.styleUrl(styleChart);
     if (!styleUrl) return null;
@@ -2259,7 +2259,7 @@
 
     // Add newly selected tile-based chart layers (style-based charts are handled by setStyle).
     for (const [id, chart] of Object.entries(avail)) {
-      if (!sel.has(id) || chart.style) continue;
+      if (!sel.has(id) || charts.styleUrl(chart) !== null) continue;
       const tileUrl  = charts.tileUrl(chart, chartSel.getLayerSel(id) || undefined);
       if (!tileUrl) continue;
       const sourceId = `chart-${id}`;
