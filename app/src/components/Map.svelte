@@ -1307,8 +1307,15 @@
     map.on('mouseenter', 'all-waypoints-circle', () => { if (map && !routePlanner.active) map.getCanvas().style.cursor = 'pointer'; });
     map.on('mouseleave', 'all-waypoints-circle', () => { if (map) map.getCanvas().style.cursor = ''; });
 
+    // Touch long-press is owned by the timer below. MapLibre 6.11+ also synthesizes a
+    // map `contextmenu` after a 500 ms touch hold (`new MouseEvent('contextmenu')` in a
+    // timer, so its originalEvent is untrusted) and is ignored — otherwise holding a drag
+    // handle would run its onContextMenu (e.g. remove the held planner waypoint) and a
+    // bare-water hold would open the navigate popup twice. Native contextmenus during a
+    // touch are already swallowed by MapLibre; real right-clicks are trusted and pass.
     // Context-menu re-hit-tests at the event position; each target's onContextMenu handles its own action.
     map.on('contextmenu', (e) => {
+      if (!e.originalEvent.isTrusted) return;
       const { x, y } = e.point;
       const target = hit(x, y);
       handleGesture({ type: 'context-menu', target, lngLat: e.lngLat });
