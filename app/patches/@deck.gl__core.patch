@@ -1,8 +1,8 @@
 diff --git a/dist/dist.dev.js b/dist/dist.dev.js
-index 3b509c09deaa7daf456840af0a867aed4256f438..dcbee26b0949f4050ef47cd2c11b9cd1dc3168eb 100644
+index 0a133cad6a7883575134b293324d64735e7d040d..df51aa4f47d018d89a823d3bf0d7dbbba2921e88 100644
 --- a/dist/dist.dev.js
 +++ b/dist/dist.dev.js
-@@ -34728,7 +34728,7 @@ var<uniform> layer: LayerUniforms;
+@@ -34776,7 +34776,7 @@ var<uniform> layer: LayerUniforms;
  `
    );
    var uniformBlock = `layout(std140) uniform layerUniforms {
@@ -12,7 +12,7 @@ index 3b509c09deaa7daf456840af0a867aed4256f438..dcbee26b0949f4050ef47cd2c11b9cd1
  `;
    var layerUniforms = {
 diff --git a/dist/index.cjs b/dist/index.cjs
-index 966d28dd008a077f22be496d5cb3b89a925531bf..426c9197b84f275c1daa9e16e65c1d6e71938944 100644
+index 8f091d38e0f58c3fa3a1d4fe52455d3a104aac89..ee6b8792e0cfe6a18aeb9304ebeedfade21afd7f 100644
 --- a/dist/index.cjs
 +++ b/dist/index.cjs
 @@ -270,7 +270,7 @@ var<uniform> layer: LayerUniforms;
