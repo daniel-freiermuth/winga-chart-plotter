@@ -18,6 +18,7 @@ import { Layer, project32, picking } from '@deck.gl/core';
 import type { LayerProps, UpdateParameters, DefaultProps, Accessor } from '@deck.gl/core';
 import { Model, Geometry } from '@luma.gl/engine';
 import { ccwTriangleList } from './triangleWinding';
+import { RING_MARGIN, circleVerts, growCircle, growLineSeg, growRect, lineSeg, rectVerts } from './geometryPrimitives';
 
 // ---------------------------------------------------------------------------
 // Shader uniform module
@@ -199,39 +200,6 @@ void main(void) {
 // Icon geometry helpers
 // ---------------------------------------------------------------------------
 
-function circleVerts(cx: number, cy: number, r: number, sides: number): number[] {
-  const v: number[] = [];
-  for (let i = 0; i < sides; i++) {
-    const a0 = (i / sides) * 2 * Math.PI;
-    const a1 = ((i + 1) / sides) * 2 * Math.PI;
-    v.push(cx, cy, 0,
-           cx + r * Math.sin(a0), cy + r * Math.cos(a0), 0,
-           cx + r * Math.sin(a1), cy + r * Math.cos(a1), 0);
-  }
-  return ccwTriangleList(v);
-}
-
-function rectVerts(x0: number, y0: number, x1: number, y1: number): number[] {
-  return ccwTriangleList([x0, y0, 0,  x1, y0, 0,  x1, y1, 0,
-                          x0, y0, 0,  x1, y1, 0,  x0, y1, 0]);
-}
-
-function lineSeg(x0: number, y0: number, x1: number, y1: number, halfWidth: number): number[] {
-  const dx = x1 - x0;
-  const dy = y1 - y0;
-  const len = Math.sqrt(dx * dx + dy * dy);
-  const nx = (-dy / len) * halfWidth;
-  const ny = ( dx / len) * halfWidth;
-  return ccwTriangleList([
-    x0 + nx, y0 + ny, 0,
-    x0 - nx, y0 - ny, 0,
-    x1 - nx, y1 - ny, 0,
-    x0 + nx, y0 + ny, 0,
-    x1 - nx, y1 - ny, 0,
-    x1 + nx, y1 + ny, 0,
-  ]);
-}
-
 /** Upper semicircle (bump pointing +Y) fan from center — used for wave crests. */
 function waveBumpVerts(cx: number, cy: number, r: number, sides: number): number[] {
   const v: number[] = [];
@@ -296,18 +264,6 @@ function buildIconGeometry(
   };
 }
 
-/** Local-unit half-width growth applied to the swimmer's outline ring (see buildIconGeometry). */
-const RING_MARGIN = 0.05;
-
-function growRect(x0: number, y0: number, x1: number, y1: number, m = RING_MARGIN): number[] {
-  return rectVerts(x0 - m, y0 - m, x1 + m, y1 + m);
-}
-function growCircle(cx: number, cy: number, r: number, sides: number, m = RING_MARGIN): number[] {
-  return circleVerts(cx, cy, r + m, sides);
-}
-function growLineSeg(x0: number, y0: number, x1: number, y1: number, halfWidth: number, m = RING_MARGIN): number[] {
-  return lineSeg(x0, y0, x1, y1, halfWidth + m);
-}
 function growWaveBump(cx: number, cy: number, r: number, sides: number, m = RING_MARGIN): number[] {
   return waveBumpVerts(cx, cy, r + m, sides);
 }
