@@ -1,6 +1,6 @@
 import { HostConnection, windowPort, RpcError, BUS_ID, EVENT_READY } from 'signalk-plotterext-bus/host';
 import type { BusPort, HandshakeContext, MethodHandler } from 'signalk-plotterext-bus/host';
-import { plotterExtensions } from '../stores/plotterExtensions.svelte';
+import { plotterExtensions, HOST_CAPABILITIES } from '../stores/plotterExtensions.svelte';
 import { settings } from '../stores/settings.svelte';
 import { auth } from '../stores/auth.svelte';
 import type { SkRelay } from './sk-relay';
@@ -45,11 +45,6 @@ export interface HostConnectionHooks {
 }
 
 // ── Internal constants ───────────────────────────────────────────────────────
-
-const HOST_CAPABILITIES = [
-  'widgets', 'panels.iframe', 'signalk.stream',
-  'signalk.put', 'units', 'map', 'ui',
-] as const;
 
 /** Network budget for host-side REST calls made on an extension's behalf.
  *  Comfortably under the bus's own 10 s call timeout, so the extension sees a
