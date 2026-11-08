@@ -102,6 +102,7 @@
   import { charts } from './stores/charts.svelte';
   import { ais } from './stores/ais.svelte';
   import { fetchVesselInfo } from './lib/wasmRest';
+  import { pollVesselInfo } from './lib/vesselInfoPoller.svelte';
   import { acquireWakeLock, releaseWakeLock } from './lib/wakeLock';
   import { headingFromAlpha, headingFromWebkitCompass } from './lib/compassHeading';
   import { route } from './stores/route.svelte';
@@ -531,9 +532,7 @@
 
   onDestroy(() => { releaseWakeLock(); });
 
-  // Charts and vessel info only depend on the HTTP URL — no WASM needed on main thread.
-  // Vessel info is re-fetched periodically: AIS static data (name, type, dimensions)
-  // is broadcast by vessels every ~6 minutes, so Signal K may not have it at startup.
+  // Charts, resources and auth only depend on the HTTP URL — no WASM needed on main thread.
   // Reload routes and waypoints periodically so changes from other UIs are reflected.
   let resourcePollTimer: ReturnType<typeof setInterval> | null = null;
   $effect(() => {
@@ -548,9 +547,9 @@
     return () => { if (resourcePollTimer !== null) clearInterval(resourcePollTimer); };
   });
 
-  const VESSEL_INFO_INTERVAL_MS = 3 * 60 * 1000;
+  // No cleanup returned: the store loads read $state synchronously, so this effect re-runs
+  // with an unchanged URL and the guard must see that before anything is torn down.
   let lastHttpUrl = '';
-  let vesselInfoTimer: ReturnType<typeof setInterval> | null = null;
   $effect(() => {
     const httpUrl = settings.signalkHttpUrl;
     if (httpUrl === lastHttpUrl) return;
@@ -560,14 +559,12 @@
     void waypoints.load(httpUrl);
     void auth.init(httpUrl);
     void plotterExtensions.load(httpUrl);
+  });
 
-    if (vesselInfoTimer !== null) clearInterval(vesselInfoTimer);
-    const refresh = () => void fetchVesselInfo(httpUrl)
-      .then(info => { ais.setInfoCache(info); })
-      .catch((e: unknown) => { console.warn('[vesselInfo] fetch error:', e); });
-    refresh();
-    vesselInfoTimer = setInterval(refresh, VESSEL_INFO_INTERVAL_MS);
-    return () => { if (vesselInfoTimer !== null) clearInterval(vesselInfoTimer); };
+  pollVesselInfo({
+    httpUrl: () => settings.signalkHttpUrl,
+    fetchInfo: fetchVesselInfo,
+    apply: (info) => { ais.setInfoCache(info); },
   });
 
   // Track history: re-init only when the server URL or history depth actually changes.
