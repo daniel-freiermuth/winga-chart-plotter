@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { memStorage } from '../stores/testStorage';
 import {
   busHarness, envelope, noopMapControl, noopPanelControl, recordingRelay,
@@ -162,5 +162,156 @@ describe('extension host connection', () => {
     expect(reply('1')?.msg.result).toEqual({ values: { x: 1 } });
     expect(reply('2')?.msg.error).toBeUndefined();
     expect(plotterExtensions.getExtState('ext-a', ['y'])).toEqual({ y: 2 });
+  });
+});
+
+/**
+ * `signalk.put` writes to the Signal K server with the user's credentials on an
+ * extension's behalf. The host is the only thing scoping those writes to
+ * own-vessel paths, and the only thing turning server/network failures into an
+ * error the extension can act on before the bus gives up on the call.
+ */
+describe('signalk.put', () => {
+  const SK_BASE = 'http://sk.local:3000';
+
+  interface PutReply { result?: unknown; error?: { code: number; message: string; data?: { reason?: string } } }
+
+  function replyTo(id: string): PutReply | undefined {
+    for (const p of bus.posted) {
+      if (typeof p !== 'object' || p === null || !('msg' in p)) continue;
+      const { msg } = p;
+      if (typeof msg === 'object' && msg !== null && 'id' in msg && msg.id === id) {
+        const reply = msg as PutReply; // wire shape of a JSON-RPC response
+        return reply;
+      }
+    }
+    return undefined;
+  }
+
+  /** Drain the promise chain behind an async handler (fetch → reply post). */
+  async function settle(): Promise<void> {
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+  }
+
+  async function put(id: string, params: unknown): Promise<PutReply | undefined> {
+    bus.deliver(envelope({ id, method: 'signalk.put', params }));
+    await settle();
+    return replyTo(id);
+  }
+
+  let fetchMock: Mock<typeof fetch>;
+
+  beforeEach(async () => {
+    localStorage.setItem('signalk-chart-settings', JSON.stringify({
+      signalkProtocol: 'ws', signalkHost: 'sk.local', signalkPort: 3000,
+    }));
+    localStorage.setItem('sk-auth', JSON.stringify({
+      serverBase: SK_BASE, token: 'tok-123', username: 'skipper',
+    }));
+    // auth.init probes the server; an unreachable one keeps the stored token.
+    vi.stubGlobal('fetch', vi.fn<typeof fetch>(() => Promise.reject(new Error('offline'))));
+    // Imported after the storage seeding above (modules are reset per test), so
+    // the fresh store instance reads it — a static import would not.
+    const { auth } = await import('../stores/auth.svelte');
+    await auth.init(SK_BASE);
+
+    fetchMock = vi.fn<typeof fetch>(() => Promise.resolve(new Response(null, { status: 200 })));
+    vi.stubGlobal('fetch', fetchMock);
+    await connect(recordingRelay().relay);
+  });
+
+  it('PUTs the value to the own-vessel path with the user credentials', async () => {
+    const reply = await put('1', { path: 'navigation.anchor.position', value: { latitude: 1, longitude: 2 } });
+
+    expect(reply?.error).toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0] ?? [];
+    expect(url).toBe(`${SK_BASE}/signalk/v1/api/vessels/self/navigation/anchor/position`);
+    expect(init?.method).toBe('PUT');
+    expect(init?.headers).toMatchObject({ 'Content-Type': 'application/json', Authorization: 'Bearer tok-123' });
+    expect(init?.body).toBe(JSON.stringify({ value: { latitude: 1, longitude: 2 } }));
+  });
+
+  it.each([
+    ['percent-encoded dot segments', '%2e%2e.%2e%2e.%2e%2e.%2e%2e.%2e%2e.plugins.foo.config'],
+    ['a slash', 'navigation/../../plugins'],
+    ['a query', 'navigation.anchor?x=1'],
+    ['a fragment', 'navigation.anchor#x'],
+    ['an empty segment', 'navigation..anchor'],
+    ['a leading dot', '.navigation'],
+    ['a trailing dot', 'navigation.'],
+  ])('rejects a path with %s without touching the server', async (_label, path) => {
+    const reply = await put('1', { path, value: 1 });
+
+    expect(reply?.error?.data?.reason).toBe('invalid_path');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['missing', {}],
+    ['empty', { path: '' }],
+    ['not a string', { path: 42 }],
+    ['absent with no params', undefined],
+  ])('answers an invalid-params error when the path is %s', async (_label, params) => {
+    const reply = await put('1', params);
+
+    expect(reply?.error?.code).toBe(-32602);
+    expect(reply?.error?.data?.reason).toBe('invalid_path');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [401, 'unauthorized'],
+    [403, 'unauthorized'],
+    [404, 'put_failed'],
+    [500, 'put_failed'],
+  ])('maps HTTP %i to reason %s', async (status, reason) => {
+    fetchMock.mockResolvedValueOnce(new Response(null, { status }));
+
+    const reply = await put('1', { path: 'steering.autopilot.state', value: 'auto' });
+
+    expect(reply?.error?.code).toBe(-32000);
+    expect(reply?.error?.data?.reason).toBe(reason);
+    expect(reply?.error?.message).toContain(String(status));
+  });
+
+  it('reports a network failure as put_unreachable', async () => {
+    fetchMock.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+
+    const reply = await put('1', { path: 'steering.autopilot.state', value: 'auto' });
+
+    expect(reply?.error?.data?.reason).toBe('put_unreachable');
+    expect(reply?.error?.message).toContain('Failed to fetch');
+  });
+
+  it('fails a wedged server within 8 s — before the bus gives up on the call at 10 s', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      // Route AbortSignal.timeout through the faked clock so the budget can be
+      // observed without waiting on Node's internal timers.
+      vi.spyOn(AbortSignal, 'timeout').mockImplementation((ms) => {
+        const ctl = new AbortController();
+        setTimeout(() => { ctl.abort(new DOMException('The operation timed out.', 'TimeoutError')); }, ms);
+        return ctl.signal;
+      });
+      fetchMock.mockImplementationOnce((_url, init) => {
+        const { promise, reject } = Promise.withResolvers<Response>();
+        const signal = init?.signal;
+        signal?.addEventListener('abort', () => { reject(signal.reason); });
+        return promise;
+      });
+
+      bus.deliver(envelope({ id: '1', method: 'signalk.put', params: { path: 'steering.autopilot.state', value: 'auto' } }));
+      await vi.advanceTimersByTimeAsync(7_999);
+      await settle();
+      expect(replyTo('1')).toBeUndefined();
+
+      await vi.advanceTimersByTimeAsync(1);
+      await settle();
+      expect(replyTo('1')?.error?.data?.reason).toBe('put_unreachable');
+    } finally {
+      vi.restoreAllMocks();
+      vi.useRealTimers();
+    }
   });
 });

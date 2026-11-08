@@ -51,6 +51,12 @@ export interface HostConnectionHooks {
  *  proper JSON-RPC error instead of a timeout it cannot explain. */
 const PUT_TIMEOUT_MS = 8_000;
 
+/** A Signal K path as an extension may name it: dot-separated segments of
+ *  letters, digits, `_` and `-`. The path is spliced into an authenticated
+ *  URL under `vessels/self/`, so anything else — empty segments, `%2e%2e`,
+ *  `/`, `?`, `#` — could re-target the PUT at another server endpoint. */
+const SK_PATH_RE = /^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*$/;
+
 // ── Factory ──────────────────────────────────────────────────────────────────
 
 export function createHostConnection(
@@ -101,7 +107,12 @@ export function createHostConnection(
     },
 
     async 'signalk.put'(params) {
-      const { path, value } = params as { path: string; value: unknown };
+      const { path, value } = (params ?? {}) as { path?: unknown; value?: unknown };
+      if (typeof path !== 'string' || !SK_PATH_RE.test(path)) {
+        throw new RpcError('signalk.put needs a dot-separated Signal K path', {
+          code: -32602, reason: 'invalid_path',
+        });
+      }
       const url = `${settings.signalkHttpUrl}/signalk/v1/api/vessels/self/${path.replace(/\./g, '/')}`;
       let res: Response;
       try {
