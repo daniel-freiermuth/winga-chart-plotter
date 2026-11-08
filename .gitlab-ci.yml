@@ -30,6 +30,9 @@ variables:
   # wasm-pack pin — keep in sync with .github/workflows/{ci,deploy}.yml and the
   # Justfile (wasm_pack_version).
   WASM_PACK_VERSION: "0.15.0"
+  # Node.js major (NodeSource setup_<major>.x) — keep in sync with
+  # `node-version` in .github/workflows/{ci,deploy}.yml.
+  NODE_MAJOR: "24"
 
 # ---------------------------------------------------------------------------
 # Job templates
@@ -47,7 +50,7 @@ variables:
   image: rust:latest
   before_script:
     - apt-get update -qq && apt-get install -y -qq ca-certificates curl gnupg
-    - curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+    - curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | bash -
     - apt-get install -y -qq nodejs
     - corepack enable pnpm
     - rustup component add rustfmt clippy
@@ -64,7 +67,7 @@ variables:
   image: rust:latest
   before_script:
     - apt-get update -qq && apt-get install -y -qq ca-certificates curl gnupg
-    - curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+    - curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | bash -
     - apt-get install -y -qq nodejs
     - corepack enable pnpm
     - rustup component add rustfmt clippy
