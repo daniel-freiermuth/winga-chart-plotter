@@ -1568,4 +1568,23 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn pairs_from_flat_unpacks_even_length_in_order() {
+        assert_eq!(
+            pairs_from_flat(&[1.0, 2.0, 3.0, 4.0]),
+            vec![(1.0, 2.0), (3.0, 4.0)]
+        );
+    }
+
+    #[test]
+    fn pairs_from_flat_empty_input_yields_no_pairs() {
+        assert_eq!(pairs_from_flat(&[]), Vec::<(f64, f64)>::new());
+    }
+
+    #[test]
+    fn pairs_from_flat_drops_trailing_unpaired_element() {
+        assert_eq!(pairs_from_flat(&[1.0, 2.0, 3.0]), vec![(1.0, 2.0)]);
+        assert_eq!(pairs_from_flat(&[1.0]), Vec::<(f64, f64)>::new());
+    }
 }
