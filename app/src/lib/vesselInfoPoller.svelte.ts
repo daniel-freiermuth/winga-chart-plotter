@@ -1,3 +1,5 @@
+import { untrack } from 'svelte';
+
 /**
  * AIS static data (name, ship type, nav state, dimensions) is broadcast by vessels
  * roughly every 6 minutes, so Signal K may not know it at startup — re-fetch periodically.
@@ -15,22 +17,24 @@ export interface VesselInfoPollerDeps<T> {
  * Fetches vessel info now and every {@link VESSEL_INFO_INTERVAL_MS} for the current
  * server; restarts on a server change and stops when the owning effect scope is
  * destroyed. Must be called during component init or inside `$effect.root`.
+ *
+ * The effect depends on the URL alone: `$derived` drops writes of an equal string and
+ * the body runs untracked, so nothing read by `fetchInfo`/`apply` can re-run the effect
+ * — a re-run would run the cleanup and clear a timer that is still wanted.
  */
 export function pollVesselInfo<T>(deps: VesselInfoPollerDeps<T>): void {
-  let lastHttpUrl = '';
-  let timer: ReturnType<typeof setInterval> | null = null;
+  const httpUrl = $derived(deps.httpUrl());
   $effect(() => {
-    const url = deps.httpUrl();
-    if (url === lastHttpUrl) return;
-    lastHttpUrl = url;
-    if (timer !== null) clearInterval(timer);
-    const refresh = (): void => {
-      void deps.fetchInfo(url)
-        .then((info) => { deps.apply(info); })
-        .catch((e: unknown) => { console.warn('[vesselInfo] fetch error:', e); });
-    };
-    refresh();
-    timer = setInterval(refresh, VESSEL_INFO_INTERVAL_MS);
-    return () => { if (timer !== null) clearInterval(timer); };
+    const url = httpUrl;
+    return untrack(() => {
+      const refresh = (): void => {
+        void deps.fetchInfo(url)
+          .then((info) => { deps.apply(info); })
+          .catch((e: unknown) => { console.warn('[vesselInfo] fetch error:', e); });
+      };
+      refresh();
+      const timer = setInterval(refresh, VESSEL_INFO_INTERVAL_MS);
+      return () => { clearInterval(timer); };
+    });
   });
 }
