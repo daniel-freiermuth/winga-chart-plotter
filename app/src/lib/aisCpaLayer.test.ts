@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildCpaLayers, type SkCpaInput } from './aisCpaLayer';
+import { buildCpaLayers, formatCpaLabel, type SkCpaInput } from './aisCpaLayer';
 import { extrapolatePos } from './deadReckoning';
 import type { CpaResult } from './wasmGeo';
 
@@ -100,5 +100,51 @@ describe('buildCpaLayers SK ghost projection cap', () => {
     const [tgtGhostLon, tgtGhostLat] = dots[1]!;
     expect(tgtGhostLon).toBeCloseTo(expected30mLon, 6);
     expect(tgtGhostLat).toBeCloseTo(expected30mLat, 6);
+  });
+});
+
+describe('formatCpaLabel', () => {
+  const closing = (tcpa_min: number, overrides: Partial<CpaResult> = {}): CpaResult => ({
+    ...openingRust,
+    cpa_nm: 0.456,
+    tcpa_min,
+    isOpening: false,
+    ...overrides,
+  });
+
+  it('renders only the opening span when vessels are opening, ignoring SK CPA', () => {
+    const html = formatCpaLabel(openingRust, { distanceM: 1852, timeToS: 600 });
+    expect(html).toBe('<span class="cpa-opening">↗ 2.00 nm</span>');
+  });
+
+  it('renders >2h when the Rust result is capped', () => {
+    expect(formatCpaLabel(closing(500, { isCapped: true }))).toBe(
+      '<span class="cpa-value">CPA 0.46nm / &gt;2h</span>',
+    );
+  });
+
+  it('renders minutes below 60 and hours from 60 on', () => {
+    expect(formatCpaLabel(closing(59))).toContain('/ 59min<');
+    expect(formatCpaLabel(closing(60))).toContain('/ 1.0h<');
+    expect(formatCpaLabel(closing(90))).toContain('/ 1.5h<');
+  });
+
+  it('omits the SK line when SK CPA is absent', () => {
+    expect(formatCpaLabel(closing(10), null)).not.toContain('cpa-sk');
+    expect(formatCpaLabel(closing(10), undefined)).not.toContain('cpa-sk');
+  });
+
+  it('omits the SK line when SK timeToS is not positive', () => {
+    expect(formatCpaLabel(closing(10), { distanceM: 1852, timeToS: 0 })).not.toContain('cpa-sk');
+    expect(formatCpaLabel(closing(10), { distanceM: 1852, timeToS: -30 })).not.toContain('cpa-sk');
+  });
+
+  it('appends the SK line with distance in nm and tiered time', () => {
+    const base = formatCpaLabel(closing(10));
+    expect(formatCpaLabel(closing(10), { distanceM: 926, timeToS: 1200 })).toBe(
+      `${base}<br><span class="cpa-sk">SK: 0.50nm / 20min</span>`,
+    );
+    expect(formatCpaLabel(closing(10), { distanceM: 1852, timeToS: 5400 })).toContain('SK: 1.00nm / 1.5h<');
+    expect(formatCpaLabel(closing(10), { distanceM: 1852, timeToS: 7200 })).toContain('SK: 1.00nm / &gt;2h<');
   });
 });
