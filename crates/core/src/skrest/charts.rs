@@ -192,12 +192,24 @@ mod wasm {
         build_tile_url(&chart, server_base)
     }
 
+    /// Abort a catalogue request the server never answers (wedged chart
+    /// provider, stalling proxy): `charts.load` keeps the picker on
+    /// "Loading charts…" until it settles, and only retries on an error.
+    const CHARTS_FETCH_TIMEOUT_MS: u32 = 15_000;
+
     /// `GET /signalk/v2/api/resources/charts`
     #[wasm_bindgen(js_name = fetchCharts)]
     pub async fn fetch_charts(server_base: String) -> Result<JsValue, JsValue> {
         let url = format!("{server_base}/signalk/v2/api/resources/charts");
-        let resp =
-            http::fetch_ok("GET", &url, &JsValue::UNDEFINED, None, "Charts API error").await?;
+        let resp = http::fetch_ok_with_timeout(
+            "GET",
+            &url,
+            &JsValue::UNDEFINED,
+            None,
+            "Charts API error",
+            Some(CHARTS_FETCH_TIMEOUT_MS),
+        )
+        .await?;
         let charts = parse_chart_record(&resp.text).map_err(crate::Error::json("Charts API"))?;
         crate::skrest::to_js_object(&charts)
     }
