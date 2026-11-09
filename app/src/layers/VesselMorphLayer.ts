@@ -119,7 +119,6 @@ in float instanceAgeAtUpload;// seconds already elapsed when data was uploaded
 in float instanceLength;     // metres; 0 = unknown → never morphs into a hull, icon-only
 in float instanceBeam;       // metres
 in vec4 instanceColor;       // base RGBA [0..1]; alpha encodes ghost/confirmed opacity
-in vec3 instancePickingColors;
 
 out vec4 vColor;
 
@@ -235,7 +234,9 @@ void main(void) {
   vec3 rgb = aIsOutline > 0.5 ? outlineColor : (aIsIndicator > 0.5 ? vec3(0.0) : instanceColor.rgb);
   vColor = vec4(rgb, instanceColor.a * morph.opacity);
 
-  geometry.pickingColor = instancePickingColors;
+  // deck.gl ≥ 9.4 no longer auto-registers an instancePickingColors attribute;
+  // one instance per data row, so the instance ID is the picking index.
+  geometry.pickingColor = picking_getPickingColorFromInstanceID();
   DECKGL_FILTER_COLOR(vColor, geometry);
 }
 `;
