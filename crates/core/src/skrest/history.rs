@@ -138,16 +138,23 @@ pub fn dedup_coords(coords: &[[f64; 2]]) -> Vec<[f64; 2]> {
 }
 
 /// Merge the own-vessel track sources fetched by `fetchTrack`.
-/// Concatenation order (v2 -> v1 -> tracks) is roughly oldest-first;
-/// dedup tolerates overlapping coverage between sources.
+/// `/self/track` and the `isSelf` entry of `/tracks` are both served by
+/// `@signalk/tracks` from the same recording, so `/tracks` is only a fallback
+/// when `/self/track` returned nothing — appending both would draw the track
+/// twice. Concatenation order (v2 -> v1) is roughly oldest-first; dedup
+/// tolerates overlapping coverage between sources.
 pub fn merge_own_track_sources(
     v2: Vec<[f64; 2]>,
     v1_self: Vec<[f64; 2]>,
     tracks_self: Vec<[f64; 2]>,
 ) -> Vec<[f64; 2]> {
+    let plugin = if v1_self.is_empty() {
+        tracks_self
+    } else {
+        v1_self
+    };
     let mut all = v2;
-    all.extend(v1_self);
-    all.extend(tracks_self);
+    all.extend(plugin);
     if all.is_empty() {
         all
     } else {
