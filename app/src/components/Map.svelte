@@ -44,6 +44,7 @@
   import { buildCpaLayers, formatCpaLabel, type SkCpaInput } from '../lib/aisCpaLayer';
   import { computeCpa } from '../lib/wasmGeo';
   import { buildOwnVesselLayers, buildCourseLayers } from '../lib/vesselLayers';
+  import { chartSourcesToRemove } from '../lib/chartLayerTeardown';
 
   // MapLibre v6 ESM requires an explicit worker URL for Vite bundlers.
   setWorkerUrl(maplibreWorkerUrl);
@@ -2270,10 +2271,9 @@
       }
     }
 
-    // Remove deselected tile-based chart layers.
-    // Style-based charts never create a chart-* source/layer, so this is safe for them too.
-    for (const id of Object.keys(avail)) {
-      if (sel.has(id) && !avail[id]!.style) continue;
+    // Remove tile-based chart layers that are deselected, became style-based,
+    // or left the catalog (see chartSourcesToRemove).
+    for (const id of chartSourcesToRemove(chartSourceUrls.keys(), sel, avail)) {
       const layerId  = `chart-layer-${id}`;
       const sourceId = `chart-${id}`;
       if (m.getLayer(layerId))   m.removeLayer(layerId);
