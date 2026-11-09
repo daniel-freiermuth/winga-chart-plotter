@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { memStorage } from './testStorage';
-import type { Chart } from '../lib/wasmRest';
+import type { Chart, ChartRecord } from '../lib/wasmRest';
+import type { WmtsInfo } from '../lib/wmts';
 
 /**
  * WMTS tile URLs must follow the resolved capabilities and the pane's layer
@@ -99,5 +100,160 @@ describe('charts.styleUrl for a Signal K mapstyleJSON chart', () => {
     await charts.load('http://sk.local');
     const chart: Chart = { identifier: 'a', name: 'a', type: 'mapstyleJSON', url: '/s.json' };
     expect(charts.styleUrl(chart)).toBe('http://sk.local/s.json');
+  });
+});
+
+/**
+ * Switching Signal K servers must not leave the previous server's catalog in
+ * `available`: its relative tile/style paths would be resolved against the
+ * NEW base (tileUrl/styleUrl use the current server base), and Map.svelte
+ * renders selected charts from `available` without consulting `error`.
+ */
+describe('charts.load across a server switch', () => {
+  const RASTER: Chart = { identifier: 'r1', name: 'Raster', url: '/tiles/x/{z}/{x}/{y}', type: 'tilelayer' };
+
+  it('drops the old server catalog when the new server fetch fails', async () => {
+    const { fetchCharts } = await import('../lib/wasmRest');
+    vi.mocked(fetchCharts)
+      .mockResolvedValueOnce({ r1: RASTER })
+      .mockRejectedValueOnce(new Error('503'));
+    const { charts } = await import('./charts.svelte');
+
+    await charts.load('http://a');
+    expect(charts.available).toEqual({ r1: RASTER });
+    await charts.load('http://b');
+
+    expect(charts.error).toContain('503');
+    expect(charts.available).toEqual({});
+  });
+
+  it('keeps the last good catalog when the same server fetch fails', async () => {
+    const { fetchCharts } = await import('../lib/wasmRest');
+    vi.mocked(fetchCharts)
+      .mockResolvedValueOnce({ r1: RASTER })
+      .mockRejectedValueOnce(new Error('503'));
+    const { charts } = await import('./charts.svelte');
+
+    await charts.load('http://a');
+    await charts.load('http://a');
+
+    expect(charts.available).toEqual({ r1: RASTER });
+  });
+
+  it('ignores a slow response from the previous server', async () => {
+    const { fetchCharts } = await import('../lib/wasmRest');
+    const pendingA = Promise.withResolvers<ChartRecord>();
+    vi.mocked(fetchCharts)
+      .mockReturnValueOnce(pendingA.promise)
+      .mockResolvedValueOnce({ b1: { ...RASTER, identifier: 'b1' } });
+    const { charts } = await import('./charts.svelte');
+
+    const loadA = charts.load('http://a');
+    await charts.load('http://b');
+    pendingA.resolve({ r1: RASTER });
+    await loadA;
+
+    expect(Object.keys(charts.available)).toEqual(['b1']);
+    expect(charts.loading).toBe(false);
+  });
+
+  it('forgets WMTS resolutions from the previous server', async () => {
+    const { fetchCharts } = await import('../lib/wasmRest');
+    vi.mocked(fetchCharts)
+      .mockResolvedValueOnce({ w1: CHART })
+      .mockRejectedValueOnce(new Error('503'));
+    const { charts } = await import('./charts.svelte');
+
+    await charts.load('http://a');
+    await vi.waitFor(() => { expect(charts.wmtsResolving.has('w1')).toBe(false); });
+    expect(charts.tileUrl(CHART)).toBe(COAST_URL);
+
+    await charts.load('http://b');
+
+    expect(charts.tileUrl(CHART)).toBe('');
+    expect(charts.visibleLayers('w1')).toEqual([]);
+  });
+
+  // The switch happens while the previous server's capabilities request is
+  // still in flight: its late outcome must not land in the new server's caches.
+  const A_INFO: WmtsInfo = {
+    tileUrlTemplate: COAST_URL,
+    layerName: 'coast',
+    tileMatrixSet: 'GoogleMapsCompatible',
+    format: 'image/png',
+    availableLayers: LAYERS,
+  };
+
+  it('drops a WMTS resolution from the previous server that lands after the switch', async () => {
+    const { fetchCharts } = await import('../lib/wasmRest');
+    const { resolveWmtsTileUrl } = await import('../lib/wmts');
+    const pendingA = Promise.withResolvers<WmtsInfo>();
+    vi.mocked(fetchCharts)
+      .mockResolvedValueOnce({ w1: CHART })
+      .mockRejectedValueOnce(new Error('503'));
+    vi.mocked(resolveWmtsTileUrl).mockReturnValueOnce(pendingA.promise);
+    const { charts } = await import('./charts.svelte');
+
+    await charts.load('http://a');
+    expect(charts.wmtsResolving.has('w1')).toBe(true);
+    await charts.load('http://b');
+    pendingA.resolve(A_INFO);
+    await pendingA.promise;
+    await Promise.resolve();
+
+    expect(charts.tileUrl(CHART)).toBe('');
+    expect(charts.visibleLayers('w1')).toEqual([]);
+    expect(charts.wmtsResolving.has('w1')).toBe(false);
+  });
+
+  it('drops a WMTS failure from the previous server that lands after the switch', async () => {
+    const { fetchCharts } = await import('../lib/wasmRest');
+    const { resolveWmtsTileUrl } = await import('../lib/wmts');
+    const pendingA = Promise.withResolvers<WmtsInfo>();
+    vi.mocked(fetchCharts)
+      .mockResolvedValueOnce({ w1: CHART })
+      .mockRejectedValueOnce(new Error('503'));
+    vi.mocked(resolveWmtsTileUrl).mockReturnValueOnce(pendingA.promise);
+    const { charts } = await import('./charts.svelte');
+
+    await charts.load('http://a');
+    await charts.load('http://b');
+    pendingA.reject(new Error('capabilities 500'));
+    await expect(pendingA.promise).rejects.toThrow('capabilities 500');
+    await Promise.resolve();
+
+    expect(charts.wmtsFailed.has('w1')).toBe(false);
+  });
+
+  // A→B→A: the first A resolution settling must not clear the resolving flag
+  // of the second A resolution, or the picker reports the chart as failed
+  // while its capabilities are still loading.
+  it('keeps the current resolving flag when a superseded resolution settles', async () => {
+    const { fetchCharts } = await import('../lib/wasmRest');
+    const { resolveWmtsTileUrl } = await import('../lib/wmts');
+    const firstA = Promise.withResolvers<WmtsInfo>();
+    const secondA = Promise.withResolvers<WmtsInfo>();
+    vi.mocked(fetchCharts)
+      .mockResolvedValueOnce({ w1: CHART })
+      .mockRejectedValueOnce(new Error('503'))
+      .mockResolvedValueOnce({ w1: CHART });
+    vi.mocked(resolveWmtsTileUrl)
+      .mockReturnValueOnce(firstA.promise)
+      .mockReturnValueOnce(secondA.promise);
+    const { charts } = await import('./charts.svelte');
+
+    await charts.load('http://a');
+    await charts.load('http://b');
+    await charts.load('http://a');
+    firstA.reject(new Error('capabilities 500'));
+    await expect(firstA.promise).rejects.toThrow('capabilities 500');
+    await Promise.resolve();
+
+    expect(charts.wmtsResolving.has('w1')).toBe(true);
+    expect(charts.wmtsFailed.has('w1')).toBe(false);
+
+    secondA.resolve(A_INFO);
+    await vi.waitFor(() => { expect(charts.wmtsResolving.has('w1')).toBe(false); });
+    expect(charts.tileUrl(CHART)).toBe(COAST_URL);
   });
 });
