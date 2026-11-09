@@ -14,14 +14,22 @@
   let plannerSaving = $state(false);
   let plannerDiscardConfirm = $state(false);
   let plannerError = $state<string | null>(null);
+  /** An active-route edit is saved; its re-activation/re-anchor is still pending. */
+  let plannerReanchoring = $state(false);
 
   let canSaveRoute = $derived(!plannerSaving && routePlanner.name.trim() !== '' && routePlanner.waypoints.length >= 2);
+
+  function closePlanner() {
+    routePlanner.exit();
+    plannerError = null;
+    plannerDiscardConfirm = false;
+  }
 
   function handleDiscard() {
     if (routePlanner.name.trim()) {
       plannerDiscardConfirm = true;
     } else {
-      routePlanner.exit();
+      closePlanner();
     }
   }
 
@@ -29,36 +37,57 @@
     if (!canSaveRoute) return;
     plannerSaving = true;
     plannerError = null;
-    // Capture before any async call — state is cleared by routePlanner.exit().
+    // Capture before any async call — state is cleared by routePlanner.exit(),
+    // and the planner stays editable (or is replaced) while the save is pending.
+    const session               = routePlanner.session;
     const editingUuid           = routePlanner.editingRouteUuid;
     const wasEditingActiveRoute = editingUuid !== null && editingUuid === route.activeUuid;
     const anchorPoint           = wasEditingActiveRoute ? routePlanner.anchorPoint : null;
     const reverse               = wasEditingActiveRoute && route.reverse;
+    const sentName              = routePlanner.name.trim();
+    const sentWaypoints         = routePlanner.waypoints.map(({ lon, lat }) => ({ lon, lat }));
     try {
       if (editingUuid) {
-        await updateRoute(settings.signalkHttpUrl, editingUuid, routePlanner.name.trim(), routePlanner.waypoints, auth.authHeaders);
+        await updateRoute(settings.signalkHttpUrl, editingUuid, sentName, sentWaypoints, auth.authHeaders);
       } else {
-        await saveRoute(settings.signalkHttpUrl, routePlanner.name.trim(), routePlanner.waypoints, auth.authHeaders);
+        await saveRoute(settings.signalkHttpUrl, sentName, sentWaypoints, auth.authHeaders);
       }
-      // Capture new waypoints before exit() wipes them.
-      const newWaypoints = [...routePlanner.waypoints];
-      routePlanner.exit();
+      // Editing the active route keeps the planner open until navigation is
+      // re-anchored, so a failed re-activation shows in its error and Update
+      // retries it (idempotent PUTs). A new route exits at once: a retried
+      // POST would duplicate it.
+      if (!wasEditingActiveRoute && routePlanner.session === session) closePlanner();
+      // The active-route edit is on the server now: nothing is left to
+      // discard, and leaving before the re-anchor settles would hide its failure.
+      if (wasEditingActiveRoute && routePlanner.session === session) {
+        plannerReanchoring = true;
+        plannerDiscardConfirm = false;
+      }
       await routes.load(settings.signalkHttpUrl);
       // Re-anchor navigation to the closest waypoint in the updated route.
       if (wasEditingActiveRoute && editingUuid) {
         await activateRoute(settings.signalkHttpUrl, editingUuid, reverse, auth.authHeaders);
         // Same href → route.update() won't refetch; the cached geometry is pre-edit.
         route.refreshGeometry(settings.signalkHttpUrl);
-        const pointIndex = anchorPoint ? reanchorPointIndex(newWaypoints, anchorPoint, reverse, gcDistanceNm) : null;
+        const pointIndex = anchorPoint ? reanchorPointIndex(sentWaypoints, anchorPoint, reverse, gcDistanceNm) : null;
         if (pointIndex !== null) {
           await setActiveRoutePointIndex(settings.signalkHttpUrl, pointIndex, auth.authHeaders);
         }
+        // Done: close the planner, unless it now holds another session or
+        // edits made while this save was pending (not on the server yet).
+        const unchanged = routePlanner.name.trim() === sentName
+          && routePlanner.waypoints.length === sentWaypoints.length
+          && routePlanner.waypoints.every((w, i) => w.lon === sentWaypoints[i]!.lon && w.lat === sentWaypoints[i]!.lat);
+        if (routePlanner.session === session && unchanged) closePlanner();
       }
     } catch (e) {
       console.error('[planner] Failed to save route:', e);
-      plannerError = String(e);
+      // Only into the session that saved: once it is closed the HUD is gone
+      // and the error would surface in the next, unrelated session.
+      if (routePlanner.session === session) plannerError = String(e);
     } finally {
       plannerSaving = false;
+      plannerReanchoring = false;
     }
   }
   import Settings from './components/Settings.svelte';
@@ -800,6 +829,9 @@
         {#if plannerError}
           <div style="color: #fca5a5; font-size: 12px;">{plannerError}</div>
         {/if}
+        {#if plannerReanchoring}
+          <div style="color: #aaa; font-size: 12px;">Route saved — re-anchoring navigation…</div>
+        {/if}
       {/if}
 
       {#if plannerDiscardConfirm}
@@ -811,7 +843,7 @@
               style="background: rgba(255,255,255,0.12); border: none; outline: none; color: #ccc;
                      padding: 4px 12px; border-radius: 6px; cursor: pointer; font-size: 13px;">Cancel</button>
             <button
-              onclick={() => { routePlanner.exit(); plannerDiscardConfirm = false; }}
+              onclick={closePlanner}
               style="background: rgba(255,80,80,0.7); border: none; outline: none; color: white;
                      padding: 4px 12px; border-radius: 6px; cursor: pointer; font-size: 13px;">Discard</button>
           </div>
@@ -820,10 +852,12 @@
         <div style="display: flex; justify-content: flex-end;">
           <button
             onclick={handleDiscard}
+            disabled={plannerReanchoring}
             title="Discard and exit route planner"
             style="
               background: rgba(255,255,255,0.12); border: none; outline: none; color: #ccc;
               padding: 5px 14px; border-radius: 6px; cursor: pointer; font-size: 13px;
+              opacity: {plannerReanchoring ? 0.4 : 1};
             ">Discard</button>
         </div>
       {/if}

@@ -11,6 +11,9 @@ function createRoutePlannerStore() {
   let editingRouteUuid = $state<string | null>(null);
   let name             = $state('');
   let anchorPoint      = $state<PlannerWaypoint | null>(null);
+  // Bumped whenever a planner session starts or ends, so async work begun in
+  // one session can tell that it no longer owns the planner. Not reactive.
+  let session = 0;
 
   const totalDistanceNm = $derived.by(() => {
     let total = 0;
@@ -21,6 +24,7 @@ function createRoutePlannerStore() {
   });
 
   function reset() {
+    session++;
     active = false;
     waypoints = [];
     editingRouteUuid = null;
@@ -36,15 +40,18 @@ function createRoutePlannerStore() {
     get anchorPoint(): PlannerWaypoint | null { return anchorPoint; },
     get name(): string                 { return name; },
     set name(v: string)                { name = v; },
+    /** Identifies the current planner session; changes on enter/enterAt/loadRoute/exit. */
+    get session(): number              { return session; },
 
-    enter(): void  { active = true; name = ''; },
-    enterAt(lon: number, lat: number): void { active = true; name = ''; waypoints = [{ lon, lat }]; },
+    enter(): void  { session++; active = true; name = ''; },
+    enterAt(lon: number, lat: number): void { session++; active = true; name = ''; waypoints = [{ lon, lat }]; },
     exit(): void   { reset(); },
 
     /** Enter planner pre-loaded with an existing route's waypoints for editing.
      *  `anchor` is the coordinates of the waypoint currently being navigated to,
      *  used after save to restore navigation to the nearest equivalent point. */
     loadRoute(uuid: string, routeName: string, wpts: PlannerWaypoint[], anchor: PlannerWaypoint | null = null): void {
+      session++;
       waypoints = [...wpts];
       editingRouteUuid = uuid;
       name = routeName;
