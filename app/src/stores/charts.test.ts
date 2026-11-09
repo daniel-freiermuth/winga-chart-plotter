@@ -257,3 +257,69 @@ describe('charts.load across a server switch', () => {
     expect(charts.tileUrl(CHART)).toBe(COAST_URL);
   });
 });
+
+describe('charts.load with an overlapping earlier request', () => {
+  it("keeps the new server's catalogue when the old server's request rejects late (e.g. times out)", async () => {
+    // A server switch while the previous server's catalogue request is still
+    // stalled: its late timeout must not overwrite the new server's catalogue.
+    const { fetchCharts } = await import('../lib/wasmRest');
+    let rejectFirst!: (e: unknown) => void;
+    vi.mocked(fetchCharts)
+      .mockImplementationOnce(() => new Promise((_, reject) => { rejectFirst = reject; }))
+      .mockResolvedValueOnce({ w1: CHART });
+    const { charts } = await import('./charts.svelte');
+
+    const first = charts.load('http://old.local');
+    await charts.load('http://new.local');
+    rejectFirst(new Error('TimeoutError: signal timed out'));
+    await first;
+
+    expect(charts.error).toBeNull();
+    expect(charts.loading).toBe(false);
+    expect(Object.keys(charts.available)).toEqual(['w1']);
+  });
+
+  it('shares one request for the same server, so a loaded catalogue is not discarded', async () => {
+    // App.svelte starts one load from the httpUrl effect and another from the
+    // Connected handler for the same server. If the first succeeds and a
+    // second request then stalls into a timeout, the catalogue must survive.
+    const { fetchCharts } = await import('../lib/wasmRest');
+    let resolveFirst!: (r: Record<string, Chart>) => void;
+    vi.mocked(fetchCharts)
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveFirst = resolve; }))
+      .mockRejectedValueOnce(new Error('TimeoutError: signal timed out'));
+    const { charts } = await import('./charts.svelte');
+
+    const first = charts.load('http://sk.local');
+    const second = charts.load('http://sk.local');
+    resolveFirst({ w1: CHART });
+    await Promise.all([first, second]);
+
+    expect(vi.mocked(fetchCharts)).toHaveBeenCalledTimes(1);
+    expect(charts.error).toBeNull();
+    expect(Object.keys(charts.available)).toEqual(['w1']);
+  });
+});
+
+describe('charts.load after a failed request', () => {
+  afterEach(() => { vi.useRealTimers(); });
+
+  it('retries on its own and recovers the catalogue while nothing else calls load', async () => {
+    // A timeout fires after the WebSocket is up, so App.svelte's Connected
+    // retry never runs again; the store must retry by itself.
+    vi.useFakeTimers();
+    const { fetchCharts } = await import('../lib/wasmRest');
+    vi.mocked(fetchCharts)
+      .mockRejectedValueOnce(new Error('TimeoutError: signal timed out'))
+      .mockResolvedValueOnce({ w1: CHART });
+    const { charts } = await import('./charts.svelte');
+
+    await charts.load('http://sk.local');
+    expect(charts.error).not.toBeNull();
+
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(charts.error).toBeNull();
+    expect(Object.keys(charts.available)).toEqual(['w1']);
+  });
+});
