@@ -189,8 +189,18 @@ pub fn v1_self_track_url(server_base: &str, hours: i64) -> String {
     format!("{server_base}/signalk/v1/api/self/track?timespan={hours}h")
 }
 
-pub fn v1_tracks_url(server_base: &str) -> String {
-    format!("{server_base}/signalk/v1/api/tracks?radius=500000")
+/// `history_hours` is the unrounded track-history setting (continuous from
+/// 5 min); the plugin's duration grammar takes minutes, so the window is sent
+/// to the minute (at least one) instead of snapped to a whole hour.
+///
+/// Capped at the plugin's own 24 h default: `/tracks` returns every vessel in
+/// range only for the self entry to be kept, and the plugin's `/self/track`
+/// (requested alongside with the full window) serves the rest of the own
+/// track from the same store.
+pub fn v1_tracks_url(server_base: &str, history_hours: f64) -> String {
+    const MAX_TRACKS_WINDOW_MINUTES: i64 = 24 * 60;
+    let minutes = ((history_hours * 60.0).round() as i64).clamp(1, MAX_TRACKS_WINDOW_MINUTES);
+    format!("{server_base}/signalk/v1/api/tracks?radius=500000&duration={minutes}m")
 }
 
 pub fn v1_vessel_track_url(server_base: &str, vessel_id: &str, hours: i64) -> String {
@@ -233,7 +243,7 @@ mod wasm {
 
         let v2_url = v2_history_url_own_vessel(&server_base, &from_iso);
         let v1_url = v1_self_track_url(&server_base, hours);
-        let tracks_url = v1_tracks_url(&server_base);
+        let tracks_url = v1_tracks_url(&server_base, history_hours);
 
         // Start all three requests synchronously (before any `.await`) so
         // they fire concurrently, matching the original `Promise.allSettled`.
