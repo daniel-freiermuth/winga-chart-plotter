@@ -9,6 +9,7 @@ use std::collections::HashMap;
 pub struct PointGeometry {
     #[serde(rename = "type")]
     pub kind: String, // always "Point"
+    #[serde(deserialize_with = "super::routes::deserialize_position")]
     pub coordinates: [f64; 2],
 }
 
@@ -50,6 +51,7 @@ pub fn build_waypoint_body(name: &str, lat: f64, lon: f64) -> serde_json::Value 
 /// current copy. A Signal K PUT replaces the whole resource, so fields this
 /// app does not edit (description, other `feature.properties`, vendor extras)
 /// are carried over from `existing`; only name and position are replaced.
+/// An existing altitude is kept while the position is unchanged.
 pub fn build_waypoint_update_body(
     existing: &serde_json::Value,
     name: &str,
@@ -57,13 +59,15 @@ pub fn build_waypoint_update_body(
     lon: f64,
 ) -> serde_json::Value {
     let fresh = build_waypoint_body(name, lat, lon);
-    crate::skrest::routes::merge_update(
+    let mut body = crate::skrest::routes::merge_update(
         existing,
         fresh,
         &["name"],
         &["type", "geometry"],
         &["name"],
-    )
+    );
+    crate::skrest::routes::restore_altitudes(existing, &mut body);
+    body
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -241,5 +245,35 @@ mod tests {
         let entry: SkWaypointEntry = serde_json::from_str(json).unwrap();
         assert_eq!(entry.name, None);
         assert_eq!(entry.feature.unwrap().geometry.coordinates, [24.94, 60.17]);
+    }
+
+    #[test]
+    fn waypoint_record_tolerates_altitude() {
+        let json = r#"{ "w": { "feature": { "type": "Feature",
+            "geometry": { "type": "Point", "coordinates": [1, 2, 5] } } } }"#;
+        let wps: SkWaypointRecord = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            wps["w"].feature.as_ref().unwrap().geometry.coordinates,
+            [1.0, 2.0]
+        );
+    }
+
+    #[test]
+    fn waypoint_update_keeps_altitude_when_position_unchanged() {
+        let existing = serde_json::json!({
+            "name": "Old",
+            "feature": { "type": "Feature",
+                "geometry": { "type": "Point", "coordinates": [24.94, 60.17, 12.5] } },
+        });
+        let renamed = build_waypoint_update_body(&existing, "New", 60.17, 24.94);
+        assert_eq!(
+            renamed["feature"]["geometry"]["coordinates"],
+            serde_json::json!([24.94, 60.17, 12.5])
+        );
+        let moved = build_waypoint_update_body(&existing, "New", 60.0, 25.0);
+        assert_eq!(
+            moved["feature"]["geometry"]["coordinates"],
+            serde_json::json!([25.0, 60.0])
+        );
     }
 }

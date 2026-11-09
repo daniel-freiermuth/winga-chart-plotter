@@ -9,7 +9,86 @@ use std::collections::HashMap;
 pub struct LineStringGeometry {
     #[serde(rename = "type")]
     pub kind: String, // always "LineString"
+    #[serde(deserialize_with = "deserialize_positions")]
     pub coordinates: Vec<[f64; 2]>,
+}
+
+/// GeoJSON position `[lon, lat, alt?]` (RFC 7946 §3.1.1; Signal K
+/// `GeoJsonPoint`). The app model drops the altitude; update bodies restore
+/// it via [`restore_altitudes`].
+#[derive(Clone, Copy, Deserialize)]
+struct Position(f64, f64, #[serde(default)] Option<f64>);
+
+/// Re-attach the existing resource's altitude (third position element) to
+/// every edited position whose lon/lat is bit-identical to an existing one,
+/// so saving a resource another app wrote with `[lon, lat, alt]` does not
+/// strip altitudes from vertices the user did not move. Moved or inserted
+/// positions stay 2D: their altitude is unknown. Handles both `Point` (one
+/// position) and `LineString` (array of positions) geometries.
+pub(crate) fn restore_altitudes(existing: &serde_json::Value, body: &mut serde_json::Value) {
+    const COORDS: &str = "/feature/geometry/coordinates";
+    let Some(old) = existing.pointer(COORDS) else {
+        return;
+    };
+    let old: Vec<Position> = match serde_json::from_value::<Position>(old.clone()) {
+        Ok(point) => vec![point],
+        Err(_) => match serde_json::from_value(old.clone()) {
+            Ok(line) => line,
+            Err(_) => return,
+        },
+    };
+    let Some(new) = body.pointer_mut(COORDS) else {
+        return;
+    };
+    match new.as_array_mut() {
+        Some(line) if line.first().is_some_and(serde_json::Value::is_array) => {
+            for position in line {
+                restore_altitude(position, &old);
+            }
+        }
+        Some(_) => restore_altitude(new, &old),
+        None => {}
+    }
+}
+
+fn restore_altitude(position: &mut serde_json::Value, old: &[Position]) {
+    let Some(pos) = position.as_array_mut() else {
+        return;
+    };
+    let [lon, lat] = match pos.as_slice() {
+        [lon, lat] => [lon.as_f64(), lat.as_f64()],
+        _ => return,
+    };
+    let (Some(lon), Some(lat)) = (lon, lat) else {
+        return;
+    };
+    let alt = old.iter().find_map(|&Position(old_lon, old_lat, alt)| {
+        (old_lon.to_bits() == lon.to_bits() && old_lat.to_bits() == lat.to_bits())
+            .then_some(alt)
+            .flatten()
+    });
+    if let Some(alt) = alt {
+        pos.push(alt.into());
+    }
+}
+
+pub(crate) fn deserialize_position<'de, D>(d: D) -> Result<[f64; 2], D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let Position(lon, lat, _) = Position::deserialize(d)?;
+    Ok([lon, lat])
+}
+
+fn deserialize_positions<'de, D>(d: D) -> Result<Vec<[f64; 2]>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let positions = Vec::<Position>::deserialize(d)?;
+    Ok(positions
+        .into_iter()
+        .map(|Position(lon, lat, _)| [lon, lat])
+        .collect())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -23,6 +102,8 @@ pub struct RouteFeature {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SkRouteEntry {
+    /// Optional in the Signal K Resources API; missing → empty string.
+    #[serde(default)]
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
@@ -92,6 +173,7 @@ pub fn build_route_body(name: &str, waypoints: &[LonLat]) -> crate::Result<serde
 /// geometry are taken from the edit. The index-aligned
 /// `feature.properties.coordinatesMeta` is realigned to the new geometry, or
 /// dropped when that is not possible (see [`realign_coordinates_meta`]).
+/// Altitudes of unmoved vertices are kept (see [`restore_altitudes`]).
 ///
 /// Returns `Err` under the same conditions as [`build_route_body`].
 pub fn build_route_update_body(
@@ -107,6 +189,7 @@ pub fn build_route_update_body(
         &["type", "geometry"],
         &[],
     );
+    restore_altitudes(existing, &mut body);
     if let Some(props) = body
         .pointer_mut("/feature/properties")
         .and_then(serde_json::Value::as_object_mut)
@@ -143,8 +226,12 @@ fn realign_coordinates_meta(
     let meta = existing
         .pointer("/feature/properties/coordinatesMeta")?
         .as_array()?;
-    let old: Vec<[f64; 2]> =
+    let old: Vec<Position> =
         serde_json::from_value(existing.pointer("/feature/geometry/coordinates")?.clone()).ok()?;
+    let old: Vec<[f64; 2]> = old
+        .into_iter()
+        .map(|Position(lon, lat, _)| [lon, lat])
+        .collect();
     if meta.len() != old.len() {
         return None;
     }
@@ -527,6 +614,36 @@ mod tests {
     }
 
     #[test]
+    fn route_update_keeps_coordinates_meta_for_altitude_positions() {
+        let existing = route_with_meta(
+            &serde_json::json!([[0.0, 0.0, 5.0], [1.0, 1.0, 5.0]]),
+            &serde_json::json!([{ "name": "A" }, { "name": "B" }]),
+        );
+        let body =
+            build_route_update_body(&existing, "Renamed", &lonlat(&[[0.0, 0.0], [1.0, 1.0]]))
+                .unwrap();
+        assert_eq!(
+            body["feature"]["properties"]["coordinatesMeta"],
+            serde_json::json!([{ "name": "A" }, { "name": "B" }])
+        );
+    }
+
+    #[test]
+    fn route_update_keeps_altitude_of_unmoved_vertices() {
+        let existing = route_with_meta(
+            &serde_json::json!([[0.0, 0.0, 5.0], [1.0, 1.0, 7.0], [2.0, 2.0, 9.0]]),
+            &serde_json::json!([{}, {}, {}]),
+        );
+        // Middle vertex moved: its altitude is unknown, the others keep theirs.
+        let pts = lonlat(&[[0.0, 0.0], [1.5, 1.5], [2.0, 2.0]]);
+        let body = build_route_update_body(&existing, "R", &pts).unwrap();
+        assert_eq!(
+            body["feature"]["geometry"]["coordinates"],
+            serde_json::json!([[0.0, 0.0, 5.0], [1.5, 1.5], [2.0, 2.0, 9.0]])
+        );
+    }
+
+    #[test]
     fn route_update_drops_coordinates_meta_after_insertion() {
         let existing = route_with_meta(
             &serde_json::json!([[0.0, 0.0], [2.0, 2.0]]),
@@ -680,6 +797,23 @@ mod tests {
         assert_eq!(entry.name, "Test");
         assert_eq!(
             entry.feature.unwrap().geometry.coordinates,
+            vec![[1.0, 2.0], [3.0, 4.0]]
+        );
+    }
+
+    #[test]
+    fn route_record_tolerates_unnamed_routes_and_altitude() {
+        let json = r#"{
+            "a": { "name": "A", "feature": { "type": "Feature",
+                "geometry": { "type": "LineString", "coordinates": [[1, 2], [3, 4]] } } },
+            "b": { "feature": { "type": "Feature",
+                "geometry": { "type": "LineString", "coordinates": [[1, 2, 0], [3, 4, 0]] } } }
+        }"#;
+        let routes: SkRouteRecord = serde_json::from_str(json).unwrap();
+        assert_eq!(routes["a"].name, "A");
+        assert_eq!(routes["b"].name, "");
+        assert_eq!(
+            routes["b"].feature.as_ref().unwrap().geometry.coordinates,
             vec![[1.0, 2.0], [3.0, 4.0]]
         );
     }
