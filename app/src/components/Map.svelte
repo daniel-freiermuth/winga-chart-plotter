@@ -2053,9 +2053,14 @@
     if (!map) return;
     const uuid = (f.properties['uuid'] as string | null | undefined) ?? '';
     const name = (f.properties['name'] as string | null | undefined) ?? '';
+    // The rendered feature's geometry is rebuilt from the GeoJSON source's
+    // internal vector tile, i.e. snapped to that tile's integer grid — take the
+    // exact position from the store (the feature is built from it), or Rename
+    // would PUT the snapped point back and move the waypoint.
+    const stored = waypoints.entries.find(w => w.uuid === uuid);
     const coords = (f.geometry as GeoJSON.Point).coordinates;
-    const lon = coords[0] as number;
-    const lat = coords[1] as number;
+    const lon = stored ? stored.lon : coords[0] as number;
+    const lat = stored ? stored.lat : coords[1] as number;
     const canAct = auth.isLoggedIn && uuid !== '';
     const popup = openPopup(new maplibregl.Popup({ closeButton: true, maxWidth: 'none' })
       .setLngLat([lon, lat])
