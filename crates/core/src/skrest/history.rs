@@ -137,10 +137,23 @@ pub fn dedup_coords(coords: &[[f64; 2]]) -> Vec<[f64; 2]> {
     out
 }
 
-/// Merge track sources listed in priority order into one polyline.
+/// Pick one track from sources listed in priority order. Every source covers
+/// the same window ending now, so concatenating them would chain the newest
+/// point of one back to the oldest point of the next; the first source that
+/// still draws a line (≥ 2 points after dedup) wins instead. If none does,
+/// the first non-empty source is returned as-is (deduped).
 pub fn merge_track_sources(sources: Vec<Vec<[f64; 2]>>) -> Vec<[f64; 2]> {
-    let all: Vec<[f64; 2]> = sources.into_iter().flatten().collect();
-    dedup_coords(&all)
+    let mut fallback: Option<Vec<[f64; 2]>> = None;
+    for source in sources {
+        let deduped = dedup_coords(&source);
+        if deduped.len() >= 2 {
+            return deduped;
+        }
+        if fallback.is_none() && !deduped.is_empty() {
+            fallback = Some(deduped);
+        }
+    }
+    fallback.unwrap_or_default()
 }
 
 /// Parse the v2 History API's `{ data?: [string, [lon, lat]|{longitude?,latitude?}|null][] }`
