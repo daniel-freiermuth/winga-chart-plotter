@@ -1070,6 +1070,27 @@ mod tests {
         storage
     }
 
+    const SELF_CTX: &str = "vessels.urn:mrn:signalk:uuid:self";
+
+    fn storage_with_self() -> Storage {
+        let mut storage = Storage::default();
+        storage.set_self(SELF_CTX);
+        storage
+    }
+
+    /// One AIS target whose `navigation.closestApproach` was set, then
+    /// retracted by a `null` delta.
+    fn ais_targets_after_cpa_cleared() -> Vec<AisTarget> {
+        let mut storage = storage_with_self();
+        let delta1 = r#"{"context":"vessels.urn:mrn:imo:mmsi:111111111","updates":[{"$source":"x","values":[{"path":"navigation.position","value":{"latitude":60.0,"longitude":25.0}},{"path":"navigation.datetime","value":"2024-01-01T12:00:00.000Z"},{"path":"navigation.closestApproach","value":{"distance":800.0,"timeTo":120.0}}]}]}"#;
+        apply_message(&mut storage, delta1).unwrap();
+        let delta2 = r#"{"context":"vessels.urn:mrn:imo:mmsi:111111111","updates":[{"$source":"x","values":[{"path":"navigation.closestApproach","value":null}]}]}"#;
+        apply_message(&mut storage, delta2).unwrap();
+        let targets = extract_ais_targets(&storage, 1704110400000.0 + 1000.0, 600_000.0);
+        assert_eq!(targets.len(), 1);
+        targets
+    }
+
     #[test]
     fn accuracy_sibling_does_not_clobber_course_over_ground_true() {
         // Reproduces the real-world delta shape from `ws.Disen.signalk-nav-provider`
@@ -1078,8 +1099,7 @@ mod tests {
         // exactly the ordering that let the upstream `signalk` crate's path dispatch
         // (matches only the first remaining segment) silently overwrite the real value.
         // With exact full-path dispatch, `.accuracy` is simply not a key in the map.
-        let mut storage = Storage::default();
-        storage.set_self("vessels.urn:mrn:signalk:uuid:self");
+        let mut storage = storage_with_self();
         apply_message(
             &mut storage,
             r#"{
@@ -1097,9 +1117,8 @@ mod tests {
 
     #[test]
     fn parse_position_delta() {
-        let mut storage = Storage::default();
         // Pre-set self to a different vessel so this delta is treated as AIS.
-        storage.set_self("vessels.urn:mrn:signalk:uuid:self");
+        let mut storage = storage_with_self();
         apply_message(&mut storage, r#"{
             "context": "vessels.urn:mrn:signalk:uuid:test",
             "updates": [{"values": [{"path": "navigation.position", "value": {"longitude": 10.5, "latitude": 59.91}}]}]
@@ -1159,8 +1178,7 @@ mod tests {
         // Each malformed piece (non-object update, non-array values, entry
         // without `value`, non-string `path`, non-string `$source`) is skipped
         // individually; well-formed siblings in the same message still apply.
-        let mut storage = Storage::default();
-        storage.set_self("vessels.urn:mrn:signalk:uuid:self");
+        let mut storage = storage_with_self();
         let applied = apply_message(
             &mut storage,
             r#"{
@@ -1246,8 +1264,7 @@ mod tests {
     fn self_values_skip_null_entries_and_keep_update_timestamps() {
         // Null update/value entries and a non-string timestamp are skipped
         // individually; well-formed siblings still reach the relay, in order.
-        let mut storage = Storage::default();
-        storage.set_self("vessels.urn:mrn:signalk:uuid:self");
+        let mut storage = storage_with_self();
         let applied = apply_message(
             &mut storage,
             r#"{
@@ -1318,8 +1335,7 @@ mod tests {
         // Widgets iterating an object's keys must see the server's order, as
         // they did when the relay used `JSON.parse`; `json!` equality ignores
         // order, so compare the serialized text.
-        let mut storage = Storage::default();
-        storage.set_self("vessels.urn:mrn:signalk:uuid:self");
+        let mut storage = storage_with_self();
         let applied = apply_message(
             &mut storage,
             r#"{"context": "vessels.self", "updates": [{"values": [
@@ -1344,8 +1360,7 @@ mod tests {
         // whole entry, siblings included. Such integers must serialize as
         // the nearest `f64` (what `JSON.parse` yields), nested ones too,
         // while safe integers stay integers.
-        let mut storage = Storage::default();
-        storage.set_self("vessels.urn:mrn:signalk:uuid:self");
+        let mut storage = storage_with_self();
         let applied = apply_message(
             &mut storage,
             r#"{"context": "vessels.self", "updates": [{"values": [
@@ -1374,8 +1389,7 @@ mod tests {
     fn duplicated_update_timestamp_keeps_the_last_and_applies_the_update() {
         // A repeated `timestamp` key must not reject the update (storage and
         // relay alike); like `JSON.parse`, the last occurrence wins.
-        let mut storage = Storage::default();
-        storage.set_self("vessels.urn:mrn:signalk:uuid:self");
+        let mut storage = storage_with_self();
         let applied = apply_message(
             &mut storage,
             r#"{"context": "vessels.urn:mrn:signalk:uuid:self", "updates": [{
@@ -1408,8 +1422,7 @@ mod tests {
 
     #[test]
     fn ais_targets_exclude_self() {
-        let mut storage = Storage::default();
-        storage.set_self("vessels.urn:mrn:signalk:uuid:self");
+        let mut storage = storage_with_self();
 
         apply_message(&mut storage, r#"{
             "context": "vessels.urn:mrn:signalk:uuid:self",
@@ -1442,8 +1455,7 @@ mod tests {
 
     #[test]
     fn ais_targets_stale_dropped() {
-        let mut storage = Storage::default();
-        storage.set_self("vessels.urn:mrn:signalk:uuid:self");
+        let mut storage = storage_with_self();
 
         // datetime = 9 minutes after epoch → stale when now = 20 minutes after epoch
         apply_message(
@@ -1465,8 +1477,7 @@ mod tests {
 
     #[test]
     fn ais_target_without_datetime_dropped() {
-        let mut storage = Storage::default();
-        storage.set_self("vessels.urn:mrn:signalk:uuid:self");
+        let mut storage = storage_with_self();
 
         apply_message(
             &mut storage,
@@ -1488,8 +1499,7 @@ mod tests {
 
     #[test]
     fn prune_stale_vessels_removes_old_entries() {
-        let mut storage = Storage::default();
-        storage.set_self("vessels.urn:mrn:signalk:uuid:self");
+        let mut storage = storage_with_self();
 
         // Fresh vessel: datetime = 15 minutes after epoch
         apply_message(
@@ -1590,8 +1600,7 @@ mod tests {
 
     #[test]
     fn last_target_going_stale_yields_a_due_empty_snapshot() {
-        let mut storage = Storage::default();
-        storage.set_self("vessels.urn:mrn:signalk:uuid:self");
+        let mut storage = storage_with_self();
         apply_message(
             &mut storage,
             r#"{
@@ -1693,8 +1702,7 @@ mod tests {
         // id with a dotted suffix (a real shape: AIS-relay sources append
         // ".XX"-style suffixes) gets silently truncated, risking collisions between
         // vessels that share a prefix. We preserve the full id.
-        let mut storage = Storage::default();
-        storage.set_self("vessels.urn:mrn:signalk:uuid:self");
+        let mut storage = storage_with_self();
         apply_message(
             &mut storage,
             r#"{
@@ -1715,8 +1723,7 @@ mod tests {
 
     #[test]
     fn course_next_point_and_active_route_are_dispatched() {
-        let mut storage = Storage::default();
-        storage.set_self("vessels.urn:mrn:signalk:uuid:self");
+        let mut storage = storage_with_self();
         apply_message(
             &mut storage,
             r#"{
@@ -1750,8 +1757,7 @@ mod tests {
         // `"path": ""` entry that merges an object at the vessel root — a convention
         // some AIS plugins use that neither this nor the old crate implements; mmsi is
         // independently derived from the context URN, so this must be a silent no-op.
-        let mut storage = Storage::default();
-        storage.set_self("vessels.urn:mrn:signalk:uuid:self");
+        let mut storage = storage_with_self();
         apply_message(
             &mut storage,
             r#"{
@@ -1904,8 +1910,7 @@ mod tests {
 
     #[test]
     fn malformed_datetime_delta_keeps_previous_datetime() {
-        let mut storage = Storage::default();
-        storage.set_self("vessels.urn:mrn:signalk:uuid:self");
+        let mut storage = storage_with_self();
         let ctx = "vessels.urn:mrn:imo:mmsi:230000001";
         let delta = |dt: &str| {
             format!(
@@ -1925,8 +1930,7 @@ mod tests {
 
     #[test]
     fn course_null_clears_active_route_and_next_point() {
-        let mut storage = Storage::default();
-        storage.set_self("vessels.urn:mrn:signalk:uuid:self");
+        let mut storage = storage_with_self();
         // First, activate a route.
         apply_message(
             &mut storage,
@@ -1976,8 +1980,7 @@ mod tests {
 
     #[test]
     fn course_parent_null_clears_entire_course() {
-        let mut storage = Storage::default();
-        storage.set_self("vessels.urn:mrn:signalk:uuid:self");
+        let mut storage = storage_with_self();
         apply_message(
             &mut storage,
             r#"{
@@ -2019,8 +2022,7 @@ mod tests {
     #[test]
     fn course_parent_object_delivery() {
         // SK delivers `navigation.course` as a single object value (not sub-paths).
-        let mut storage = Storage::default();
-        storage.set_self("vessels.urn:mrn:signalk:uuid:self");
+        let mut storage = storage_with_self();
         apply_message(
             &mut storage,
             r#"{
@@ -2049,8 +2051,7 @@ mod tests {
 
     #[test]
     fn test_closest_approach_leaf() {
-        let mut storage = Storage::default();
-        storage.set_self("vessels.urn:mrn:signalk:uuid:self");
+        let mut storage = storage_with_self();
         // Simulate an AIS vessel delta with navigation.closestApproach;
         // plugin adds extra fields (collisionRiskRating) which must be ignored.
         let delta = r#"{"context":"vessels.urn:mrn:imo:mmsi:123456789","updates":[{"$source":"sk-derived","values":[{"path":"navigation.position","value":{"latitude":60.1,"longitude":24.9}},{"path":"navigation.datetime","value":"2024-01-01T12:00:00.000Z"},{"path":"navigation.closestApproach","value":{"distance":500.0,"timeTo":300.0,"collisionRiskRating":0.85}}]}]}"#;
@@ -2064,14 +2065,7 @@ mod tests {
 
     #[test]
     fn test_closest_approach_null_clears() {
-        let mut storage = Storage::default();
-        storage.set_self("vessels.urn:mrn:signalk:uuid:self");
-        let delta1 = r#"{"context":"vessels.urn:mrn:imo:mmsi:111111111","updates":[{"$source":"x","values":[{"path":"navigation.position","value":{"latitude":60.0,"longitude":25.0}},{"path":"navigation.datetime","value":"2024-01-01T12:00:00.000Z"},{"path":"navigation.closestApproach","value":{"distance":800.0,"timeTo":120.0}}]}]}"#;
-        apply_message(&mut storage, delta1).unwrap();
-        let delta2 = r#"{"context":"vessels.urn:mrn:imo:mmsi:111111111","updates":[{"$source":"x","values":[{"path":"navigation.closestApproach","value":null}]}]}"#;
-        apply_message(&mut storage, delta2).unwrap();
-        let targets = extract_ais_targets(&storage, 1704110400000.0 + 1000.0, 600_000.0);
-        assert_eq!(targets.len(), 1);
+        let targets = ais_targets_after_cpa_cleared();
         assert!(
             targets[0].sk_cpa.is_none(),
             "null delta should clear sk_cpa"
@@ -2084,14 +2078,7 @@ mod tests {
         // JS side: the cold-data entry must carry an explicit `"skCpa": null`,
         // not an absent field — absence is treated as "retain previous value"
         // by the app's coldMap merge.
-        let mut storage = Storage::default();
-        storage.set_self("vessels.urn:mrn:signalk:uuid:self");
-        let delta1 = r#"{"context":"vessels.urn:mrn:imo:mmsi:111111111","updates":[{"$source":"x","values":[{"path":"navigation.position","value":{"latitude":60.0,"longitude":25.0}},{"path":"navigation.datetime","value":"2024-01-01T12:00:00.000Z"},{"path":"navigation.closestApproach","value":{"distance":800.0,"timeTo":120.0}}]}]}"#;
-        apply_message(&mut storage, delta1).unwrap();
-        let delta2 = r#"{"context":"vessels.urn:mrn:imo:mmsi:111111111","updates":[{"$source":"x","values":[{"path":"navigation.closestApproach","value":null}]}]}"#;
-        apply_message(&mut storage, delta2).unwrap();
-        let targets = extract_ais_targets(&storage, 1704110400000.0 + 1000.0, 600_000.0);
-        assert_eq!(targets.len(), 1);
+        let targets = ais_targets_after_cpa_cleared();
         let t = &targets[0];
         // Mirror how `extract_ais_binary` builds the cold entry for this vessel.
         let cold = AisColdData {
