@@ -11,6 +11,11 @@ function createChartsStore() {
   let loading       = $state(false);
   let error         = $state<string | null>(null);
   let serverBase    = '';
+  // Bumped on every load(); only the newest load() may commit its catalog.
+  let requestSeq    = 0;
+  // Bumped whenever the server base changes; WMTS resolutions started for an
+  // older base must not land in the caches of the new one.
+  let baseGen       = 0;
 
   // Resolved tile URL templates (SvelteMap → reactive)
   const wmtsResolved      = new SvelteMap<string, string>();
@@ -80,16 +85,35 @@ function createChartsStore() {
     },
 
     async load(base: string) {
-      serverBase = base;
+      const seq = ++requestSeq;
+      if (base !== serverBase) {
+        // The old server's catalog and WMTS resolutions are void: tileUrl()
+        // and styleUrl() would resolve its relative paths against the new
+        // base, and same-identifier WMTS charts would reuse old templates.
+        // Same-server failures keep the last good catalog.
+        serverBase = base;
+        baseGen++;
+        available = {};
+        wmtsResolved.clear();
+        wmtsFailed.clear();
+        wmtsResolving.clear();
+        wmtsAllLayers.clear();
+        wmtsFilteredLayers.clear();
+      }
+      const gen = baseGen;
       loading = true;
       error   = null;
       try {
-        available = await fetchCharts(base);
+        const fetched = await fetchCharts(base);
+        // A newer load() started meanwhile — its response is authoritative.
+        if (seq !== requestSeq) return;
+        available = fetched;
       } catch (e) {
+        if (seq !== requestSeq) return;
         error = String(e);
         return;
       } finally {
-        loading = false;
+        if (seq === requestSeq) loading = false;
       }
 
       // Resolve WMTS capabilities in the background — each chart row updates
@@ -103,6 +127,7 @@ function createChartsStore() {
           const preferLayer = c.layers?.[0];
           try {
             const info = await resolveWmtsTileUrl(url, preferLayer);
+            if (gen !== baseGen) return;
             wmtsResolved.set(c.identifier, info.tileUrlTemplate);
             wmtsAllLayers.set(c.identifier, info.availableLayers);
             // Build filtered list from chart.layers hints (preserving server order).
@@ -115,9 +140,9 @@ function createChartsStore() {
               if (filtered.some(l => l.tileUrl !== '')) wmtsFilteredLayers.set(c.identifier, filtered);
             }
           } catch {
-            wmtsFailed.add(c.identifier);
+            if (gen === baseGen) wmtsFailed.add(c.identifier);
           } finally {
-            wmtsResolving.delete(c.identifier);
+            if (gen === baseGen) wmtsResolving.delete(c.identifier);
           }
         });
       void Promise.allSettled(wmtsTasks);
