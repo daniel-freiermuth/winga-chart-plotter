@@ -192,6 +192,10 @@
   let _aisTracksLiveExtendedAt = 0;
   // Last time the selected vessel's track (aisTrackRaw) was extended to its live position.
   let _aisTrackRawExtendedAt = 0;
+  // Vessel whose track aisTrackRaw holds. The selection is app-global (shared by split-view
+  // panes) while aisTrackRaw is per pane, so a selection made in the other pane must not keep
+  // or extend this pane's track of the previously selected vessel.
+  let _aisTrackRawId: string | null = null;
   // base URL + history hours the cache was fetched with; a change invalidates it.
   let _aisAllTracksKey = '';
   // CPA visualization deck.gl layers (projection lines, ghost dots).
@@ -1721,6 +1725,7 @@
     // Cancel any in-flight track fetch and clear existing track.
     _aisTrackGen++;
     aisTrackRaw = [];
+    _aisTrackRawId = t.id; // claim before ais.highlight so the selection-change reset skips it
     if (aisAgeTimer !== null) { clearInterval(aisAgeTimer); aisAgeTimer = null; }
     ais.highlight(t.id);
     // Fetch position history; shown while vessel is highlighted or in popup.
@@ -2463,6 +2468,17 @@
     aisTrackRaw = [];
     resetCpaVisuals();
     if (aisAgeTimer !== null) { clearInterval(aisAgeTimer); aisAgeTimer = null; }
+  });
+
+  // Drop this pane's track when the selection moves to another vessel without this pane's
+  // click (e.g. a tap in the other split-view pane), so the live-extension effect below
+  // never appends the new vessel's positions to the previous vessel's track.
+  $effect(() => {
+    const selId = ais.selectedId;
+    if (selId === _aisTrackRawId) return;
+    _aisTrackRawId = selId;
+    _aisTrackGen++;
+    aisTrackRaw = [];
   });
 
   // Keep the highlighted/popup vessel's track reaching its moving icon after the one-time
