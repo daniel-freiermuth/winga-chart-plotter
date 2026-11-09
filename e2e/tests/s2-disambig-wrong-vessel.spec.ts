@@ -82,14 +82,14 @@ test('clicking a disambiguation entry selects the named vessel', async ({ page }
     // one-frame window where those disagree and list the wrong vessels — on
     // main that is the same stale-index bug, on the fix branch it is a
     // harmless frame race. Either way: close and tap again.)
-    const list = page.locator('.ais-disambig-list');
-    const bravoItem = list.locator('.ais-disambig-item', { hasText: 'BRAVO' });
+    const list = page.locator('.map-disambig-list');
+    const bravoItem = list.locator('.map-disambig-item', { hasText: 'BRAVO' });
     await expect(async () => {
       const close = page.locator('.maplibregl-popup-close-button');
       if (await close.count()) await close.first().click();
       await clickLonLat(page, VIEW, mid.lon, mid.lat);
       await expect(list).toBeVisible({ timeout: 2000 });
-      await expect(list.locator('.ais-disambig-item', { hasText: 'ALPHA' })).toBeVisible({ timeout: 500 });
+      await expect(list.locator('.map-disambig-item', { hasText: 'ALPHA' })).toBeVisible({ timeout: 500 });
       await expect(bravoItem).toBeVisible({ timeout: 500 });
     }).toPass({ timeout: 45_000 });
 
@@ -118,7 +118,7 @@ test('clicking a disambiguation entry selects the named vessel', async ({ page }
     } else {
       const infoTitle = page
         .locator('.maplibregl-popup .ais-popup-title')
-        .filter({ hasNotText: 'Multiple vessels' });
+        .filter({ hasNotText: 'Select item' });
       await expect(infoTitle, 'info popup for the vessel the app selected').toHaveText('BRAVO');
     }
   } finally {
