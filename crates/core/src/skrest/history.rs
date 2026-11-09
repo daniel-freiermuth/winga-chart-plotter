@@ -137,6 +137,12 @@ pub fn dedup_coords(coords: &[[f64; 2]]) -> Vec<[f64; 2]> {
     out
 }
 
+/// Merge track sources listed in priority order into one polyline.
+pub fn merge_track_sources(sources: Vec<Vec<[f64; 2]>>) -> Vec<[f64; 2]> {
+    let all: Vec<[f64; 2]> = sources.into_iter().flatten().collect();
+    dedup_coords(&all)
+}
+
 /// Parse the v2 History API's `{ data?: [string, [lon, lat]|{longitude?,latitude?}|null][] }`
 /// shape. The spec/reference providers emit a GeoJSON `[lon, lat]` pair; the
 /// `{longitude, latitude}` object form is still accepted for older providers.
@@ -211,8 +217,8 @@ pub fn v1_vessel_track_url(server_base: &str, vessel_id: &str, hours: i64) -> St
 #[cfg(target_arch = "wasm32")]
 mod wasm {
     use super::{
-        dedup_coords, extract_history_coords, extract_self_tracks_coords, extract_track_coords,
-        ms_to_iso8601, v1_self_track_url, v1_tracks_url, v1_vessel_track_url,
+        extract_history_coords, extract_self_tracks_coords, extract_track_coords,
+        merge_track_sources, ms_to_iso8601, v1_self_track_url, v1_tracks_url, v1_vessel_track_url,
         v2_history_url_for_vessel, v2_history_url_own_vessel,
     };
     use crate::skrest::http;
@@ -283,16 +289,7 @@ mod wasm {
         })
         .await;
 
-        // Concatenation order (v2 -> v1 -> tracks) is roughly oldest-first;
-        // dedup tolerates overlapping coverage between sources.
-        let mut all = v2_coords;
-        all.extend(v1_coords);
-        all.extend(tracks_coords);
-        let result = if all.is_empty() {
-            all
-        } else {
-            dedup_coords(&all)
-        };
+        let result = merge_track_sources(vec![v2_coords, v1_coords, tracks_coords]);
         serde_wasm_bindgen::to_value(&result).map_err(|e| crate::Error::from(e).into())
     }
 
@@ -327,15 +324,7 @@ mod wasm {
         })
         .await;
 
-        let result = if v2_coords.is_empty() {
-            v1_coords
-        } else if v1_coords.is_empty() {
-            v2_coords
-        } else {
-            let mut all = v2_coords;
-            all.extend(v1_coords);
-            dedup_coords(&all)
-        };
+        let result = merge_track_sources(vec![v2_coords, v1_coords]);
         serde_wasm_bindgen::to_value(&result).map_err(|e| crate::Error::from(e).into())
     }
 }
@@ -595,6 +584,38 @@ mod tests {
         assert_eq!(
             v1_vessel_track_url("http://sk.local:3000", "urn:mrn:imo:mmsi:230035920", 12),
             "http://sk.local:3000/signalk/v1/api/vessels/urn%3Amrn%3Aimo%3Ammsi%3A230035920/track?timespan=12h"
+        );
+    }
+
+    #[test]
+    fn merge_track_sources_does_not_chain_overlapping_windows() {
+        // v2 history and the v1 track cover the same window ending now.
+        let track = vec![[24.0, 60.0], [24.1, 60.1], [24.2, 60.2]];
+        let merged = merge_track_sources(vec![track.clone(), track.clone()]);
+        assert_eq!(merged, track);
+    }
+
+    #[test]
+    fn merge_track_sources_falls_back_past_empty_sources() {
+        let track = vec![[24.0, 60.0], [24.1, 60.1]];
+        assert_eq!(merge_track_sources(vec![Vec::new(), track.clone()]), track);
+        assert_eq!(
+            merge_track_sources(vec![Vec::new(), Vec::new()]),
+            Vec::<[f64; 2]>::new()
+        );
+    }
+
+    #[test]
+    fn merge_track_sources_skips_sources_too_short_to_draw() {
+        let track = vec![[24.0, 60.0], [24.1, 60.1], [24.2, 60.2]];
+        assert_eq!(
+            merge_track_sources(vec![vec![[24.0, 60.0]], track.clone()]),
+            track
+        );
+        // Collapses to one point after dedup (all within 5 m).
+        assert_eq!(
+            merge_track_sources(vec![vec![[24.0, 60.0], [24.0, 60.000_01]], track.clone()]),
+            track
         );
     }
 }
