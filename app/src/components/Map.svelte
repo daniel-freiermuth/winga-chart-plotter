@@ -1355,8 +1355,15 @@
         if (!touch) return;
         if (Math.hypot(touch.clientX - startX, touch.clientY - startY) > LONG_PRESS_MOVE_PX) cancelLong();
       });
-      map.on('touchend',    (e) => { if (e.originalEvent.touches.length === 0) _touchActive = false; cancelLong(); });
-      map.on('touchcancel', (e) => { if (e.originalEvent.touches.length === 0) _touchActive = false; cancelLong(); });
+      // `touches` is document-wide: a finger resting outside the canvas container (a control,
+      // a side panel) still counts there, yet its lift never reaches these listeners. Only
+      // fingers that started inside the container — whose lift MapLibre does deliver — keep
+      // the follow guard up; otherwise it would stick until the next map touch.
+      const canvasContainer = map.getCanvasContainer();
+      const mapFingerDown = (touches: TouchList): boolean =>
+        Array.from(touches).some((t) => t.target instanceof Node && canvasContainer.contains(t.target));
+      map.on('touchend',    (e) => { if (!mapFingerDown(e.originalEvent.touches)) _touchActive = false; cancelLong(); });
+      map.on('touchcancel', (e) => { if (!mapFingerDown(e.originalEvent.touches)) _touchActive = false; cancelLong(); });
     }
 
     // Unified click/tap dispatcher — handles both mouse clicks and touch taps.
