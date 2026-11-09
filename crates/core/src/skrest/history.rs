@@ -503,8 +503,58 @@ mod tests {
     fn v1_tracks_url_only_uses_plugin_accepted_params() {
         // @signalk/tracks rejects unknown query keys (e.g. `context`) with 400.
         assert_eq!(
-            v1_tracks_url("http://sk.local:3000"),
-            "http://sk.local:3000/signalk/v1/api/tracks?radius=500000"
+            v1_tracks_url("http://sk.local:3000", 24.0),
+            "http://sk.local:3000/signalk/v1/api/tracks?radius=500000&duration=1440m"
+        );
+    }
+
+    #[test]
+    fn v1_tracks_url_carries_the_requested_history_window() {
+        // Without a window @signalk/tracks answers its own default (24 h on
+        // current versions, the whole recording on 3.0.x), not the user's
+        // track-history setting that the other two sources honour.
+        assert_eq!(
+            v1_tracks_url("http://sk.local:3000", 2.0),
+            "http://sk.local:3000/signalk/v1/api/tracks?radius=500000&duration=120m"
+        );
+        assert_eq!(
+            v1_tracks_url("http://sk.local:3000", 12.0),
+            "http://sk.local:3000/signalk/v1/api/tracks?radius=500000&duration=720m"
+        );
+    }
+
+    #[test]
+    fn v1_tracks_url_caps_the_all_vessel_window_at_a_day() {
+        // /tracks answers every vessel in range for the whole window, kept for
+        // aisRetentionDays (7 d default, 0 = forever), only for the client to
+        // keep the self entry; /self/track serves the full own-vessel window
+        // from the same plugin store, so /tracks never needs more than the
+        // plugin's own 24 h default.
+        for hours in [24.5, 62.4, 168.0, 5.0 * 365.25 * 24.0] {
+            assert_eq!(
+                v1_tracks_url("http://sk.local:3000", hours),
+                "http://sk.local:3000/signalk/v1/api/tracks?radius=500000&duration=1440m",
+                "history_hours = {hours}"
+            );
+        }
+    }
+
+    #[test]
+    fn v1_tracks_url_keeps_the_unrounded_history_window() {
+        // The own-track slider is continuous from 5 min (Settings.svelte), so
+        // whole-hour rounding would send `duration=0h` (an empty window) for
+        // every sub-30-min setting and snap all others to a whole hour.
+        assert_eq!(
+            v1_tracks_url("http://sk.local:3000", 5.0 / 60.0),
+            "http://sk.local:3000/signalk/v1/api/tracks?radius=500000&duration=5m"
+        );
+        assert_eq!(
+            v1_tracks_url("http://sk.local:3000", 1.4),
+            "http://sk.local:3000/signalk/v1/api/tracks?radius=500000&duration=84m"
+        );
+        assert_eq!(
+            v1_tracks_url("http://sk.local:3000", 23.4),
+            "http://sk.local:3000/signalk/v1/api/tracks?radius=500000&duration=1404m"
         );
     }
 
