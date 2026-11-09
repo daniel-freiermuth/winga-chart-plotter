@@ -137,6 +137,24 @@ pub fn dedup_coords(coords: &[[f64; 2]]) -> Vec<[f64; 2]> {
     out
 }
 
+/// Merge the own-vessel track sources fetched by `fetchTrack`.
+/// Concatenation order (v2 -> v1 -> tracks) is roughly oldest-first;
+/// dedup tolerates overlapping coverage between sources.
+pub fn merge_own_track_sources(
+    v2: Vec<[f64; 2]>,
+    v1_self: Vec<[f64; 2]>,
+    tracks_self: Vec<[f64; 2]>,
+) -> Vec<[f64; 2]> {
+    let mut all = v2;
+    all.extend(v1_self);
+    all.extend(tracks_self);
+    if all.is_empty() {
+        all
+    } else {
+        dedup_coords(&all)
+    }
+}
+
 /// Parse the v2 History API's `{ data?: [string, [lon, lat]|{longitude?,latitude?}|null][] }`
 /// shape. The spec/reference providers emit a GeoJSON `[lon, lat]` pair; the
 /// `{longitude, latitude}` object form is still accepted for older providers.
@@ -202,8 +220,8 @@ pub fn v1_vessel_track_url(server_base: &str, vessel_id: &str, hours: i64) -> St
 mod wasm {
     use super::{
         dedup_coords, extract_history_coords, extract_self_tracks_coords, extract_track_coords,
-        ms_to_iso8601, v1_self_track_url, v1_tracks_url, v1_vessel_track_url,
-        v2_history_url_for_vessel, v2_history_url_own_vessel,
+        merge_own_track_sources, ms_to_iso8601, v1_self_track_url, v1_tracks_url,
+        v1_vessel_track_url, v2_history_url_for_vessel, v2_history_url_own_vessel,
     };
     use crate::skrest::http;
     use wasm_bindgen::prelude::*;
@@ -273,16 +291,7 @@ mod wasm {
         })
         .await;
 
-        // Concatenation order (v2 -> v1 -> tracks) is roughly oldest-first;
-        // dedup tolerates overlapping coverage between sources.
-        let mut all = v2_coords;
-        all.extend(v1_coords);
-        all.extend(tracks_coords);
-        let result = if all.is_empty() {
-            all
-        } else {
-            dedup_coords(&all)
-        };
+        let result = merge_own_track_sources(v2_coords, v1_coords, tracks_coords);
         serde_wasm_bindgen::to_value(&result).map_err(|e| crate::Error::from(e).into())
     }
 
@@ -432,6 +441,22 @@ mod tests {
     fn dedup_keeps_points_beyond_5m() {
         let coords = vec![[24.0, 60.0], [24.001, 60.0]]; // ~55m apart at this latitude
         assert_eq!(dedup_coords(&coords), coords);
+    }
+
+    #[test]
+    fn merge_own_track_does_not_duplicate_plugin_self_track() {
+        // `/self/track` and `/tracks` (isSelf) are both served by @signalk/tracks
+        // from the same recording, so they return the same points.
+        let track = vec![[24.9, 60.1], [25.0, 60.2], [25.1, 60.3]];
+        let merged = merge_own_track_sources(Vec::new(), track.clone(), track.clone());
+        assert_eq!(merged, track);
+    }
+
+    #[test]
+    fn merge_own_track_falls_back_to_tracks_when_self_track_empty() {
+        let track = vec![[24.9, 60.1], [25.0, 60.2]];
+        let merged = merge_own_track_sources(vec![[24.0, 60.0]], Vec::new(), track);
+        assert_eq!(merged, vec![[24.0, 60.0], [24.9, 60.1], [25.0, 60.2]]);
     }
 
     #[test]
