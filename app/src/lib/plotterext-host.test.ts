@@ -135,4 +135,32 @@ describe('extension host connection', () => {
     ) as { msg: { error?: { message: string } } } | undefined;
     expect(reply?.msg.error?.message).toContain('No widget instance');
   });
+
+  // A side panel opened via ui.openPanel/togglePanel has no widget instance.
+  // Scope-less state calls must fall back to the extension scope (as the
+  // Plotter Extensions spec and Freeboard-SK do), not fail with no_instance.
+  it('defaults state.get/state.set to extension scope in a context with no instance', async () => {
+    const { createHostConnection } = await import('./plotterext-host');
+    const { plotterExtensions } = await import('../stores/plotterExtensions.svelte');
+    const { relay } = recordingRelay();
+    createHostConnection(
+      bus.peer as unknown as Window,
+      'ext-a',
+      { kind: 'panel', id: 'p', instanceId: null },
+      relay, noopMapControl, noopPanelControl,
+    );
+    plotterExtensions.setExtState('ext-a', { x: 1 });
+
+    bus.deliver(envelope({ id: '1', method: 'state.get', params: { keys: ['x'] } }));
+    bus.deliver(envelope({ id: '2', method: 'state.set', params: { values: { y: 2 } } }));
+    await Promise.resolve();
+
+    const reply = (id: string) => bus.posted.find(
+      (p) => (p as { msg?: { id?: string } }).msg?.id === id,
+    ) as { msg: { result?: unknown; error?: { message: string } } } | undefined;
+    expect(reply('1')?.msg.error).toBeUndefined();
+    expect(reply('1')?.msg.result).toEqual({ values: { x: 1 } });
+    expect(reply('2')?.msg.error).toBeUndefined();
+    expect(plotterExtensions.getExtState('ext-a', ['y'])).toEqual({ y: 2 });
+  });
 });

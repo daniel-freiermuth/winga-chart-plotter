@@ -69,7 +69,12 @@ export function createHostConnection(
 ): ExtensionHost {
   let seq = 0;
   const subMap = new Map<string, string[]>();
-  const defaultScope = context.kind === 'background' ? 'extension' : 'instance';
+  // Per the Plotter Extensions spec, state defaults to the instance scope only
+  // when a widget instance is bound; background workers and plain side panels
+  // (no target widget) default to the extension scope.
+  const defaultScope = context.kind !== 'background'
+    && typeof context.instanceId === 'string' && context.instanceId !== ''
+    ? 'instance' : 'extension';
 
   function releaseAllSubscriptions(): void {
     for (const relayIds of subMap.values()) {
