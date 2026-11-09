@@ -39,6 +39,29 @@ describe('fetchAndResolveStyle — fetching', () => {
     await expect(fetchAndResolveStyle('https://styles.example/missing.json'))
       .rejects.toThrow('Failed to fetch style https://styles.example/missing.json: 404 Not Found');
   });
+
+  it('rejects a style request the server never answers instead of hanging forever', async () => {
+    // A wedged server / dropped link: the request is accepted but never
+    // answered, and only fails when its abort signal fires.
+    const fetchMock = vi.fn((_url: string, init?: RequestInit) => {
+      const { promise, reject } = Promise.withResolvers<never>();
+      init?.signal?.addEventListener('abort', () => {
+        reject(new DOMException('The operation was aborted due to timeout', 'TimeoutError'));
+      });
+      return promise;
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const pending = fetchAndResolveStyle('https://styles.example/style.json');
+    // AbortSignal.timeout is not driven by fake timers — fire the request's
+    // deadline directly to assert the fetch fails rather than staying pending
+    // (mapStyles only re-admits a URL for retry after a rejection).
+    const signal = fetchMock.mock.calls[0]?.[1]?.signal;
+    expect(signal).toBeInstanceOf(AbortSignal);
+    signal?.dispatchEvent(new Event('abort'));
+
+    await expect(pending).rejects.toThrow('timeout');
+  });
 });
 
 describe('fetchAndResolveStyle — config and camera expressions', () => {
