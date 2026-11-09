@@ -34,6 +34,15 @@ function remapGlyphFonts(node: unknown): unknown {
 }
 
 /**
+ * Deadline for the whole style request (headers and body). A wedged server or
+ * a link that drops mid-response must fail the request, not hold it open
+ * forever: mapStyles only re-admits a URL for retry after a rejection. Generous
+ * because style JSON can be hundreds of kB over a slow link at sea — a deadline
+ * shorter than a real download would abort every retry.
+ */
+const STYLE_FETCH_TIMEOUT_MS = 30_000;
+
+/**
  * Fetch a MapLibre style JSON URL and resolve any ["config", key] expressions
  * using the style's schema defaults, and substitute unsupported camera expressions
  * with safe literal fallbacks.
@@ -57,7 +66,7 @@ function remapGlyphFonts(node: unknown): unknown {
  * (unlike MapboxGL JS) cannot resolve mapbox:// URLs without a Mapbox token.
  */
 export async function fetchAndResolveStyle(url: string): Promise<object> {
-  const res = await fetch(url);
+  const res = await fetch(url, { signal: AbortSignal.timeout(STYLE_FETCH_TIMEOUT_MS) });
   if (!res.ok) throw new Error(`Failed to fetch style ${url}: ${String(res.status)} ${res.statusText}`);
   const raw = await res.json() as Record<string, unknown>;
 
