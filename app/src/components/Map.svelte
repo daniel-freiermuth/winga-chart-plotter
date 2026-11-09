@@ -37,6 +37,7 @@
   import { buildTrackGradient, processTrack, processRouteCoords } from '../lib/trackProcessing';
   import { hexToRgba, dashArray } from '../lib/mapStyles';
   import { escapeHtml } from '../lib/escapeHtml';
+  import { runCommand } from '../stores/commandFailures.svelte';
   import { currentSnapTargets } from '../lib/rulerSnap';
   import FaIcon from '../lib/FaIcon.svelte';
   import { faLocationCrosshairs, faLayerGroup } from '@fortawesome/free-solid-svg-icons';
@@ -1385,9 +1386,8 @@
         const { uuid, name } = movingWaypoint;
         movingWaypoint = null;
         mapContainer.style.cursor = '';
-        updateWaypoint(settings.signalkHttpUrl, uuid, name, e.lngLat.lat, e.lngLat.lng, auth.authHeaders)
-          .then(() => waypoints.load(settings.signalkHttpUrl))
-          .catch((err: unknown) => { console.error('[waypoint] Failed to move:', err); });
+        runCommand('Move waypoint', `waypoint-position:${uuid}`, updateWaypoint(settings.signalkHttpUrl, uuid, name, e.lngLat.lat, e.lngLat.lng, auth.authHeaders)
+          .then(() => waypoints.load(settings.signalkHttpUrl)));
         return;
       }
       const candidates = hits(x, y);
@@ -1832,9 +1832,8 @@
   function promptAndSaveWaypoint(lat: number, lon: number): void {
     const name = prompt('Waypoint name:', formatDm(lat, lon));
     if (name === null) return; // cancelled
-    saveWaypoint(settings.signalkHttpUrl, name.trim() || formatDm(lat, lon), lat, lon, auth.authHeaders)
-      .then(() => waypoints.load(settings.signalkHttpUrl))
-      .catch((err: unknown) => { console.error('[waypoint] Failed to save:', err); });
+    runCommand('Add waypoint', null, saveWaypoint(settings.signalkHttpUrl, name.trim() || formatDm(lat, lon), lat, lon, auth.authHeaders)
+      .then(() => waypoints.load(settings.signalkHttpUrl)));
   }
 
   /** Show a "Navigate here" popup at an empty-water click location. */
@@ -1870,9 +1869,7 @@
       const navBtn = el.closest<HTMLButtonElement>('.navigate-here-btn');
       if (navBtn && !navBtn.disabled) {
         popup.remove();
-        navigateToPoint(serverBase, lat, lon, auth.authHeaders).catch((err: unknown) => {
-          console.error('[navigate] Failed to set course:', err);
-        });
+        runCommand('Navigate here', 'course', navigateToPoint(serverBase, lat, lon, auth.authHeaders));
         return;
       }
       const wpBtn = el.closest<HTMLButtonElement>('.add-waypoint-here-btn');
@@ -1965,8 +1962,7 @@
       if (setNextBtn && !setNextBtn.disabled && setNextBtn.dataset['idx']) {
         popup.remove();
         const pointIndex = mirrorRouteIndex(Number(setNextBtn.dataset['idx']), routeLen, reverse);
-        setActiveRoutePointIndex(settings.signalkHttpUrl, pointIndex, auth.authHeaders)
-          .catch((err: unknown) => { console.error('[route] Failed to set next waypoint:', err); });
+        runCommand('Set next waypoint', 'course', setActiveRoutePointIndex(settings.signalkHttpUrl, pointIndex, auth.authHeaders));
         return;
       }
       const editRouteBtn = el.closest<HTMLButtonElement>('.edit-active-route-btn');
@@ -1985,9 +1981,7 @@
       const stopBtn = el.closest<HTMLButtonElement>('.stop-nav-btn');
       if (stopBtn && !stopBtn.disabled) {
         popup.remove();
-        clearCourse(settings.signalkHttpUrl, auth.authHeaders).catch((err: unknown) => {
-          console.error('[navigate] Failed to clear course:', err);
-        });
+        runCommand('Clear course', 'course', clearCourse(settings.signalkHttpUrl, auth.authHeaders));
       }
     });
   }
@@ -2035,8 +2029,7 @@
       const activateBtn = el.closest<HTMLButtonElement>('.activate-route-btn');
       if (activateBtn && !activateBtn.disabled && activateBtn.dataset['uuid']) {
         popup.remove();
-        activateRoute(settings.signalkHttpUrl, activateBtn.dataset['uuid'], false, auth.authHeaders)
-          .catch((err: unknown) => { console.error('[route] Failed to activate route:', err); });
+        runCommand('Activate route', 'course', activateRoute(settings.signalkHttpUrl, activateBtn.dataset['uuid'], false, auth.authHeaders));
         return;
       }
       const editBtn = el.closest<HTMLButtonElement>('.edit-route-btn');
@@ -2055,9 +2048,8 @@
         const routeName = deleteBtn.dataset['name'] ?? 'this route';
         if (!confirm(`Delete "${routeName}"? This cannot be undone.`)) return;
         popup.remove();
-        deleteRoute(settings.signalkHttpUrl, routeUuid, auth.authHeaders)
-          .then(() => routes.load(settings.signalkHttpUrl))
-          .catch((err: unknown) => { console.error('[route] Failed to delete route:', err); });
+        runCommand('Delete route', `route:${routeUuid}`, deleteRoute(settings.signalkHttpUrl, routeUuid, auth.authHeaders)
+          .then(() => routes.load(settings.signalkHttpUrl)));
       }
     });
   }
@@ -2102,8 +2094,7 @@
       const navBtn = el.closest<HTMLButtonElement>('.navigate-here-btn');
       if (navBtn && !navBtn.disabled) {
         popup.remove();
-        navigateToPoint(settings.signalkHttpUrl, lat, lon, auth.authHeaders)
-          .catch((err: unknown) => { console.error('[waypoint] Failed to set course:', err); });
+        runCommand('Navigate here', 'course', navigateToPoint(settings.signalkHttpUrl, lat, lon, auth.authHeaders));
         return;
       }
       const renameBtn = el.closest<HTMLButtonElement>('.rename-waypoint-btn');
@@ -2111,11 +2102,10 @@
         const newName = prompt('Rename waypoint:', renameBtn.dataset['name'] ?? '');
         if (newName === null) return;
         popup.remove();
-        updateWaypoint(
+        runCommand('Rename waypoint', `waypoint-name:${uuid}`, updateWaypoint(
           settings.signalkHttpUrl, uuid, newName.trim() || name,
           Number(renameBtn.dataset['lat']), Number(renameBtn.dataset['lon']), auth.authHeaders,
-        ).then(() => waypoints.load(settings.signalkHttpUrl))
-          .catch((err: unknown) => { console.error('[waypoint] Failed to rename:', err); });
+        ).then(() => waypoints.load(settings.signalkHttpUrl)));
         return;
       }
       const moveBtn = el.closest<HTMLButtonElement>('.move-waypoint-btn');
@@ -2129,9 +2119,8 @@
       if (delBtn && !delBtn.disabled) {
         if (!confirm(`Delete waypoint "${delBtn.dataset['name'] ?? 'this waypoint'}"?`)) return;
         popup.remove();
-        deleteWaypoint(settings.signalkHttpUrl, uuid, auth.authHeaders)
-          .then(() => waypoints.load(settings.signalkHttpUrl))
-          .catch((err: unknown) => { console.error('[waypoint] Failed to delete:', err); });
+        runCommand('Delete waypoint', `waypoint:${uuid}`, deleteWaypoint(settings.signalkHttpUrl, uuid, auth.authHeaders)
+          .then(() => waypoints.load(settings.signalkHttpUrl)));
         return;
       }
       const routeBtn = el.closest<HTMLButtonElement>('.route-here-btn');

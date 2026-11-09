@@ -109,6 +109,7 @@
   import { routes } from './stores/routes.svelte';
   import { auth } from './stores/auth.svelte';
   import { connection } from './stores/connection.svelte';
+  import { commandFailures } from './stores/commandFailures.svelte';
   import { plotterExtensions, type ButtonDef } from './stores/plotterExtensions.svelte';
   import { createSkRelay, type SkSelfValue } from './lib/sk-relay';
   import { type MapControl, type PanelControl } from './lib/plotterext-host';
@@ -864,6 +865,19 @@
     </div>
   {/if}
 
+  <!-- Rejected course/resource commands from map popups (either pane) -->
+  {#if commandFailures.list.length > 0}
+    <div class="map-command-errors">
+      {#each commandFailures.list as failure (failure.target)}
+        <div class="map-command-error" role="alert">
+          <strong>{failure.action} failed</strong>
+          <span>{failure.detail}</span>
+          <button class="map-command-error-dismiss" title="Dismiss" aria-label="Dismiss" onclick={() => { commandFailures.dismiss(failure.target); }}>✕</button>
+        </div>
+      {/each}
+    </div>
+  {/if}
+
   <!-- MOB (Man Overboard) button — bottom-right -->
   <div class="mob-container">
     {#if mobError}
@@ -1015,6 +1029,43 @@
     margin: 2px 0;
   }
 
+
+  .map-command-errors {
+    position: absolute;
+    top: 10px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 20;
+    width: max-content;
+    max-width: min(360px, calc(100% - 20px));
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .map-command-error {
+    position: relative;
+    background: rgba(127,29,29,0.95);
+    border: 2px solid #fca5a5;
+    border-radius: 8px;
+    color: white;
+    padding: 8px 28px 8px 10px;
+    font-size: 13px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .map-command-error span { color: #fecaca; font-size: 12px; overflow-wrap: anywhere; }
+  .map-command-error-dismiss {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    background: none;
+    border: none;
+    color: #fecaca;
+    cursor: pointer;
+    font-size: 13px;
+    padding: 2px 4px;
+  }
 
   .mob-container {
     position: absolute;
