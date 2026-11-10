@@ -179,6 +179,47 @@ describe('extension frame attachment', () => {
     expect(params).toEqual([{ scope: 'instance', instanceId: 'i1', keys: ['units'] }]);
   });
 
+  it('republishes extension-scope state written by another context', async () => {
+    const { plotterExtensions } = await import('../stores/plotterExtensions.svelte');
+    const { relay } = recordingRelay();
+    const frame = fakeFrame(bus.peer);
+    const handle = await attach(frame, relay);
+
+    bus.deliver(envelope({ id: '1', method: 'events.subscribe', params: { patterns: ['state.changed'] } }));
+    await Promise.resolve();
+
+    // e.g. the extension's side panel saving shared settings
+    plotterExtensions.setExtState('ext-a', { units: 'kn' }, {});
+    plotterExtensions.setExtState('ext-b', { units: 'kn' }, {});
+    const params = () => bus.posted.flatMap((p) => {
+      if (typeof p !== 'object' || p === null || !('msg' in p)) return [];
+      const { msg } = p;
+      if (typeof msg !== 'object' || msg === null || !('method' in msg)) return [];
+      return msg.method === 'state.changed' && 'params' in msg ? [msg.params] : [];
+    });
+    expect(params()).toEqual([{ scope: 'extension', instanceId: 'i1', keys: ['units'] }]);
+
+    handle?.detach();
+    plotterExtensions.setExtState('ext-a', { units: 'm/s' }, {});
+    expect(params()).toHaveLength(1);
+  });
+
+  it('tells a frame about its own extension-scope write exactly once', async () => {
+    const { relay } = recordingRelay();
+    const frame = fakeFrame(bus.peer);
+    await attach(frame, relay);
+
+    bus.deliver(envelope({ id: '1', method: 'events.subscribe', params: { patterns: ['state.changed'] } }));
+    await Promise.resolve();
+    bus.deliver(envelope({ id: '2', method: 'state.set', params: { scope: 'extension', values: { units: 'kn' } } }));
+    await Promise.resolve();
+
+    const changed = bus.posted.filter(
+      (p) => (p as { msg?: { method?: string } }).msg?.method === 'state.changed',
+    );
+    expect(changed).toHaveLength(1);
+  });
+
   it('releases the frame, its listener and its subscriptions on detach', async () => {
     const { relay, unsubscribed } = recordingRelay();
     const frame = fakeFrame(bus.peer);

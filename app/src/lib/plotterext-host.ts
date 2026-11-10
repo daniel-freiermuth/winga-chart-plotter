@@ -234,7 +234,7 @@ export function createHostConnection(
     const { scope: rawScope, values } = params as { scope?: 'instance' | 'extension'; values: Record<string, unknown> };
     const scope = rawScope ?? defaultScope;
     if (scope === 'extension') {
-      plotterExtensions.setExtState(extensionId, values);
+      plotterExtensions.setExtState(extensionId, values, conn);
     } else {
       plotterExtensions.setInstanceState(extensionId, requireInstanceId(), values, conn);
     }
