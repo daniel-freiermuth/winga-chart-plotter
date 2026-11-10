@@ -188,7 +188,16 @@ export interface PlotterExtensions {
     handler: (keys: string[], writer: object | undefined) => void,
   ): () => void;
   getExtState(extensionId: string, keys?: string[]): Record<string, unknown>;
-  setExtState(extensionId: string, values: Record<string, unknown>): void;
+  /** `writer` as for setInstanceState: handed to every listener so the writing connection can skip the echo. */
+  setExtState(extensionId: string, values: Record<string, unknown>, writer?: object): void;
+  /**
+   * Subscribe to extension-scope state writes from any of the extension's
+   * contexts. Returns an unsubscribe function.
+   */
+  onExtStateChanged(
+    extensionId: string,
+    handler: (keys: string[], writer: object | undefined) => void,
+  ): () => void;
 
   resolveUrl(serverBase: string, manifestUrl: string): string;
 }
@@ -235,6 +244,9 @@ function createPlotterExtensions(): PlotterExtensions {
   // executing it, causing attach/detach to loop forever.
   // eslint-disable-next-line svelte/prefer-svelte-reactivity
   const instanceStateListeners = new Map<string, Set<(keys: string[], writer: object | undefined) => void>>();
+  // Same, keyed by extensionId, for extension-scope (shared) state.
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity
+  const extStateListeners = new Map<string, Set<(keys: string[], writer: object | undefined) => void>>();
 
   // ── Loading ────────────────────────────────────────────────────────────────
   //
@@ -484,8 +496,32 @@ function createPlotterExtensions(): PlotterExtensions {
     return Object.fromEntries(keys.map((k) => [k, all[k]]));
   }
 
-  function setExtState(extensionId: string, values: Record<string, unknown>): void {
+  function setExtState(extensionId: string, values: Record<string, unknown>, writer?: object): void {
     lsSet(`plotterext:extstate:${extensionId}`, values);
+    const handlers = extStateListeners.get(extensionId);
+    if (handlers) {
+      const changedKeys = Object.keys(values);
+      for (const handler of handlers) {
+        try { handler(changedKeys, writer); } catch { /* ignore */ }
+      }
+    }
+  }
+
+  function onExtStateChanged(
+    extensionId: string,
+    handler: (keys: string[], writer: object | undefined) => void,
+  ): () => void {
+    let set = extStateListeners.get(extensionId);
+    if (!set) {
+      // eslint-disable-next-line svelte/prefer-svelte-reactivity
+      set = new Set();
+      extStateListeners.set(extensionId, set);
+    }
+    set.add(handler);
+    return () => {
+      set.delete(handler);
+      if (set.size === 0) extStateListeners.delete(extensionId);
+    };
   }
 
   // ── URL resolution ─────────────────────────────────────────────────────────
@@ -517,6 +553,7 @@ function createPlotterExtensions(): PlotterExtensions {
     onInstanceStateChanged,
     getExtState,
     setExtState,
+    onExtStateChanged,
     resolveUrl,
   };
 }

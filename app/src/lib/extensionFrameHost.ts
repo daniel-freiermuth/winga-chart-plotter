@@ -97,6 +97,14 @@ export function attachExtensionFrame(opts: AttachExtensionFrameOptions): Attache
         });
       })
     : null;
+  // Extension-scope state is shared across all of the extension's contexts,
+  // so every frame hears about writes made by any other one.
+  const unwatchExtState = plotterExtensions.onExtStateChanged(extensionId, (keys, writer) => {
+    if (writer === host.conn) return;
+    host.conn.publish('state.changed', {
+      scope: 'extension', instanceId: context.instanceId ?? null, keys,
+    });
+  });
 
   return {
     get state() { return state; },
@@ -107,6 +115,7 @@ export function attachExtensionFrame(opts: AttachExtensionFrameOptions): Attache
     detach(): void {
       frame.removeEventListener('load', onLoad);
       unwatchState?.();
+      unwatchExtState();
       supervisor.stop();
       host.close();
     },
