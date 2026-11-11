@@ -28,7 +28,7 @@ S57-ish charts are supported after conversion into tiles (e.g. via [quilt-tiler]
 - [Rust](https://rustup.rs/) + `wasm32-unknown-unknown` target
 - [wasm-pack](https://wasm-bindgen.github.io/wasm-pack/) at the version pinned in the `Justfile` (`wasm_pack_version`, same as CI); `just build-wasm` refuses to run with any other version
 - [just](https://github.com/casey/just)
-- Node.js 24.15+ (or 22.22.2+; CI uses Node 24)
+- Node.js 24.15+ (or 22.22.2+; CI uses Node 26)
 - A running [Signal K server](https://signalk.org/)
 
 ```sh
