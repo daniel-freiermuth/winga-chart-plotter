@@ -139,7 +139,7 @@
   // t 0, l 1 -> middle left
 
   /** Computes the vessel's screen position as viewport fractions in (-1, 1).
-   *  Multiply left by W/2, top by H/2 to get pixel offsets for easeTo/flyTo. */
+   *  Inverse: `followOffsetPx` converts the fractions to easeTo/flyTo pixel offsets. */
   function calcVesselOffset(pos: { longitude: number; latitude: number }): FollowOffset {
     if (!map) return { left: 0, top: 0 };
     const W = mapContainer.clientWidth;
@@ -149,6 +149,12 @@
       left: px.x / W * 2 - 1,
       top:  px.y / H * 2 - 1,
     };
+  }
+
+  /** Inverse of `calcVesselOffset`: converts follow-pin viewport fractions to the
+   *  pixel offset (from the container centre) expected by easeTo/flyTo. */
+  function followOffsetPx(off: FollowOffset): [number, number] {
+    return [off.left * mapContainer.clientWidth / 2, off.top * mapContainer.clientHeight / 2];
   }
 
   function flyToVessel() {
@@ -3109,9 +3115,7 @@
           map.easeTo({ zoom: newZoom, bearing: newBearing, pitch: newPitch, duration: 0 });
           return;
         }
-        const W   = mapContainer.clientWidth;
-        const H   = mapContainer.clientHeight;
-        const offset: [number, number] = [off.left * W / 2, off.top * H / 2];
+        const offset = followOffsetPx(off);
 
         map.easeTo({
           zoom:    newZoom,
@@ -3228,12 +3232,7 @@
     _lastRm = rm;
 
     if (pos && off) {
-      const W = mapContainer.clientWidth;
-      const H = mapContainer.clientHeight;
-      const offset : [number, number] = [
-        off.left * W/2,
-        off.top * H/2,
-      ];
+      const offset = followOffsetPx(off);
       if (!_isInteracting && !_touchActive && (posChanged || rmChanged || rm === 'heading' || rm === 'cog')) {
         const center = map.getCenter();
         const dist = Math.hypot(center.lng - pos.longitude, center.lat - pos.latitude);
@@ -3323,7 +3322,7 @@
           map.easeTo({ zoom: zoomTarget, duration: 0 });
           return;
         }
-        const anchor = { center: [pos.longitude, pos.latitude] as [number, number], offset: [off.left * mapContainer.clientWidth / 2, off.top * mapContainer.clientHeight / 2] as [number, number] };
+        const anchor = { center: [pos.longitude, pos.latitude] as [number, number], offset: followOffsetPx(off) };
         map.easeTo({ zoom: zoomTarget, ...anchor, duration: 0 });
       });
     }
@@ -3348,9 +3347,7 @@
       if (!pos || !map) return;
       const off = followMode.offset;
       if (!off) return; // follow was dropped before this queued event ran
-      const W = mapContainer.clientWidth;
-      const H = mapContainer.clientHeight;
-      const offset: [number, number] = [off.left * W / 2, off.top * H / 2];
+      const offset = followOffsetPx(off);
       reanchoring = true;
       map.easeTo({ center: [pos.longitude, pos.latitude], offset, duration: 0 });
       reanchoring = false;
