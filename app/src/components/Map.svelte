@@ -1008,13 +1008,8 @@
           const rulerColor    = settings.appearance.ruler.color;
           const rulerWidth    = settings.appearance.ruler.width;
 
-          // Hex color → [r, g, b, a] for deck.gl (alpha 0.0–1.0)
-          function hexToRgba(hex: string, alpha: number): [number, number, number, number] {
-            const n = parseInt(hex.replace('#', ''), 16);
-            return [(n >> 16) & 255, (n >> 8) & 255, n & 255, Math.round(alpha * 255)];
-          }
-          const lineRgba   = hexToRgba(rulerColor, 0.87);
-          const handleRgba = hexToRgba(rulerColor, 0.90);
+          const lineRgba   = hexToRgba(rulerColor, 222);
+          const handleRgba = hexToRgba(rulerColor, 230);
 
           interface MidDatum { ruler: Ruler; lon: number; lat: number }
 
