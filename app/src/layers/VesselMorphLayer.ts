@@ -412,6 +412,14 @@ function buildMorphGeometry(outline: MorphSlice, fill: MorphSlice, fillIsIndicat
   };
 }
 
+/**
+ * Build a decoration mark: the hull side never shows a ring (outline == fill there), so
+ * one hull expression feeds both slices; only the icon side has a distinct CPU-grown ring.
+ */
+function buildIndicatorMark(iconOutline: number[], iconFill: number[], hull: AnchoredVerts): MorphGeometry {
+  return buildMorphGeometry({ icon: iconOutline, hull }, { icon: iconFill, hull }, true);
+}
+
 // ---------------------------------------------------------------------------
 // Main shape — arrow icon ↔ hull polygon.
 // ---------------------------------------------------------------------------
@@ -465,10 +473,10 @@ export const MORPH_ARROW: MorphGeometry = buildMorphGeometry(
  * stays a true circle instead of stretching into an ellipse with the hull's aspect ratio.
  * Hull side never shows a ring (outline == fill there); icon side keeps its CPU-grown ring.
  */
-export const MORPH_ANCHOR_DOT: MorphGeometry = buildMorphGeometry(
-  { icon: growCircle(0, 0.65, 0.18, 8), hull: anchoredAt(0, 0.65, circleVerts(0, 0.65, 0.20, 8)) },
-  { icon: circleVerts(0, 0.65, 0.18, 8), hull: anchoredAt(0, 0.65, circleVerts(0, 0.65, 0.20, 8)) },
-  true,
+export const MORPH_ANCHOR_DOT: MorphGeometry = buildIndicatorMark(
+  growCircle(0, 0.65, 0.18, 8),
+  circleVerts(0, 0.65, 0.18, 8),
+  anchoredAt(0, 0.65, circleVerts(0, 0.65, 0.20, 8)),
 );
 
 /**
@@ -476,42 +484,30 @@ export const MORPH_ANCHOR_DOT: MorphGeometry = buildMorphGeometry(
  * hull-local space the ring is circular, which renders as an ellipse proportional to
  * length/beam — intentional, the ellipse still frames the elongated hull clearly.
  */
-export const MORPH_AGROUND_RING: MorphGeometry = buildMorphGeometry(
-  { icon: growArc(0, 0, 1.35, 1.55, 0, 360, 16), hull: unanchored(arcVerts(0, 0, 1.30, 1.50, 0, 360, 16)) },
-  { icon: arcVerts(0, 0, 1.35, 1.55, 0, 360, 16), hull: unanchored(arcVerts(0, 0, 1.30, 1.50, 0, 360, 16)) },
-  true,
+export const MORPH_AGROUND_RING: MorphGeometry = buildIndicatorMark(
+  growArc(0, 0, 1.35, 1.55, 0, 360, 16),
+  arcVerts(0, 0, 1.35, 1.55, 0, 360, 16),
+  unanchored(arcVerts(0, 0, 1.30, 1.50, 0, 360, 16)),
 );
 
 /**
  * Mooring bars — two bars just outside the port/starboard hull edges. Kept fully
  * anisotropic — these are meant to track hull beam/length, not stay an undistorted symbol.
  */
-export const MORPH_MOORING_BARS: MorphGeometry = buildMorphGeometry(
-  {
-    icon: [...growRect(-1.38, -0.55, -1.13, 0.22), ...growRect(1.13, -0.55, 1.38, 0.22)],
-    hull: unanchored([...rectVerts(-1.35, -0.55, -1.10, 0.22), ...rectVerts(1.10, -0.55, 1.35, 0.22)]),
-  },
-  {
-    icon: [...rectVerts(-1.38, -0.55, -1.13, 0.22), ...rectVerts(1.13, -0.55, 1.38, 0.22)],
-    hull: unanchored([...rectVerts(-1.35, -0.55, -1.10, 0.22), ...rectVerts(1.10, -0.55, 1.35, 0.22)]),
-  },
-  true,
+export const MORPH_MOORING_BARS: MorphGeometry = buildIndicatorMark(
+  [...growRect(-1.38, -0.55, -1.13, 0.22), ...growRect(1.13, -0.55, 1.38, 0.22)],
+  [...rectVerts(-1.38, -0.55, -1.13, 0.22), ...rectVerts(1.13, -0.55, 1.38, 0.22)],
+  unanchored([...rectVerts(-1.35, -0.55, -1.10, 0.22), ...rectVerts(1.10, -0.55, 1.35, 0.22)]),
 );
 
 /**
  * Constrained by draught — two full-length bars just outside the hull edges. Kept fully
  * anisotropic, same reasoning as mooring bars.
  */
-export const MORPH_DRAUGHT: MorphGeometry = buildMorphGeometry(
-  {
-    icon: [...growRect(-1.00, -0.80, -0.75, 0.85), ...growRect(0.75, -0.80, 1.00, 0.85)],
-    hull: unanchored([...rectVerts(-1.35, -0.85, -1.10, 0.85), ...rectVerts(1.10, -0.85, 1.35, 0.85)]),
-  },
-  {
-    icon: [...rectVerts(-1.00, -0.80, -0.75, 0.85), ...rectVerts(0.75, -0.80, 1.00, 0.85)],
-    hull: unanchored([...rectVerts(-1.35, -0.85, -1.10, 0.85), ...rectVerts(1.10, -0.85, 1.35, 0.85)]),
-  },
-  true,
+export const MORPH_DRAUGHT: MorphGeometry = buildIndicatorMark(
+  [...growRect(-1.00, -0.80, -0.75, 0.85), ...growRect(0.75, -0.80, 1.00, 0.85)],
+  [...rectVerts(-1.00, -0.80, -0.75, 0.85), ...rectVerts(0.75, -0.80, 1.00, 0.85)],
+  unanchored([...rectVerts(-1.35, -0.85, -1.10, 0.85), ...rectVerts(1.10, -0.85, 1.35, 0.85)]),
 );
 
 /**
@@ -523,54 +519,35 @@ export const MORPH_DRAUGHT: MorphGeometry = buildMorphGeometry(
  * side previously used 14) so the two ends share one vertex topology.
  */
 const FISHING_ARC_STEPS = 18;
-export const MORPH_FISHING_GEAR: MorphGeometry = buildMorphGeometry(
-  {
-    icon: [
-      ...growLineSeg(-0.8, 0.0, -1.5, -0.5, 0.08),
-      ...growLineSeg(0.8, 0.0, 1.5, -0.5, 0.08),
-      ...growArc(0, 0.3, 1.60, 1.78, 242, 118, FISHING_ARC_STEPS),
-    ],
-    hull: unanchored([
-      ...lineSeg(-0.8, 0.0, -1.5, -0.5, 0.055),
-      ...lineSeg(0.8, 0.0, 1.5, -0.5, 0.055),
-      ...arcVerts(0, 0.3, 1.62, 1.78, 242, 118, FISHING_ARC_STEPS),
-    ]),
-  },
-  {
-    icon: [
-      ...lineSeg(-0.8, 0.0, -1.5, -0.5, 0.08),
-      ...lineSeg(0.8, 0.0, 1.5, -0.5, 0.08),
-      ...arcVerts(0, 0.3, 1.60, 1.78, 242, 118, FISHING_ARC_STEPS),
-    ],
-    hull: unanchored([
-      ...lineSeg(-0.8, 0.0, -1.5, -0.5, 0.055),
-      ...lineSeg(0.8, 0.0, 1.5, -0.5, 0.055),
-      ...arcVerts(0, 0.3, 1.62, 1.78, 242, 118, FISHING_ARC_STEPS),
-    ]),
-  },
-  true,
+export const MORPH_FISHING_GEAR: MorphGeometry = buildIndicatorMark(
+  [
+    ...growLineSeg(-0.8, 0.0, -1.5, -0.5, 0.08),
+    ...growLineSeg(0.8, 0.0, 1.5, -0.5, 0.08),
+    ...growArc(0, 0.3, 1.60, 1.78, 242, 118, FISHING_ARC_STEPS),
+  ],
+  [
+    ...lineSeg(-0.8, 0.0, -1.5, -0.5, 0.08),
+    ...lineSeg(0.8, 0.0, 1.5, -0.5, 0.08),
+    ...arcVerts(0, 0.3, 1.60, 1.78, 242, 118, FISHING_ARC_STEPS),
+  ],
+  unanchored([
+    ...lineSeg(-0.8, 0.0, -1.5, -0.5, 0.055),
+    ...lineSeg(0.8, 0.0, 1.5, -0.5, 0.055),
+    ...arcVerts(0, 0.3, 1.62, 1.78, 242, 118, FISHING_ARC_STEPS),
+  ]),
 );
 
 /**
  * Not Under Command — two stacked balls. Each anchored at its own centre (anisotropic);
  * each ball's own radius is isotropic so both stay true circles.
  */
-export const MORPH_NUC: MorphGeometry = buildMorphGeometry(
-  {
-    icon: [...growCircle(0, 0.45, 0.15, 10), ...growCircle(0, 0.10, 0.15, 10)],
-    hull: concatAnchored(
-      anchoredAt(0, 0.45, circleVerts(0, 0.45, 0.10, 10)),
-      anchoredAt(0, 0.12, circleVerts(0, 0.12, 0.10, 10)),
-    ),
-  },
-  {
-    icon: [...circleVerts(0, 0.45, 0.15, 10), ...circleVerts(0, 0.10, 0.15, 10)],
-    hull: concatAnchored(
-      anchoredAt(0, 0.45, circleVerts(0, 0.45, 0.10, 10)),
-      anchoredAt(0, 0.12, circleVerts(0, 0.12, 0.10, 10)),
-    ),
-  },
-  true,
+export const MORPH_NUC: MorphGeometry = buildIndicatorMark(
+  [...growCircle(0, 0.45, 0.15, 10), ...growCircle(0, 0.10, 0.15, 10)],
+  [...circleVerts(0, 0.45, 0.15, 10), ...circleVerts(0, 0.10, 0.15, 10)],
+  concatAnchored(
+    anchoredAt(0, 0.45, circleVerts(0, 0.45, 0.10, 10)),
+    anchoredAt(0, 0.12, circleVerts(0, 0.12, 0.10, 10)),
+  ),
 );
 
 /**
@@ -578,32 +555,22 @@ export const MORPH_NUC: MorphGeometry = buildMorphGeometry(
  * centre (anisotropic); each part's own shape is isotropic so the balls stay circular and
  * the diamond stays an undistorted diamond.
  */
-export const MORPH_RESTRICTED: MorphGeometry = buildMorphGeometry(
-  {
-    icon: [
-      ...growCircle(0, 0.57, 0.13, 10),
-      ...growDiamond(0, 0.15, 0.17, 0.17),
-      ...growCircle(0, -0.28, 0.13, 10),
-    ],
-    hull: concatAnchored(
-      anchoredAt(0, 0.55, circleVerts(0, 0.55, 0.09, 10)),
-      anchoredAt(0, 0.15, diamondVerts(0, 0.15, 0.13, 0.13)),
-      anchoredAt(0, -0.25, circleVerts(0, -0.25, 0.09, 10)),
-    ),
-  },
-  {
-    icon: [
-      ...circleVerts(0, 0.57, 0.13, 10),
-      ...diamondVerts(0, 0.15, 0.17, 0.17),
-      ...circleVerts(0, -0.28, 0.13, 10),
-    ],
-    hull: concatAnchored(
-      anchoredAt(0, 0.55, circleVerts(0, 0.55, 0.09, 10)),
-      anchoredAt(0, 0.15, diamondVerts(0, 0.15, 0.13, 0.13)),
-      anchoredAt(0, -0.25, circleVerts(0, -0.25, 0.09, 10)),
-    ),
-  },
-  true,
+export const MORPH_RESTRICTED: MorphGeometry = buildIndicatorMark(
+  [
+    ...growCircle(0, 0.57, 0.13, 10),
+    ...growDiamond(0, 0.15, 0.17, 0.17),
+    ...growCircle(0, -0.28, 0.13, 10),
+  ],
+  [
+    ...circleVerts(0, 0.57, 0.13, 10),
+    ...diamondVerts(0, 0.15, 0.17, 0.17),
+    ...circleVerts(0, -0.28, 0.13, 10),
+  ],
+  concatAnchored(
+    anchoredAt(0, 0.55, circleVerts(0, 0.55, 0.09, 10)),
+    anchoredAt(0, 0.15, diamondVerts(0, 0.15, 0.13, 0.13)),
+    anchoredAt(0, -0.25, circleVerts(0, -0.25, 0.09, 10)),
+  ),
 );
 
 // ---------------------------------------------------------------------------
