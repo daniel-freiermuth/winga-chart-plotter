@@ -39,7 +39,7 @@ pub type SkWaypointRecord = HashMap<String, SkWaypointEntry>;
 /// elements) are dropped so one foreign resource cannot hide the rest; `Err`
 /// only for a non-object body.
 pub fn parse_waypoint_record(text: &str) -> crate::Result<SkWaypointRecord> {
-    serde_json::from_str(text).map_err(crate::Error::json("Waypoints API"))
+    crate::skrest::resource::parse_resource_record(text, "Waypoints API")
 }
 
 /// Build the POST/PUT body for `resources/waypoints`.

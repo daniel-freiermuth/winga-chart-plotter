@@ -36,6 +36,7 @@ pub mod charts;
 pub mod course;
 pub mod history;
 pub mod notifications;
+mod resource;
 pub mod routes;
 mod urlenc;
 pub mod vessel_info;
