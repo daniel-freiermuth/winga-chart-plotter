@@ -118,7 +118,7 @@ pub type SkRouteRecord = HashMap<String, SkRouteEntry>;
 /// elements) are dropped so one foreign resource cannot hide the rest; `Err`
 /// only for a non-object body.
 pub fn parse_route_record(text: &str) -> crate::Result<SkRouteRecord> {
-    serde_json::from_str(text).map_err(crate::Error::json("Routes API"))
+    crate::skrest::resource::parse_resource_record(text, "Routes API")
 }
 
 /// A route/waypoint vertex as supplied by the route planner UI.
