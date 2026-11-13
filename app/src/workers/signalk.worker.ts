@@ -10,6 +10,7 @@
 // the main thread stays free for tile loading.
 
 import __wbg_init, { SignalKClient } from '../wasm/signalk_chart_core.js';
+import type { SkSelfValue } from '../lib/sk-relay';
 
 type InMessage =
   | { type: 'connect'; url: string; serverGen: number }
@@ -36,7 +37,7 @@ let wasmReady = false;
 // speed, producing a "timelapse" of all intermediate states.
 //
 // Fix: while paused, buffer only the *latest* state and AIS snapshot; discard
-// intermediate ones.  Raw SK deltas (for extension widget subscriptions) are
+// intermediate ones.  Own-vessel SK deltas (for extension widget subscriptions) are
 // dropped entirely — extensions don't need historical replay, and they resume
 // getting fresh deltas within their subscription period anyway.  Status events
 // (connect / disconnect) always go through so the reconnect logic keeps working.
@@ -70,9 +71,9 @@ function onAis(payload: AisWasmPayload): void {
   );
 }
 
-function onRaw(text: string): void {
+function onDelta(values: SkSelfValue[]): void {
   if (paused) return;
-  self.postMessage({ type: 'raw', text });
+  self.postMessage({ type: 'delta', values });
 }
 
 function flushPending(): void {
@@ -113,7 +114,7 @@ self.onmessage = async (e: MessageEvent<InMessage>): Promise<void> => {
         // (A different server — different self in its Hello — starts from empty.)
         client.reconnect(msg.url);
       } else {
-        client = new SignalKClient(msg.url, onState, onStatus, onAis, onRaw);
+        client = new SignalKClient(msg.url, onState, onStatus, onAis, onDelta);
       }
     } catch (err) {
       self.postMessage({ type: 'error', message: String(err) });

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createSkRelay } from './sk-relay';
+import { createSkRelay, type SkSelfValue } from './sk-relay';
 
 /**
  * The relay fans Signal K deltas out to every extension widget. It is shared
@@ -8,11 +8,9 @@ import { createSkRelay } from './sk-relay';
  * reconnect.
  */
 
-function delta(path: string, value: unknown) {
-  return JSON.stringify({
-    context: 'vessels.self',
-    updates: [{ timestamp: '2026-01-01T00:00:00.000Z', values: [{ path, value }] }],
-  });
+/** One delta's own-vessel entries, as the WASM client posts them. */
+function delta(path: string, value: unknown): SkSelfValue[] {
+  return [{ path, value, timestamp: '2026-01-01T00:00:00.000Z' }];
 }
 
 describe('sk relay', () => {
@@ -153,16 +151,17 @@ describe('sk relay', () => {
     expect(seen).toEqual([8]);
   });
 
-  it('ignores malformed or irrelevant payloads', () => {
+  it('delivers each subscribed entry of a batch with its own timestamp, skipping others', () => {
     const relay = createSkRelay(() => { /* noop */ });
-    const seen: unknown[] = [];
-    relay.subscribe('nav.x', (_p, v) => seen.push(v));
+    const seen: unknown[][] = [];
+    relay.subscribe('nav.x', (p, v, ts) => seen.push([p, v, ts]));
 
-    relay.feed('not json');
-    relay.feed(JSON.stringify({ updates: null }));
-    relay.feed(JSON.stringify({ updates: [{ timestamp: 't' }] }));
-    relay.feed(delta('other.path', 1));
+    relay.feed([
+      { path: 'other.path', value: 1, timestamp: 'a' },
+      { path: 'nav.x', value: 2, timestamp: null },
+      { path: 'nav.x', value: 3, timestamp: 'b' },
+    ]);
 
-    expect(seen).toEqual([]);
+    expect(seen).toEqual([['nav.x', 2, null], ['nav.x', 3, 'b']]);
   });
 });

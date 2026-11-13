@@ -1,13 +1,25 @@
 import { randomUuid } from './uuid';
 
-export type SkValueCallback = (path: string, value: unknown, timestamp: string) => void;
+export type SkValueCallback = (path: string, value: unknown, timestamp: string | null) => void;
+
+/**
+ * One accepted own-vessel entry of a Signal K delta, as parsed by the WASM
+ * client (`SelfValue` in `skdata.rs`). `timestamp` is `null` when the update
+ * carried none.
+ */
+export interface SkSelfValue {
+  readonly path: string;
+  readonly value: unknown;
+  readonly timestamp: string | null;
+}
 
 export interface SkRelay {
   /**
-   * Feed a raw SK delta JSON string (forwarded from the worker) into the relay.
-   * Subscribers are notified for any path they have registered.
+   * Feed one delta's own-vessel entries (parsed in WASM, forwarded by the
+   * worker) into the relay.  Subscribers are notified for any path they have
+   * registered.
    */
-  feed(text: string): void;
+  feed(values: readonly SkSelfValue[]): void;
   /** Returns a subscriptionId. */
   subscribe(path: string, cb: SkValueCallback): string;
   unsubscribe(subscriptionId: string): void;
@@ -27,12 +39,6 @@ export interface SkRelay {
    */
   disconnected(): void;
 }
-
-// ── SK delta shape (minimal) ──────────────────────────────────────────────────
-
-interface SkValue { path: string; value: unknown; }
-interface SkUpdate { timestamp: string; values: SkValue[]; }
-interface SkDelta { context?: string; updates?: SkUpdate[]; }
 
 // ── Internal subscription record ──────────────────────────────────────────────
 
@@ -79,29 +85,19 @@ export function createSkRelay(sendUpstream: (msg: string) => void): SkRelay {
 
   // ── Public API ───────────────────────────────────────────────────────────────
 
-  function feed(text: string): void {
-    let delta: SkDelta;
-    try { delta = JSON.parse(text) as SkDelta; }
-    catch { return; }
-
-    if (!delta.updates) return;
-
-    for (const update of delta.updates) {
-      if (!Array.isArray(update.values)) continue;
-      const ts = update.timestamp;
-      for (const entry of update.values) {
-        const ids = pathSubs.get(entry.path);
-        if (!ids) continue;
-        // Snapshot: a callback may subscribe or unsubscribe (e.g. a widget
-        // being torn down mid-delta) while we are fanning out.
-        for (const id of [...ids]) {
-          try {
-            subs.get(id)?.cb(entry.path, entry.value, ts);
-          } catch (err) {
-            // One widget's failure must not cost every later subscriber its
-            // update — posting into a frame that is being destroyed throws.
-            console.warn('[sk-relay] subscriber threw for', entry.path, err);
-          }
+  function feed(values: readonly SkSelfValue[]): void {
+    for (const { path, value, timestamp } of values) {
+      const ids = pathSubs.get(path);
+      if (!ids) continue;
+      // Snapshot: a callback may subscribe or unsubscribe (e.g. a widget
+      // being torn down mid-delta) while we are fanning out.
+      for (const id of [...ids]) {
+        try {
+          subs.get(id)?.cb(path, value, timestamp);
+        } catch (err) {
+          // One widget's failure must not cost every later subscriber its
+          // update — posting into a frame that is being destroyed throws.
+          console.warn('[sk-relay] subscriber threw for', path, err);
         }
       }
     }

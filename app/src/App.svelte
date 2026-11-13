@@ -81,7 +81,7 @@
   import { auth } from './stores/auth.svelte';
   import { connection } from './stores/connection.svelte';
   import { plotterExtensions, type ButtonDef } from './stores/plotterExtensions.svelte';
-  import { createSkRelay } from './lib/sk-relay';
+  import { createSkRelay, type SkSelfValue } from './lib/sk-relay';
   import { type MapControl, type PanelControl } from './lib/plotterext-host';
 
   // Message types received from the SignalK worker.
@@ -95,7 +95,7 @@
     | { type: 'state';  state: WsState; serverGen: number }
     | { type: 'status'; status: number }
     | { type: 'ais';    hot: ArrayBuffer; ids: string[]; cold: AisColdData[] }
-    | { type: 'raw';    text: string }
+    | { type: 'delta';  values: SkSelfValue[] }
     | { type: 'error';  message: string };
 
   // Explicit interface matching Map.svelte's exported functions, so TypeScript
@@ -451,8 +451,8 @@
         if (msg.status === 2) connection.setError(null);
       } else if (msg.type === 'ais') {
         ais.updateBinary(msg.hot, msg.ids, msg.cold);
-      } else if (msg.type === 'raw') {
-        relay.feed(msg.text);
+      } else if (msg.type === 'delta') {
+        relay.feed(msg.values);
       } else {
         connection.setError(`Signal K client failed: ${msg.message}`);
         console.error('[signalk] worker error', msg.message);

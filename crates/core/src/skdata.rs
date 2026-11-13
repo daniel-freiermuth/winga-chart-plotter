@@ -650,11 +650,53 @@ struct PathValue<'a> {
 /// One accepted own-vessel `path`/`value` entry of a delta, with its update's
 /// `timestamp` (absent or non-string → `None`). Handed to the extension relay,
 /// which only fans these out — the delta is never re-parsed outside Rust.
+///
+/// Serializes for the JS boundary: see [`serialize_js_numbers`].
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct SelfValue {
     pub path: String,
+    #[serde(serialize_with = "serialize_js_numbers")]
     pub value: Json,
     pub timestamp: Option<String>,
+}
+
+/// Largest integer a JS `number` holds exactly (`Number.MAX_SAFE_INTEGER`).
+const JS_MAX_SAFE_INTEGER: u64 = (1 << 53) - 1;
+
+/// Serializes `value` with every integer outside ±`Number.MAX_SAFE_INTEGER`
+/// (held by `serde_json` as `u64`/`i64`) emitted as its nearest `f64` — the
+/// number `JSON.parse` gives for it. `serde_wasm_bindgen`'s JSON-compatible
+/// serializer rejects such integers, which would drop the whole entry.
+fn serialize_js_numbers<S: serde::Serializer>(
+    value: &Json,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    JsNumbers(value).serialize(serializer)
+}
+
+/// [`Json`] view used by [`serialize_js_numbers`]; recurses into arrays and
+/// objects (keeping key order) without copying the value.
+struct JsNumbers<'a>(&'a Json);
+
+impl Serialize for JsNumbers<'_> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self.0 {
+            Json::Number(n) => {
+                let magnitude = n.as_i64().map(i64::unsigned_abs).or_else(|| n.as_u64());
+                match n.as_f64() {
+                    Some(nearest) if magnitude.is_some_and(|m| m > JS_MAX_SAFE_INTEGER) => {
+                        serializer.serialize_f64(nearest)
+                    }
+                    _ => n.serialize(serializer),
+                }
+            }
+            Json::Array(items) => serializer.collect_seq(items.iter().map(JsNumbers)),
+            Json::Object(map) => {
+                serializer.collect_map(map.iter().map(|(key, item)| (key, JsNumbers(item))))
+            }
+            Json::Null | Json::Bool(_) | Json::String(_) => self.0.serialize(serializer),
+        }
+    }
 }
 
 /// What [`apply_message`] took from one message.
@@ -1269,6 +1311,63 @@ mod tests {
         )
         .unwrap();
         assert_eq!(own.self_values.len(), 1);
+    }
+
+    #[test]
+    fn self_values_keep_object_keys_in_wire_order() {
+        // Widgets iterating an object's keys must see the server's order, as
+        // they did when the relay used `JSON.parse`; `json!` equality ignores
+        // order, so compare the serialized text.
+        let mut storage = Storage::default();
+        storage.set_self("vessels.urn:mrn:signalk:uuid:self");
+        let applied = apply_message(
+            &mut storage,
+            r#"{"context": "vessels.self", "updates": [{"values": [
+                {"path": "navigation.position",
+                 "value": {"longitude": 10.0, "latitude": 59.0, "altitude": 3}}
+            ]}]}"#,
+        )
+        .unwrap();
+        let [value] = applied.self_values.as_slice() else {
+            panic!("expected one self value, got {:?}", applied.self_values);
+        };
+        assert_eq!(
+            serde_json::to_string(&value.value).unwrap(),
+            r#"{"longitude":10.0,"latitude":59.0,"altitude":3}"#
+        );
+    }
+
+    #[test]
+    fn self_values_serialize_unsafe_integers_as_rounded_numbers() {
+        // `serde_wasm_bindgen`'s JSON-compatible serializer rejects a `u64`/
+        // `i64` outside ±`Number.MAX_SAFE_INTEGER`, which used to drop the
+        // whole entry, siblings included. Such integers must serialize as
+        // the nearest `f64` (what `JSON.parse` yields), nested ones too,
+        // while safe integers stay integers.
+        let mut storage = Storage::default();
+        storage.set_self("vessels.urn:mrn:signalk:uuid:self");
+        let applied = apply_message(
+            &mut storage,
+            r#"{"context": "vessels.self", "updates": [{"values": [
+                {"path": "a", "value": 9007199254740993},
+                {"path": "b", "value": {"ok": 1, "n": [-9007199254740993, 18446744073709551615]}},
+                {"path": "c", "value": [9007199254740991, -9007199254740991, 0.5]}
+            ]}]}"#,
+        )
+        .unwrap();
+        let serialized: Vec<String> = applied
+            .self_values
+            .iter()
+            .map(|v| serde_json::to_string(v).unwrap())
+            .collect();
+        assert_eq!(
+            serialized,
+            [
+                r#"{"path":"a","value":9007199254740992.0,"timestamp":null}"#,
+                r#"{"path":"b","value":{"ok":1,"n":[-9007199254740992.0,1.8446744073709552e+19]},"timestamp":null}"#,
+                r#"{"path":"c","value":[9007199254740991,-9007199254740991,0.5],"timestamp":null}"#,
+            ]
+        );
     }
 
     #[test]
