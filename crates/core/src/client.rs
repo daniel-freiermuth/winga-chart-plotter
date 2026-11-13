@@ -195,17 +195,11 @@ impl SignalKClient {
             // Only forward own-vessel deltas to the extension relay.
             // AIS deltas (context = "vessels.urn:mrn:imo:mmsi:…") must not
             // bleed into widget subscriptions that expect self data.
-            // Pass through when:
-            //   • no context field (rare; some servers omit it for self)
-            //   • literal alias "vessels.self"
-            //   • matches the actual UUID learned from the Hello message
-            let forward = delta_ctx.as_deref().is_none_or(|ctx| {
-                let storage = storage_clone.borrow();
-                ctx == "vessels.self"
-                    || storage
-                        .self_id()
-                        .is_some_and(|sid| ctx == format!("vessels.{sid}"))
-            });
+            // Pass through when there is no context field (rare; some servers
+            // omit it for self) or it addresses the own vessel.
+            let forward = delta_ctx
+                .as_deref()
+                .is_none_or(|ctx| storage_clone.borrow().is_self_context(ctx));
             if forward && let Err(err) = on_delta.call1(&JsValue::NULL, &JsValue::from_str(&text)) {
                 log_err("SignalKClient: on_delta callback threw", &err);
             }

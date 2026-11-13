@@ -254,6 +254,17 @@ impl Storage {
         self.self_id.as_deref()
     }
 
+    /// Whether a delta `context` addresses the own vessel: the literal
+    /// `vessels.self` alias, or `vessels.<id>` for the self id learned from
+    /// the Hello (or inferred from the first delta).
+    pub fn is_self_context(&self, context: &str) -> bool {
+        context == "vessels.self"
+            || self
+                .self_id
+                .as_deref()
+                .is_some_and(|sid| context.strip_prefix("vessels.") == Some(sid))
+    }
+
     fn vessel_mut(&mut self, id: &str) -> &mut Vessel {
         self.vessels
             .entry(id.to_string())
