@@ -3,8 +3,8 @@
 //! Calls back into JS when state or connection status changes.
 
 use crate::skdata::{
-    AIS_SUBSCRIBE_MSG, Storage, VesselState, ais_snapshot_due, apply_message, extract_ais_binary,
-    extract_vessel_state, prune_stale_vessels,
+    AIS_SUBSCRIBE_MSG, SelfValue, Storage, VesselState, ais_snapshot_due, apply_message,
+    extract_ais_binary, extract_vessel_state, prune_stale_vessels,
 };
 use js_sys::Function;
 use serde::Serialize;
@@ -53,9 +53,10 @@ impl SignalKClient {
     /// - `on_status_change`: called with a `ConnectionStatus` enum value when
     ///   the connection status changes.
     /// - `on_ais_update`: called with packed AIS vessel data.
-    /// - `on_delta`: called with the raw WebSocket text of every successfully
-    ///   parsed SK delta, so callers can fan-out individual path/value/timestamp
-    ///   data without opening a second connection.
+    /// - `on_delta`: called once per own-vessel delta with an array of its
+    ///   accepted `{path, value, timestamp}` entries (`timestamp` is `null`
+    ///   when absent), so callers can fan them out without re-parsing the
+    ///   delta or opening a second connection.
     #[wasm_bindgen(constructor)]
     pub fn new(
         url: &str,
@@ -185,30 +186,27 @@ impl SignalKClient {
             let Some(text) = e.data().as_string() else {
                 return;
             };
-            let delta_ctx = match apply_message(&mut storage_clone.borrow_mut(), &text) {
-                Ok(applied) => applied.context,
+            let applied = match apply_message(&mut storage_clone.borrow_mut(), &text) {
+                Ok(applied) => applied,
                 Err(msg) => {
                     log_err("SignalKClient: dropping unparseable message", &msg.into());
                     return;
                 }
             };
-            // Only forward own-vessel deltas to the extension relay.
-            // AIS deltas (context = "vessels.urn:mrn:imo:mmsi:…") must not
-            // bleed into widget subscriptions that expect self data.
-            // Pass through when there is no context field (rare; some servers
-            // omit it for self) or it addresses the own vessel.
-            let forward = delta_ctx
+            // `self_values` holds own-vessel entries only: AIS deltas
+            // (context = "vessels.urn:mrn:imo:mmsi:…") must not bleed into
+            // widget subscriptions that expect self data.
+            post_self_values(&on_delta, &applied.self_values);
+            let own_delta = applied
+                .context
                 .as_deref()
-                .is_none_or(|ctx| storage_clone.borrow().is_self_context(ctx));
-            if forward && let Err(err) = on_delta.call1(&JsValue::NULL, &JsValue::from_str(&text)) {
-                log_err("SignalKClient: on_delta callback threw", &err);
-            }
+                .is_some_and(|ctx| storage_clone.borrow().is_self_context(ctx));
 
             // A reconnect keeps the Storage, including own-vessel data from the
             // previous socket. A new server announcing the same self (e.g. both
             // derive it from the boat's MMSI) would otherwise have that data
             // re-emitted on its Hello, before it reported anything of its own.
-            let own_state_due = !awaiting_own_delta_clone.get() || (delta_ctx.is_some() && forward);
+            let own_state_due = !awaiting_own_delta_clone.get() || own_delta;
             if own_state_due {
                 awaiting_own_delta_clone.set(false);
             }
@@ -372,6 +370,36 @@ fn worker_scope() -> Option<WorkerGlobalScope> {
 fn report_status(status_cb: &Function, status: ConnectionStatus) {
     if let Err(err) = status_cb.call1(&JsValue::NULL, &JsValue::from(status)) {
         log_err("SignalKClient: on_status_change callback threw", &err);
+    }
+}
+
+/// Hand one delta's own-vessel entries to `on_delta` as a single JS array —
+/// one boundary crossing per delta. Integers outside
+/// ±`Number.MAX_SAFE_INTEGER` arrive rounded, as with `JSON.parse` (see
+/// [`SelfValue`]'s `Serialize`). An entry that still fails to serialize is
+/// logged and skipped without costing its siblings; an empty batch is not
+/// posted.
+fn post_self_values(on_delta: &Function, values: &[SelfValue]) {
+    if values.is_empty() {
+        return;
+    }
+    let serializer = serde_wasm_bindgen::Serializer::json_compatible();
+    let batch = js_sys::Array::new();
+    for value in values {
+        match value.serialize(&serializer) {
+            Ok(js) => {
+                batch.push(&js);
+            }
+            Err(err) => log_err(
+                "SignalKClient: dropping unrepresentable self value",
+                &err.into(),
+            ),
+        }
+    }
+    if batch.length() > 0
+        && let Err(err) = on_delta.call1(&JsValue::NULL, &batch)
+    {
+        log_err("SignalKClient: on_delta callback threw", &err);
     }
 }
 
