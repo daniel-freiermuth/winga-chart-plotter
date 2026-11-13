@@ -34,6 +34,14 @@ pub struct SkWaypointEntry {
 
 pub type SkWaypointRecord = HashMap<String, SkWaypointEntry>;
 
+/// Parse a `GET resources/waypoints` body. Waypoints that do not fit
+/// [`SkWaypointEntry`] (e.g. `null` geometry, a position with fewer than two
+/// elements) are dropped so one foreign resource cannot hide the rest; `Err`
+/// only for a non-object body.
+pub fn parse_waypoint_record(text: &str) -> crate::Result<SkWaypointRecord> {
+    serde_json::from_str(text).map_err(crate::Error::json("Waypoints API"))
+}
+
 /// Build the POST/PUT body for `resources/waypoints`.
 pub fn build_waypoint_body(name: &str, lat: f64, lon: f64) -> serde_json::Value {
     let lon = crate::geo::canonical_lon(lon);
@@ -72,7 +80,7 @@ pub fn build_waypoint_update_body(
 
 #[cfg(target_arch = "wasm32")]
 mod wasm {
-    use super::{SkWaypointRecord, build_waypoint_body, build_waypoint_update_body};
+    use super::{build_waypoint_body, build_waypoint_update_body, parse_waypoint_record};
     use crate::skrest::http;
     use crate::skrest::routes::extract_created_id;
     use wasm_bindgen::prelude::*;
@@ -89,8 +97,7 @@ mod wasm {
             "Waypoints API error",
         )
         .await?;
-        let waypoints: SkWaypointRecord =
-            serde_json::from_str(&resp.text).map_err(crate::Error::json("Waypoints API"))?;
+        let waypoints = parse_waypoint_record(&resp.text)?;
         crate::skrest::to_js_object(&waypoints)
     }
 
@@ -275,5 +282,36 @@ mod tests {
             moved["feature"]["geometry"]["coordinates"],
             serde_json::json!([25.0, 60.0])
         );
+    }
+
+    #[test]
+    fn waypoint_record_skips_malformed_entries_and_keeps_valid_ones() {
+        let json = r#"{
+            "good": { "name": "Good", "feature": { "type": "Feature",
+                "geometry": { "type": "Point", "coordinates": [24.94, 60.17] } } },
+            "3d": { "feature": { "type": "Feature",
+                "geometry": { "type": "Point", "coordinates": [1.0, 2.0, 30.0] } } },
+            "bare": { "name": "Bare" },
+            "null_geometry": { "name": "N", "feature": { "type": "Feature", "geometry": null } },
+            "short": { "name": "S", "feature": { "type": "Feature",
+                "geometry": { "type": "Point", "coordinates": [1.0] } } },
+            "not_an_object": "x"
+        }"#;
+        let rec = parse_waypoint_record(json).unwrap();
+        let mut keys: Vec<_> = rec.keys().map(String::as_str).collect();
+        keys.sort_unstable();
+        assert_eq!(keys, ["3d", "bare", "good"]);
+        assert_eq!(
+            rec["3d"].feature.as_ref().unwrap().geometry.coordinates,
+            [1.0, 2.0]
+        );
+        assert!(rec["bare"].feature.is_none());
+    }
+
+    #[test]
+    fn waypoint_record_empty_and_non_object_bodies() {
+        assert!(parse_waypoint_record("{}").unwrap().is_empty());
+        let err = parse_waypoint_record("\"x\"").unwrap_err();
+        assert!(err.to_string().starts_with("Waypoints API parse error: "));
     }
 }

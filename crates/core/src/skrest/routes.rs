@@ -113,6 +113,14 @@ pub struct SkRouteEntry {
 
 pub type SkRouteRecord = HashMap<String, SkRouteEntry>;
 
+/// Parse a `GET resources/routes` body. Routes that do not fit
+/// [`SkRouteEntry`] (e.g. `null` geometry, a position with fewer than two
+/// elements) are dropped so one foreign resource cannot hide the rest; `Err`
+/// only for a non-object body.
+pub fn parse_route_record(text: &str) -> crate::Result<SkRouteRecord> {
+    serde_json::from_str(text).map_err(crate::Error::json("Routes API"))
+}
+
 /// A route/waypoint vertex as supplied by the route planner UI.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct LonLat {
@@ -343,7 +351,7 @@ pub fn extract_created_id(text: &str) -> Option<String> {
 #[cfg(target_arch = "wasm32")]
 mod wasm {
     use super::{
-        LonLat, SkRouteRecord, build_route_body, build_route_update_body, extract_created_id,
+        LonLat, build_route_body, build_route_update_body, extract_created_id, parse_route_record,
     };
     use crate::skrest::http;
     use wasm_bindgen::prelude::*;
@@ -366,8 +374,7 @@ mod wasm {
             Some(ROUTE_REQUEST_TIMEOUT_MS),
         )
         .await?;
-        let routes: SkRouteRecord =
-            serde_json::from_str(&resp.text).map_err(crate::Error::json("Routes API"))?;
+        let routes = parse_route_record(&resp.text)?;
         crate::skrest::to_js_object(&routes)
     }
 
@@ -816,5 +823,34 @@ mod tests {
             routes["b"].feature.as_ref().unwrap().geometry.coordinates,
             vec![[1.0, 2.0], [3.0, 4.0]]
         );
+    }
+
+    #[test]
+    fn route_record_skips_malformed_entries_and_keeps_valid_ones() {
+        let json = r#"{
+            "good": { "name": "Good", "feature": { "type": "Feature",
+                "geometry": { "type": "LineString", "coordinates": [[1.0, 2.0], [3.0, 4.0]] } } },
+            "unnamed": { "feature": { "type": "Feature",
+                "geometry": { "type": "LineString", "coordinates": [[1.0, 2.0], [3.0, 4.0]] } } },
+            "bare": { "name": "Bare", "feature": null },
+            "null_geometry": { "name": "N", "feature": { "type": "Feature", "geometry": null } },
+            "bad_coords": { "name": "B", "feature": { "type": "Feature",
+                "geometry": { "type": "LineString", "coordinates": [[1.0], [3.0, 4.0]] } } },
+            "not_an_object": 42
+        }"#;
+        let rec = parse_route_record(json).unwrap();
+        let mut keys: Vec<_> = rec.keys().map(String::as_str).collect();
+        keys.sort_unstable();
+        assert_eq!(keys, ["bare", "good", "unnamed"]);
+        assert_eq!(rec["good"].name, "Good");
+        assert_eq!(rec["unnamed"].name, "");
+        assert!(rec["bare"].feature.is_none());
+    }
+
+    #[test]
+    fn route_record_empty_and_non_object_bodies() {
+        assert!(parse_route_record("{}").unwrap().is_empty());
+        let err = parse_route_record("[]").unwrap_err();
+        assert!(err.to_string().starts_with("Routes API parse error: "));
     }
 }
