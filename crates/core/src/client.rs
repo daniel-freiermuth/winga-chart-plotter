@@ -186,7 +186,7 @@ impl SignalKClient {
                 return;
             };
             let delta_ctx = match apply_message(&mut storage_clone.borrow_mut(), &text) {
-                Ok(ctx) => ctx,
+                Ok(applied) => applied.context,
                 Err(msg) => {
                     log_err("SignalKClient: dropping unparseable message", &msg.into());
                     return;

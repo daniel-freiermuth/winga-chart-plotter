@@ -36,12 +36,14 @@
 //! it yet (same "don't implement speculatively" rule as the deferred
 //! `V1FullFormat.sources`/full-snapshot support below).
 
-use serde::de::IgnoredAny;
+use serde::de::{self, IgnoredAny, MapAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value as Json;
 use serde_json::value::RawValue;
 use std::borrow::Cow;
 use std::collections::HashMap;
+use std::fmt;
+use std::marker::PhantomData;
 use wasm_bindgen::prelude::*;
 
 #[cfg(target_arch = "wasm32")]
@@ -578,13 +580,58 @@ struct Message<'a> {
     vessels: Lenient<IgnoredAny>,
 }
 
-/// One update block; `$source` applies to every value in it.
-#[derive(Deserialize)]
+/// One update block; `$source` and `timestamp` apply to every value in it.
 struct Update<'a> {
-    #[serde(borrow, default, rename = "$source")]
     source: Lenient<Text<'a>>,
-    #[serde(borrow, default)]
+    timestamp: Lenient<Text<'a>>,
     values: Lenient<Vec<Lenient<PathValue<'a>>>>,
+}
+
+/// Hand-written rather than derived only so that a repeated `timestamp` key
+/// keeps its last occurrence (as `JSON.parse` does) instead of rejecting the
+/// whole update — storage included. A repeated `$source` or `values` is
+/// still rejected, as the derive would: which one applies is ambiguous.
+impl<'de: 'a, 'a> Deserialize<'de> for Update<'a> {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct UpdateVisitor<'a>(PhantomData<Update<'a>>);
+
+        impl<'de: 'a, 'a> Visitor<'de> for UpdateVisitor<'a> {
+            type Value = Update<'a>;
+
+            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str("a Signal K update object")
+            }
+
+            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Update<'a>, A::Error> {
+                let mut source = None;
+                let mut timestamp = Lenient::default();
+                let mut values = None;
+                while let Some(Text(key)) = map.next_key::<Text<'de>>()? {
+                    match &*key {
+                        "$source" if source.is_some() => {
+                            return Err(de::Error::duplicate_field("$source"));
+                        }
+                        "$source" => source = Some(map.next_value()?),
+                        "timestamp" => timestamp = map.next_value()?,
+                        "values" if values.is_some() => {
+                            return Err(de::Error::duplicate_field("values"));
+                        }
+                        "values" => values = Some(map.next_value()?),
+                        _ => {
+                            map.next_value::<IgnoredAny>()?;
+                        }
+                    }
+                }
+                Ok(Update {
+                    source: source.unwrap_or_default(),
+                    timestamp,
+                    values: values.unwrap_or_default(),
+                })
+            }
+        }
+
+        deserializer.deserialize_map(UpdateVisitor(PhantomData))
+    }
 }
 
 #[derive(Deserialize)]
@@ -600,6 +647,29 @@ struct PathValue<'a> {
 // Message application.
 // ---------------------------------------------------------------------------
 
+/// One accepted own-vessel `path`/`value` entry of a delta, with its update's
+/// `timestamp` (absent or non-string → `None`). Handed to the extension relay,
+/// which only fans these out — the delta is never re-parsed outside Rust.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct SelfValue {
+    pub path: String,
+    pub value: Json,
+    pub timestamp: Option<String>,
+}
+
+/// What [`apply_message`] took from one message.
+#[derive(Debug, Default, PartialEq)]
+pub struct Applied {
+    /// Context of a delta applied to storage; `None` for a Hello, a
+    /// context-less delta, or an unrecognised shape.
+    pub context: Option<String>,
+    /// Well-formed entries of an own-vessel delta (see
+    /// [`Storage::is_self_context`]; a context-less delta counts as own, as
+    /// some servers omit the context for self), in wire order. Empty for any
+    /// other message.
+    pub self_values: Vec<SelfValue>,
+}
+
 /// Applies one incoming WebSocket text message (Hello or Delta) to `storage`.
 ///
 /// Returns an error only for text that isn't valid JSON at all. A
@@ -609,42 +679,65 @@ struct PathValue<'a> {
 /// one bad entry in an otherwise-good stream should never stop processing the
 /// rest.
 ///
+/// A context-less delta is not applied to storage (there is no vessel to
+/// attribute it to), but its entries are still returned as `self_values`.
+///
 /// Full snapshots are intentionally unhandled: this client always connects
 /// via `subscribe`, never requests `?full`, so a Full message is never
 /// expected in practice. If one arrives anyway, storage is left untouched
 /// (not reset) — there is nothing to parse it into, and silently discarding
 /// otherwise-good retained state would be worse than ignoring the message.
-pub fn apply_message(storage: &mut Storage, json: &str) -> crate::Result<Option<String>> {
+pub fn apply_message(storage: &mut Storage, json: &str) -> crate::Result<Applied> {
     let raw: &RawValue =
         serde_json::from_str(json).map_err(crate::Error::json("Signal K message"))?;
     // Only an object can be a Hello/Delta. Without this guard serde would
     // also accept the positional (array) form of `Message`.
     if !raw.get().trim_start().starts_with('{') {
-        return Ok(None);
+        return Ok(Applied::default());
     }
     // The text is valid JSON and every field is `Lenient`, so this only fails
     // on a duplicated envelope key — an unrecognised shape, ignored.
     let Ok(message) = serde_json::from_str::<Message>(raw.get()) else {
-        return Ok(None);
+        return Ok(Applied::default());
     };
 
     if let Some(updates) = message.updates.0 {
-        let Some(Text(context)) = message.context.0 else {
-            return Ok(None);
-        };
+        let context = message.context.0.map(|Text(c)| c);
         // Infer self_ from the first delta's context if not yet set by Hello.
         // A proper Hello will already have set it; this is defensive-only.
-        if storage.self_id.is_none() && context.starts_with("vessels.") {
-            storage.set_self(&context);
+        if let Some(ctx) = context.as_deref()
+            && storage.self_id.is_none()
+            && ctx.starts_with("vessels.")
+        {
+            storage.set_self(ctx);
         }
-        let vessel = storage.vessel_mut(strip_vessels_prefix(&context));
+        let is_self = context
+            .as_deref()
+            .is_none_or(|ctx| storage.is_self_context(ctx));
+        let mut vessel = context
+            .as_deref()
+            .map(|ctx| storage.vessel_mut(strip_vessels_prefix(ctx)));
+        let mut self_values = Vec::new();
         for update in updates.into_iter().filter_map(|u| u.0) {
             let source = update.source.0.as_ref().map(|Text(s)| &**s);
+            let timestamp = update.timestamp.0.map(|Text(t)| t);
             for entry in update.values.0.into_iter().flatten().filter_map(|e| e.0) {
-                apply_leaf(vessel, &entry.path, &entry.value, source);
+                if let Some(vessel) = vessel.as_deref_mut() {
+                    apply_leaf(vessel, &entry.path, &entry.value, source);
+                }
+                if is_self {
+                    self_values.push(SelfValue {
+                        path: entry.path.into_owned(),
+                        value: entry.value,
+                        timestamp: timestamp.as_deref().map(str::to_owned),
+                    });
+                }
             }
         }
-        return Ok(Some(context.into_owned()));
+        return Ok(Applied {
+            context: context.map(Cow::into_owned),
+            self_values,
+        });
     }
     if message.vessels.0.is_none()
         && let Some(Text(self_)) = message.self_.0
@@ -652,7 +745,7 @@ pub fn apply_message(storage: &mut Storage, json: &str) -> crate::Result<Option<
         storage.set_self(&self_);
     }
     // Anything else (a Full snapshot, or an unrecognised shape) — see doc comment above.
-    Ok(None)
+    Ok(Applied::default())
 }
 
 // ---------------------------------------------------------------------------
@@ -1010,7 +1103,10 @@ mod tests {
             r#"["vessels.x", []]"#,
         ] {
             let result = apply_message(&mut storage, msg);
-            assert!(matches!(result, Ok(None)), "{msg}: {result:?}");
+            assert!(
+                matches!(&result, Ok(applied) if *applied == Applied::default()),
+                "{msg}: {result:?}"
+            );
         }
         assert!(storage.self_id().is_none());
         assert!(storage.vessels.is_empty());
@@ -1023,7 +1119,7 @@ mod tests {
         // individually; well-formed siblings in the same message still apply.
         let mut storage = Storage::default();
         storage.set_self("vessels.urn:mrn:signalk:uuid:self");
-        let ctx = apply_message(
+        let applied = apply_message(
             &mut storage,
             r#"{
             "context": "vessels.urn:mrn:signalk:uuid:self",
@@ -1040,7 +1136,18 @@ mod tests {
         }"#,
         )
         .unwrap();
-        assert_eq!(ctx.as_deref(), Some("vessels.urn:mrn:signalk:uuid:self"));
+        assert_eq!(
+            applied.context.as_deref(),
+            Some("vessels.urn:mrn:signalk:uuid:self")
+        );
+        assert_eq!(
+            applied.self_values,
+            [SelfValue {
+                path: "navigation.position".into(),
+                value: serde_json::json!({"longitude": 10.0, "latitude": 59.0}),
+                timestamp: None,
+            }]
+        );
         let state = extract_vessel_state(&storage);
         assert_eq!(state.sog, None);
         assert_eq!(state.position, Some(Position::new(10.0, 59.0)));
@@ -1053,7 +1160,7 @@ mod tests {
         // JSON escapes can't be borrowed from the input; they must still be
         // decoded, not dropped.
         let mut storage = Storage::default();
-        let ctx = apply_message(
+        let applied = apply_message(
             &mut storage,
             r#"{
             "context": "vessels.urn:mrn:signalk:uuid:s\u0065lf",
@@ -1063,7 +1170,10 @@ mod tests {
         }"#,
         )
         .unwrap();
-        assert_eq!(ctx.as_deref(), Some("vessels.urn:mrn:signalk:uuid:self"));
+        assert_eq!(
+            applied.context.as_deref(),
+            Some("vessels.urn:mrn:signalk:uuid:self")
+        );
         assert_eq!(storage.self_id(), Some("urn:mrn:signalk:uuid:self"));
         let vessel = &storage.vessels["urn:mrn:signalk:uuid:self"];
         assert_eq!(vessel.nav.position, Some(Position::new(1.0, 2.0)));
@@ -1071,15 +1181,120 @@ mod tests {
     }
 
     #[test]
-    fn delta_without_context_is_ignored() {
+    fn delta_without_context_is_relayed_as_self_but_not_stored() {
         let mut storage = Storage::default();
-        let ctx = apply_message(
+        let applied = apply_message(
             &mut storage,
             r#"{"updates": [{"values": [{"path": "navigation.speedOverGround", "value": 1.0}]}]}"#,
         )
         .unwrap();
-        assert_eq!(ctx, None);
+        assert_eq!(applied.context, None);
+        assert_eq!(
+            applied.self_values,
+            [SelfValue {
+                path: "navigation.speedOverGround".into(),
+                value: serde_json::json!(1.0),
+                timestamp: None,
+            }]
+        );
         assert!(storage.vessels.is_empty());
+    }
+
+    #[test]
+    fn self_values_skip_null_entries_and_keep_update_timestamps() {
+        // Null update/value entries and a non-string timestamp are skipped
+        // individually; well-formed siblings still reach the relay, in order.
+        let mut storage = Storage::default();
+        storage.set_self("vessels.urn:mrn:signalk:uuid:self");
+        let applied = apply_message(
+            &mut storage,
+            r#"{
+            "context": "vessels.self",
+            "updates": [
+                null,
+                {"timestamp": "2026-01-01T00:00:00Z", "values": [
+                    null,
+                    {"path": "environment.wind.speedApparent", "value": 5.5}
+                ]},
+                {"timestamp": 7, "values": [
+                    {"path": "navigation.state", "value": {"mode": "sailing"}}
+                ]}
+            ]
+        }"#,
+        )
+        .unwrap();
+        assert_eq!(
+            applied.self_values,
+            [
+                SelfValue {
+                    path: "environment.wind.speedApparent".into(),
+                    value: serde_json::json!(5.5),
+                    timestamp: Some("2026-01-01T00:00:00Z".into()),
+                },
+                SelfValue {
+                    path: "navigation.state".into(),
+                    value: serde_json::json!({"mode": "sailing"}),
+                    timestamp: None,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn self_values_exclude_other_vessels_and_hello() {
+        let mut storage = Storage::default();
+        let hello = apply_message(
+            &mut storage,
+            r#"{"self": "vessels.urn:mrn:signalk:uuid:self", "version": "2.0.0"}"#,
+        )
+        .unwrap();
+        assert_eq!(hello, Applied::default());
+        let ais = apply_message(
+            &mut storage,
+            r#"{"context": "vessels.urn:mrn:imo:mmsi:230000001", "updates": [
+                {"values": [{"path": "navigation.speedOverGround", "value": 3.0}]}
+            ]}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            ais.context.as_deref(),
+            Some("vessels.urn:mrn:imo:mmsi:230000001")
+        );
+        assert_eq!(ais.self_values, Vec::<SelfValue>::new());
+        let own = apply_message(
+            &mut storage,
+            r#"{"context": "vessels.urn:mrn:signalk:uuid:self", "updates": [
+                {"values": [{"path": "navigation.speedOverGround", "value": 3.0}]}
+            ]}"#,
+        )
+        .unwrap();
+        assert_eq!(own.self_values.len(), 1);
+    }
+
+    #[test]
+    fn duplicated_update_timestamp_keeps_the_last_and_applies_the_update() {
+        // A repeated `timestamp` key must not reject the update (storage and
+        // relay alike); like `JSON.parse`, the last occurrence wins.
+        let mut storage = Storage::default();
+        storage.set_self("vessels.urn:mrn:signalk:uuid:self");
+        let applied = apply_message(
+            &mut storage,
+            r#"{"context": "vessels.urn:mrn:signalk:uuid:self", "updates": [{
+                "timestamp": "2026-01-01T00:00:00Z",
+                "timestamp": "2026-01-01T00:00:01Z",
+                "values": [{"path": "navigation.speedOverGround", "value": 2.5}]
+            }]}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            applied.self_values,
+            [SelfValue {
+                path: "navigation.speedOverGround".into(),
+                value: serde_json::json!(2.5),
+                timestamp: Some("2026-01-01T00:00:01Z".into()),
+            }]
+        );
+        assert_eq!(extract_vessel_state(&storage).sog, Some(2.5));
     }
 
     #[test]
