@@ -18,7 +18,9 @@
  * route), and must not throw away edits made while it was pending. Once the
  * update is on the server, Discard is withheld until navigation is
  * re-anchored: there is nothing left to discard, and discarding would hide a
- * failed re-anchor again.
+ * failed re-anchor again. A save discarded before its update committed still
+ * re-anchors navigation when the update lands late; with no planner left to
+ * show it, a failure there goes to the app-wide command-failure alert.
  */
 import { test, expect, type Page, type Route } from '@playwright/test';
 import { MockSignalK, OWN_ID } from '../mock-signalk/server';
@@ -216,6 +218,100 @@ test('a late failed save does not write its error into a newer session on the sa
 
     await expect(nameInput(page)).toHaveValue(ROUTE_NAME);
     await expect(page.getByText(/Update route failed/)).toHaveCount(0);
+  } finally {
+    await mock.stop();
+  }
+});
+
+test('a discarded save that commits late shows its failed re-anchor outside the closed planner', async ({ page }) => {
+  const mock = new MockSignalK();
+  try {
+    const course = await setup(page, mock);
+    await updateButton(page).click();
+    const update = await heldRequest(course.update, 'route update PUT');
+
+    // Discard while the update is still unanswered: the planner closes.
+    await page.getByRole('button', { name: 'Discard', exact: true }).click();
+    await page.getByRole('button', { name: 'Discard', exact: true }).click();
+    await expect(nameInput(page)).toHaveCount(0);
+
+    // The update reaches the server after all: the edited geometry is live,
+    // so navigation is re-activated on it — and that fails.
+    await update.fulfill(COMPLETED);
+    const activate = await heldRequest(course.activate, 're-activation PUT');
+    await activate.fulfill({ status: 500, contentType: 'application/json', body: '{"message":"mock failure"}' });
+
+    // No planner to carry the error: the crew is told app-wide.
+    await expect(page.getByRole('alert').filter({ hasText: 'Re-activate edited route failed' })).toBeVisible();
+    await expect(nameInput(page)).toHaveCount(0);
+  } finally {
+    await mock.stop();
+  }
+});
+
+test('a discarded save that commits late holds Update in a reopened session until its re-anchor settles', async ({ page }) => {
+  const mock = new MockSignalK();
+  try {
+    const course = await setup(page, mock);
+    await updateButton(page).click();
+    const update = await heldRequest(course.update, 'route update PUT');
+    await page.getByRole('button', { name: 'Discard', exact: true }).click();
+    await page.getByRole('button', { name: 'Discard', exact: true }).click();
+    await expect(nameInput(page)).toHaveCount(0);
+
+    // The discarded update lands late; its re-activation is still in flight.
+    await update.fulfill(COMPLETED);
+    const activate = await heldRequest(course.activate, 're-activation PUT');
+
+    // A newer session on the same route must not re-anchor concurrently: the
+    // older chain's point index (computed on the discarded geometry) could
+    // land last on the newer geometry.
+    await openActiveRouteEditor(page, course.last);
+    await expect(updateButton(page)).toHaveText('…');
+    await expect(updateButton(page)).toBeDisabled();
+
+    await activate.fulfill(COMPLETED);
+    await expect.poll(course.pointIndexPut).toBe(true);
+    await expect(updateButton(page)).toHaveText('Update');
+    await expect(updateButton(page)).toBeEnabled();
+  } finally {
+    await mock.stop();
+  }
+});
+
+test('a discarded save re-anchoring late does not clear the failure of a course command issued after Discard', async ({ page }) => {
+  const mock = new MockSignalK();
+  try {
+    const course = await setup(page, mock);
+    await updateButton(page).click();
+    const update = await heldRequest(course.update, 'route update PUT');
+    await page.getByRole('button', { name: 'Discard', exact: true }).click();
+    await page.getByRole('button', { name: 'Discard', exact: true }).click();
+    await expect(nameInput(page)).toHaveCount(0);
+
+    // After Discard the crew stops navigation from the route popup; the mock
+    // 404s DELETE …/navigation/course, so that command fails visibly.
+    await expect(async () => {
+      await page.keyboard.press('Escape');
+      await clickLonLat(page, VIEW, course.last.lon, course.last.lat);
+      await expect(page.locator('.maplibregl-popup .stop-nav-btn')).toBeEnabled({ timeout: 2000 });
+    }).toPass({ timeout: 30_000 });
+    await page.locator('.maplibregl-popup .stop-nav-btn').click();
+    const clearFailed = page.getByRole('alert').filter({ hasText: 'Clear course failed' });
+    await expect(clearFailed).toBeVisible();
+
+    // The discarded update lands late and re-anchors successfully. The
+    // reopened planner's Update re-enables once that chain has settled.
+    await update.fulfill(COMPLETED);
+    const activate = await heldRequest(course.activate, 're-activation PUT');
+    await openActiveRouteEditor(page, course.last);
+    await expect(updateButton(page)).toHaveText('…');
+    await activate.fulfill(COMPLETED);
+    await expect.poll(course.pointIndexPut).toBe(true);
+    await expect(updateButton(page)).toHaveText('Update');
+
+    // The crew's own failed command is still reported.
+    await expect(clearFailed).toBeVisible();
   } finally {
     await mock.stop();
   }

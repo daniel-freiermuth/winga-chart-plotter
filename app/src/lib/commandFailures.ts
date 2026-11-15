@@ -1,5 +1,6 @@
 /**
- * Outcome tracking for Signal K commands sent from map popups — pure, no runes.
+ * Outcome tracking for Signal K commands sent from map popups (and from a
+ * planner save whose session was discarded) — pure, no runes.
  *
  * Every command names the server state it writes (`target`): the course, or
  * one field of one resource. Commands on the same target supersede each
