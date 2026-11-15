@@ -358,7 +358,8 @@ mod wasm {
 
     /// Abort a request the server never answers (half-up host, black-holed
     /// route): `handleSaveRoute` awaits these, and its Save stays disabled
-    /// until they settle.
+    /// until they settle; map-popup commands only surface a failure once
+    /// their promise settles.
     const ROUTE_REQUEST_TIMEOUT_MS: u32 = 15_000;
 
     /// `GET /signalk/v2/api/resources/routes`
@@ -447,7 +448,15 @@ mod wasm {
         auth_headers: JsValue,
     ) -> Result<(), JsValue> {
         let url = format!("{server_base}/signalk/v2/api/resources/routes/{uuid}");
-        http::fetch_ok("DELETE", &url, &auth_headers, None, "Delete route failed").await?;
+        http::fetch_ok_with_timeout(
+            "DELETE",
+            &url,
+            &auth_headers,
+            None,
+            "Delete route failed",
+            Some(ROUTE_REQUEST_TIMEOUT_MS),
+        )
+        .await?;
         Ok(())
     }
 }
