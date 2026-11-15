@@ -171,6 +171,18 @@ function ghostLayers(
 }
 
 /**
+ * Format a closing TCPA for the CPA label. The tier is chosen from the
+ * whole-minute value actually displayed, so values just below a boundary
+ * never show the next tier's number in the previous tier's unit.
+ */
+function formatTcpa(min: number, capped: boolean): string {
+  const wholeMin = Math.round(min);
+  if (capped || wholeMin >= 120) return '&gt;2h';
+  if (wholeMin < 60) return `${wholeMin.toFixed(0)}min`;
+  return `${(wholeMin / 60).toFixed(1)}h`;
+}
+
+/**
  * Format the CPA mini-label text shown near the selected vessel.
  *
  * @param rustCpa  Rust-computed CPA result
@@ -184,19 +196,13 @@ export function formatCpaLabel(rustCpa: CpaResult, skCpa?: SkCpaInput | null): s
     return `<span class="cpa-opening">↗ ${nm} nm</span>`;
   }
 
-  const min = rustCpa.tcpa_min;
-  const timeStr = rustCpa.isCapped
-    ? '&gt;2h'
-    : min < 60
-      ? `${min.toFixed(0)}min`
-      : `${(min / 60).toFixed(1)}h`;
+  const timeStr = formatTcpa(rustCpa.tcpa_min, rustCpa.isCapped);
 
   let html = `<span class="cpa-value">CPA ${nm}nm / ${timeStr}</span>`;
 
   if (skCpa && skCpa.timeToS > 0) {
     const skNm = (skCpa.distanceM / 1852).toFixed(2);
-    const skMin = skCpa.timeToS / 60;
-    const skTimeStr = skMin >= 120 ? '&gt;2h' : skMin < 60 ? `${skMin.toFixed(0)}min` : `${(skMin / 60).toFixed(1)}h`;
+    const skTimeStr = formatTcpa(skCpa.timeToS / 60, false);
     html += `<br><span class="cpa-sk">SK: ${skNm}nm / ${skTimeStr}</span>`;
   }
 

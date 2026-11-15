@@ -129,6 +129,18 @@ describe('formatCpaLabel', () => {
     expect(formatCpaLabel(closing(90))).toContain('/ 1.5h<');
   });
 
+  it('picks the tier from the rounded minutes so the unit matches the shown number', () => {
+    expect(formatCpaLabel(closing(59.4))).toContain('/ 59min<');
+    expect(formatCpaLabel(closing(59.6))).toContain('/ 1.0h<');
+    expect(formatCpaLabel(closing(119.4))).toContain('/ 2.0h<');
+    expect(formatCpaLabel(closing(119.97))).toContain('/ &gt;2h<');
+  });
+
+  it('applies the same rounded tiers to the SK line', () => {
+    expect(formatCpaLabel(closing(10), { distanceM: 1852, timeToS: 59.6 * 60 })).toContain('SK: 1.00nm / 1.0h<');
+    expect(formatCpaLabel(closing(10), { distanceM: 1852, timeToS: 119.97 * 60 })).toContain('SK: 1.00nm / &gt;2h<');
+  });
+
   it('omits the SK line when SK CPA is absent', () => {
     expect(formatCpaLabel(closing(10), null)).not.toContain('cpa-sk');
     expect(formatCpaLabel(closing(10), undefined)).not.toContain('cpa-sk');
