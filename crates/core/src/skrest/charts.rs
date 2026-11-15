@@ -58,7 +58,8 @@ impl<'de> Deserialize<'de> for ChartKind {
 ///
 /// Signal K's `ChartSchema` declares `identifier`, `name` and `format`
 /// optional; [`parse_chart_record`] backfills the first two from the
-/// resource id so one sparse entry never rejects the whole catalogue.
+/// resource id and skips entries that do not fit this shape, so one sparse
+/// or foreign entry never rejects the whole catalogue.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Chart {
@@ -87,10 +88,12 @@ pub struct Chart {
 
 pub type ChartRecord = HashMap<String, Chart>;
 
-/// Parse a charts response body. Entries without `identifier` take their
-/// resource id; entries without `name` take their identifier.
-pub fn parse_chart_record(text: &str) -> Result<ChartRecord, serde_json::Error> {
-    let mut charts: ChartRecord = serde_json::from_str(text)?;
+/// Parse a charts response body. Entries that do not decode as [`Chart`]
+/// are skipped; entries without `identifier` take their resource id;
+/// entries without `name` take their identifier.
+pub fn parse_chart_record(text: &str) -> crate::Result<ChartRecord> {
+    let mut charts: ChartRecord =
+        crate::skrest::resource::parse_resource_record(text, "Charts API")?;
     for (id, chart) in &mut charts {
         if chart.identifier.is_empty() {
             chart.identifier.clone_from(id);
@@ -210,7 +213,7 @@ mod wasm {
             Some(CHARTS_FETCH_TIMEOUT_MS),
         )
         .await?;
-        let charts = parse_chart_record(&resp.text).map_err(crate::Error::json("Charts API"))?;
+        let charts = parse_chart_record(&resp.text)?;
         crate::skrest::to_js_object(&charts)
     }
 }
@@ -413,6 +416,27 @@ mod tests {
         assert_eq!(b.identifier, "b");
         assert_eq!(b.name, "B");
         assert_eq!(b.format.as_deref(), Some("png"));
+    }
+
+    #[test]
+    fn chart_record_skips_malformed_entries() {
+        // A foreign or malformed chart resource must not hide the rest of
+        // the catalogue.
+        let json = r#"{
+            "good": {"type": "tilelayer", "url": "/t/{z}/{x}/{y}"},
+            "no_type": {"name": "x", "url": "/x"},
+            "short_bounds": {"type": "tilelayer", "bounds": [1, 2, 3]},
+            "null": null
+        }"#;
+        let charts = parse_chart_record(json).unwrap();
+        assert_eq!(charts.len(), 1);
+        assert_eq!(charts["good"].identifier, "good");
+    }
+
+    #[test]
+    fn chart_record_rejects_non_object_body() {
+        let err = parse_chart_record("[1,2]").unwrap_err();
+        assert!(err.to_string().starts_with("Charts API parse error: "));
     }
 
     #[test]
