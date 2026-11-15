@@ -66,13 +66,27 @@
       await routes.load(settings.signalkHttpUrl);
       // Re-anchor navigation to the closest waypoint in the updated route.
       if (wasEditingActiveRoute && editingUuid) {
-        await activateRoute(settings.signalkHttpUrl, editingUuid, reverse, auth.authHeaders);
-        // Same href → route.update() won't refetch; the cached geometry is pre-edit.
-        route.refreshGeometry(settings.signalkHttpUrl);
-        const pointIndex = anchorPoint ? reanchorPointIndex(sentWaypoints, anchorPoint, reverse, gcDistanceNm) : null;
-        if (pointIndex !== null) {
-          await setActiveRoutePointIndex(settings.signalkHttpUrl, pointIndex, auth.authHeaders);
+        const reanchor = (async () => {
+          await activateRoute(settings.signalkHttpUrl, editingUuid, reverse, auth.authHeaders);
+          // Same href → route.update() won't refetch; the cached geometry is pre-edit.
+          route.refreshGeometry(settings.signalkHttpUrl);
+          const pointIndex = anchorPoint ? reanchorPointIndex(sentWaypoints, anchorPoint, reverse, gcDistanceNm) : null;
+          if (pointIndex !== null) {
+            await setActiveRoutePointIndex(settings.signalkHttpUrl, pointIndex, auth.authHeaders);
+          }
+        })();
+        // Discarded before the update committed: the edit is live anyway, but
+        // no planner is left to show a failed re-anchor — alert app-wide.
+        // Still hold Save until it settles: a newer session re-anchoring
+        // concurrently could get this chain's stale point index sent last.
+        // No 'course' target: its intent predates the Discard, so it must not
+        // supersede (hide or clear) course commands the crew issued since.
+        if (routePlanner.session !== session) {
+          runCommand('Re-activate edited route', null, reanchor);
+          await Promise.allSettled([reanchor]);
+          return;
         }
+        await reanchor;
         // Done: close the planner, unless it now holds another session or
         // edits made while this save was pending (not on the server yet).
         const unchanged = routePlanner.name.trim() === sentName
@@ -110,7 +124,7 @@
   import { routes } from './stores/routes.svelte';
   import { auth } from './stores/auth.svelte';
   import { connection } from './stores/connection.svelte';
-  import { commandFailures } from './stores/commandFailures.svelte';
+  import { commandFailures, runCommand } from './stores/commandFailures.svelte';
   import { plotterExtensions, type ButtonDef } from './stores/plotterExtensions.svelte';
   import { createSkRelay, type SkSelfValue } from './lib/sk-relay';
   import { type MapControl, type PanelControl } from './lib/plotterext-host';
@@ -862,7 +876,7 @@
     </div>
   {/if}
 
-  <!-- Rejected course/resource commands from map popups (either pane) -->
+  <!-- Rejected course/resource commands from map popups (either pane) and from discarded planner saves -->
   {#if commandFailures.list.length > 0}
     <div class="map-command-errors">
       {#each commandFailures.list as failure (failure.target)}
