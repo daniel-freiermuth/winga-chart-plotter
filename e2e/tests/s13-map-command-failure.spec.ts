@@ -81,6 +81,32 @@ test('a rejected "Navigate here" is shown on the map', async ({ page }) => {
   }
 });
 
+test('a "Navigate here" the server never answers is shown on the map', async ({ page }) => {
+  const sk = new MockSignalK();
+  const port = await sk.start();
+  try {
+    // Half-open connection / stalled server: the PUT is received but never answered.
+    let held = false;
+    await page.route(`**${DESTINATION_PATH}`, async (route) => {
+      if (route.request().method() === 'OPTIONS') {
+        await route.fulfill({ status: 204, headers: CORS });
+        return;
+      }
+      held = true; // Never fulfilled, aborted or continued.
+    });
+    await bootLoggedIn(page, port);
+
+    await openWaterPopup(page);
+    await page.locator('.maplibregl-popup .navigate-here-btn').click();
+
+    await expect.poll(() => held).toBe(true);
+    await expect(commandAlert(page)).toBeVisible({ timeout: 25_000 });
+    await expect(commandAlert(page)).toContainText('Navigate here');
+  } finally {
+    await sk.stop();
+  }
+});
+
 test('a later successful "Navigate here" clears the previous failure', async ({ page }) => {
   const sk = new MockSignalK();
   const port = await sk.start();

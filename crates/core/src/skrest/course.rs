@@ -30,7 +30,8 @@ mod wasm {
 
     /// Abort a request the server never answers (half-up host, black-holed
     /// route): `handleSaveRoute` awaits route (re)activation, and its Save
-    /// stays disabled until it settles.
+    /// stays disabled until it settles; map-popup commands only surface a
+    /// failure once their promise settles.
     const ROUTE_COURSE_TIMEOUT_MS: u32 = 15_000;
 
     /// Set the active course destination to a single point. Replaces any
@@ -46,12 +47,13 @@ mod wasm {
         let url =
             format!("{server_base}/signalk/v2/api/vessels/self/navigation/course/destination");
         let body = destination_body(latitude, longitude).to_string();
-        http::fetch_ok(
+        http::fetch_ok_with_timeout(
             "PUT",
             &url,
             &auth_headers,
             Some(&body),
             "Navigate to point failed",
+            Some(ROUTE_COURSE_TIMEOUT_MS),
         )
         .await?;
         Ok(())
@@ -62,7 +64,15 @@ mod wasm {
     #[wasm_bindgen(js_name = clearCourse)]
     pub async fn clear_course(server_base: String, auth_headers: JsValue) -> Result<(), JsValue> {
         let url = format!("{server_base}/signalk/v2/api/vessels/self/navigation/course");
-        http::fetch_ok("DELETE", &url, &auth_headers, None, "Clear course failed").await?;
+        http::fetch_ok_with_timeout(
+            "DELETE",
+            &url,
+            &auth_headers,
+            None,
+            "Clear course failed",
+            Some(ROUTE_COURSE_TIMEOUT_MS),
+        )
+        .await?;
         Ok(())
     }
 

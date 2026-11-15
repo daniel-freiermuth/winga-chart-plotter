@@ -85,6 +85,11 @@ mod wasm {
     use crate::skrest::routes::extract_created_id;
     use wasm_bindgen::prelude::*;
 
+    /// Abort a request the server never answers (half-up host, black-holed
+    /// route): map-popup commands only surface a failure once their promise
+    /// settles.
+    const WAYPOINT_REQUEST_TIMEOUT_MS: u32 = 15_000;
+
     /// `GET /signalk/v2/api/resources/waypoints`
     #[wasm_bindgen(js_name = fetchAllWaypoints)]
     pub async fn fetch_all_waypoints(server_base: String) -> Result<JsValue, JsValue> {
@@ -113,12 +118,13 @@ mod wasm {
     ) -> Result<Option<String>, JsValue> {
         let url = format!("{server_base}/signalk/v2/api/resources/waypoints");
         let body = build_waypoint_body(&name, lat, lon).to_string();
-        let resp = http::fetch_ok(
+        let resp = http::fetch_ok_with_timeout(
             "POST",
             &url,
             &auth_headers,
             Some(&body),
             "Save waypoint failed",
+            Some(WAYPOINT_REQUEST_TIMEOUT_MS),
         )
         .await?;
         Ok(extract_created_id(&resp.text))
@@ -138,17 +144,25 @@ mod wasm {
         let url = format!("{server_base}/signalk/v2/api/resources/waypoints/{uuid}");
         // PUT replaces the whole resource: start from the server's copy so
         // fields this app does not edit survive.
-        let current =
-            http::fetch_ok("GET", &url, &auth_headers, None, "Update waypoint failed").await?;
+        let current = http::fetch_ok_with_timeout(
+            "GET",
+            &url,
+            &auth_headers,
+            None,
+            "Update waypoint failed",
+            Some(WAYPOINT_REQUEST_TIMEOUT_MS),
+        )
+        .await?;
         let existing: serde_json::Value =
             serde_json::from_str(&current.text).map_err(crate::Error::json("Update waypoint"))?;
         let body = build_waypoint_update_body(&existing, &name, lat, lon).to_string();
-        http::fetch_ok(
+        http::fetch_ok_with_timeout(
             "PUT",
             &url,
             &auth_headers,
             Some(&body),
             "Update waypoint failed",
+            Some(WAYPOINT_REQUEST_TIMEOUT_MS),
         )
         .await?;
         Ok(())
@@ -162,12 +176,13 @@ mod wasm {
         auth_headers: JsValue,
     ) -> Result<(), JsValue> {
         let url = format!("{server_base}/signalk/v2/api/resources/waypoints/{uuid}");
-        http::fetch_ok(
+        http::fetch_ok_with_timeout(
             "DELETE",
             &url,
             &auth_headers,
             None,
             "Delete waypoint failed",
+            Some(WAYPOINT_REQUEST_TIMEOUT_MS),
         )
         .await?;
         Ok(())
