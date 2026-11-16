@@ -1,6 +1,5 @@
 /**
- * VesselIconLayer — custom deck.gl Layer that renders a fixed-pixel vessel icon with GPU
- * dead reckoning.
+ * VesselIconLayer — custom deck.gl Layer that renders the fixed-pixel, north-up MOB icon.
  *
  * MOB/AIS-SART ONLY. Every other nav-state (the plain arrow, anchored, moored, aground,
  * fishing, NUC, restricted, draught) is now rendered by VesselMorphLayer, which morphs
@@ -10,8 +9,8 @@
  * screen size, exactly like a real chart plotter's MOB marker — so it keeps this simpler,
  * single-shape layer with no morph.
  *
- * Per-frame cost: only the `timeSinceUpload` and `zoom` uniforms change.
- * GPU buffers (position, heading, sog, cog, …) are uploaded once per AIS tick.
+ * The marker is stationary: no dead reckoning, no heading, no animation loop. GPU buffers
+ * (position, color) are uploaded once per AIS tick.
  */
 
 import { Layer, project32, picking } from '@deck.gl/core';
@@ -26,9 +25,6 @@ import { RING_MARGIN, circleVerts, growCircle, growLineSeg, growRect, lineSeg, r
 
 const uniformBlock = /* glsl */`\
 uniform aisIconUniforms {
-  float timeSinceUpload;
-  float drCapSeconds;
-  float zoom;
   float settingsIconSize;
   float opacity;
 } aisIcon;
@@ -39,9 +35,6 @@ const aisIconUniformModule = {
   vs: uniformBlock,
   fs: uniformBlock,
   uniformTypes: {
-    timeSinceUpload: 'f32',
-    drCapSeconds: 'f32',
-    zoom: 'f32',
     settingsIconSize: 'f32',
     opacity: 'f32',
   } as const,
@@ -66,42 +59,16 @@ in float aIsIndicator;
 // buildIconGeometry doc comment for why that would displace it).
 in float aIsIndicatorShape;
 
-// Per-instance vessel data
+// Per-instance MOB data
 in vec3 instancePositions;
 in vec3 instancePositions64Low;
-in float instanceSog;        // m/s
-in float instanceCog;        // radians, north = 0, CW positive
-in float instanceHeading;    // radians
-in float instanceRot;        // rad/s
-in float instanceAgeAtUpload;// seconds already elapsed when data was uploaded
-in float instanceLength;     // metres; always 0 for MOB → always full opacity, never fades
-in vec4 instanceColor;       // base RGBA [0..1]; alpha encodes ghost/confirmed opacity
+in vec4 instanceColor;       // base RGBA [0..1]
 
 out vec4 vColor;
 
 void main(void) {
   // ------------------------------------------------------------------
-  // 1. Dead-reckoning time delta
-  // ------------------------------------------------------------------
-  float dt = min(instanceAgeAtUpload + aisIcon.timeSinceUpload, aisIcon.drCapSeconds);
-
-  // ------------------------------------------------------------------
-  // 2. Dead-reckoned ENU offset from stored position (metres)
-  //    Arc integral when ROT ≠ 0; straight line otherwise.
-  // ------------------------------------------------------------------
-  float dEast, dNorth;
-  if (abs(instanceRot) > 1e-4) {
-    float cogEnd = instanceCog + instanceRot * dt;
-    float R = instanceSog / instanceRot;
-    dEast  = R * (cos(instanceCog) - cos(cogEnd));
-    dNorth = R * (sin(cogEnd)      - sin(instanceCog));
-  } else {
-    dEast  = instanceSog * dt * sin(instanceCog);
-    dNorth = instanceSog * dt * cos(instanceCog);
-  }
-
-  // ------------------------------------------------------------------
-  // 3. Scale icon vertex to pixel size.
+  // 1. Scale icon vertex to pixel size.
   //    Outline pass is slightly larger than fill pass (white ring effect).
   //    Indicator/overlay shapes are pinned to fillSize regardless of pass — their own
   //    outline-pass vertices already encode a small ring grown around their own centroid
@@ -117,50 +84,37 @@ void main(void) {
   float localY = positions.y * halfCommon;
 
   // ------------------------------------------------------------------
-  // 4. Rotate icon from local space (bow = +Y) into ENU-aligned common space
-  //    using the dead-reckoned heading.
-  // ------------------------------------------------------------------
-  float heading = instanceHeading + instanceRot * dt;
-  float sinH = sin(heading);
-  float cosH = cos(heading);
-  float iconCommonX = localY * sinH + localX * cosH;  // East component
-  float iconCommonY = localY * cosH - localX * sinH;  // North component
-
-  // ------------------------------------------------------------------
-  // 5. Total offset: DR movement (metres → common) + rotated icon corner
-  //
-  // geometry.worldPosition must be set BEFORE project_size() for the Mercator latitude
-  // correction (1/cos(lat)) to use the vessel's actual latitude.
+  // 2. Offset: the icon corner in ENU-aligned common space. The marker is north-up,
+  //    so local space (+Y = north, +X = east) is used unrotated.
   //
   // In globe mode, project_position_to_clipspace applies orientation matrix
-  // mat3(-East, -North, up), which inverts both ENU axes. Negate the total
+  // mat3(-East, -North, up), which inverts both ENU axes. Negate the
   // offset here so the net result after the orientation matrix is correct.
   // In mercator mode project_needs_rotation() returns false and no rotation
   // is applied, so the un-negated offset is used as-is.
   // ------------------------------------------------------------------
   geometry.worldPosition = instancePositions;
-  vec3 drCommon    = project_size(vec3(dEast, dNorth, 0.0));
-  vec3 totalOffset = drCommon + vec3(iconCommonX, iconCommonY, 0.0);
+  vec3 totalOffset = vec3(localX, localY, 0.0);
   if (project.projectionMode == PROJECTION_MODE_GLOBE) {
     totalOffset = -totalOffset;
   }
 
   // ------------------------------------------------------------------
-  // 6. Project anchor + offset to clip space
+  // 3. Project anchor + offset to clip space
   // ------------------------------------------------------------------
   vec4 worldPos;
   gl_Position = project_position_to_clipspace(instancePositions, instancePositions64Low, totalOffset, worldPos);
   DECKGL_FILTER_GL_POSITION(gl_Position, geometry);
 
   // ------------------------------------------------------------------
-  // 6b. Far hemisphere (globe mode): handled by GlobeView's default backface
+  // 3b. Far hemisphere (globe mode): handled by GlobeView's default backface
   //     culling — all triangles are CCW by construction (ccwTriangleList,
   //     pinned by geometryWinding.test.ts). Mirrors VesselMorphLayer.
   // ------------------------------------------------------------------
 
   // ------------------------------------------------------------------
-  // 7. instanceLength is always 0 for MOB, so there is no cross-fade here — the icon is
-  //    always rendered at full alpha, exactly like a real chart plotter's MOB marker.
+  // 4. MOB has no hull and no cross-fade — the icon is always rendered at full alpha,
+  //    exactly like a real chart plotter's MOB marker.
   // ------------------------------------------------------------------
   float iconAlpha = instanceColor.a * aisIcon.opacity;
 
@@ -316,29 +270,11 @@ export const MOB_GEOMETRY: IconGeometry = (() => {
 // Props
 // ---------------------------------------------------------------------------
 
-export interface VesselIconLayerProps<DataT = number> extends LayerProps {
-  data: DataT[] | { length: number };
-  getPosition?:    Accessor<DataT, [number, number] | [number, number, number]>;
-  getSog?:         Accessor<DataT, number>;
-  getCog?:         Accessor<DataT, number>;
-  getHeading?:     Accessor<DataT, number>;
-  getRot?:         Accessor<DataT, number>;
-  getAgeAtUpload?: Accessor<DataT, number>;
-  /** Vessel length in metres. Always 0 for MOB — no hull, no cross-fade, always full opacity. */
-  getLength?:      Accessor<DataT, number>;
-  getColor?:       Accessor<DataT, [number, number, number, number]>;
-  /** Custom icon geometry. Defaults to MOB_GEOMETRY (the only geometry this layer renders). */
-  iconGeometry?: IconGeometry;
-  /** Unix ms timestamp of the last data upload. draw() computes elapsed from this. */
-  uploadTimestamp?: number;
-  /** If true, draw() calls setNeedsRedraw() to keep animating each frame. */
-  selfAnimate?: boolean;
-  /** Minimum ms between animation redraws when selfAnimate is true. 0 = every frame. */
-  animationIntervalMs?: number;
+export interface VesselIconLayerProps extends LayerProps {
+  data: number[] | { length: number };
+  getPosition?:    Accessor<number, [number, number] | [number, number, number]>;
+  getColor?:       Accessor<number, [number, number, number, number]>;
   settingsIconSize?: number;
-  opacity?:         number;
-  /** DR cap in seconds — ghost icon won't extrapolate beyond this. Defaults to cogLengthMinutes*60. */
-  drCapSeconds?: number;
 }
 
 const defaultProps: DefaultProps<VesselIconLayerProps> = {
@@ -346,30 +282,17 @@ const defaultProps: DefaultProps<VesselIconLayerProps> = {
   // load-bearing (it hides the far hemisphere); geometry must stay CCW.
   // See triangleWinding.ts and geometryWinding.test.ts.
   getPosition:    { type: 'accessor', value: [0, 0] },
-  getSog:         { type: 'accessor', value: 0 },
-  getCog:         { type: 'accessor', value: 0 },
-  getHeading:     { type: 'accessor', value: 0 },
-  getRot:         { type: 'accessor', value: 0 },
-  getAgeAtUpload: { type: 'accessor', value: 0 },
-  getLength:      { type: 'accessor', value: 0 },
   getColor:       { type: 'accessor', value: [255, 255, 255, 255] },
-  uploadTimestamp:  0,
-  selfAnimate:         false,
-  animationIntervalMs: 0,
   settingsIconSize: 1,
-  opacity:          1,
-  drCapSeconds:     180,
 };
 
 // ---------------------------------------------------------------------------
 // Layer class
 // ---------------------------------------------------------------------------
 
-export class VesselIconLayer<DataT = number> extends Layer<VesselIconLayerProps<DataT>> {
+export class VesselIconLayer extends Layer<VesselIconLayerProps> {
   static override layerName = 'VesselIconLayer';
   static override defaultProps = defaultProps;
-
-  private _animateTimerId: ReturnType<typeof setTimeout> | null = null;
 
   override getShaders() {
   // eslint-disable-next-line @typescript-eslint/no-unsafe-return
@@ -390,12 +313,6 @@ export class VesselIconLayer<DataT = number> extends Layer<VesselIconLayerProps<
         accessor: 'getPosition',
         defaultValue: [0, 0, 0],
       },
-      instanceSog:         { size: 1, accessor: 'getSog',         defaultValue: 0 },
-      instanceCog:         { size: 1, accessor: 'getCog',         defaultValue: 0 },
-      instanceHeading:     { size: 1, accessor: 'getHeading',     defaultValue: 0 },
-      instanceRot:         { size: 1, accessor: 'getRot',         defaultValue: 0 },
-      instanceAgeAtUpload: { size: 1, accessor: 'getAgeAtUpload', defaultValue: 0 },
-      instanceLength:      { size: 1, accessor: 'getLength',      defaultValue: 0 },
       instanceColor: {
         size: 4,
         type: 'unorm8',
@@ -407,9 +324,7 @@ export class VesselIconLayer<DataT = number> extends Layer<VesselIconLayerProps<
 
   override updateState(params: UpdateParameters<this>) {
     super.updateState(params);
-    const needsModelRebuild = params.changeFlags.extensionsChanged ||
-      params.props.iconGeometry !== params.oldProps.iconGeometry;
-    if (needsModelRebuild) {
+    if (params.changeFlags.extensionsChanged) {
       (this.state['model'] as Model | undefined)?.destroy();
       this.state['model'] = this._getModel();
       this.getAttributeManager()!.invalidateAll();
@@ -420,49 +335,18 @@ export class VesselIconLayer<DataT = number> extends Layer<VesselIconLayerProps<
   }
 
   override draw({ uniforms: _uniforms }: { uniforms: Record<string, unknown> }) {
-    const { uploadTimestamp, selfAnimate, animationIntervalMs, settingsIconSize, opacity, drCapSeconds } = this.props;
-    const now = Date.now();
-    const timeSinceUpload = selfAnimate
-      ? Math.max(0, (now - (uploadTimestamp ?? 0)) / 1000)
-      : 0;
-    // Read zoom from the live viewport — no prop needed, no layer rebuild on zoom change.
-    const zoom = this.context.viewport.zoom;
+    const { settingsIconSize, opacity } = this.props;
     const model = this.state['model'] as Model;
     model.shaderInputs.setProps({
       aisIcon: {
-        timeSinceUpload,
-        drCapSeconds: drCapSeconds ?? 180,
-        zoom,
         settingsIconSize: settingsIconSize ?? 1,
-        opacity:         opacity,
+        opacity,
       },
     });
     model.draw(this.context.renderPass);
-    if (selfAnimate) {
-      const intervalMs = animationIntervalMs ?? 0;
-      if (intervalMs <= 17) {
-        // Native fps: request next frame immediately.
-        this.setNeedsRedraw();
-      } else {
-        // Throttled: schedule next redraw after interval, then let rAF fire draw().
-        this._animateTimerId ??= setTimeout(() => {
-          this._animateTimerId = null;
-          this.setNeedsRedraw();
-        }, intervalMs);
-      }
-    }
-  }
-
-  override finalizeState(context: Parameters<Layer['finalizeState']>[0]) {
-    if (this._animateTimerId !== null) {
-      clearTimeout(this._animateTimerId);
-      this._animateTimerId = null;
-    }
-    super.finalizeState(context);
   }
 
   _getModel() {
-    const geo = this.props.iconGeometry ?? MOB_GEOMETRY;
     // eslint-disable-next-line @typescript-eslint/no-unsafe-argument -- deck.gl's getShaders() returns any
     return new Model(this.context.device, {
       ...this.getShaders(),
@@ -471,12 +355,12 @@ export class VesselIconLayer<DataT = number> extends Layer<VesselIconLayerProps<
       geometry: new Geometry({
         topology: 'triangle-list',
         attributes: {
-          positions:        { size: 3, value: geo.positions },
-          aIsOutline:       { size: 1, value: geo.isOutline },
-          aIsIndicator:     { size: 1, value: geo.isIndicator },
-          aIsIndicatorShape:{ size: 1, value: geo.isIndicatorShape },
+          positions:        { size: 3, value: MOB_GEOMETRY.positions },
+          aIsOutline:       { size: 1, value: MOB_GEOMETRY.isOutline },
+          aIsIndicator:     { size: 1, value: MOB_GEOMETRY.isIndicator },
+          aIsIndicatorShape:{ size: 1, value: MOB_GEOMETRY.isIndicatorShape },
         },
-        vertexCount: geo.vertexCount,
+        vertexCount: MOB_GEOMETRY.vertexCount,
       }),
       isInstanced: true,
     });

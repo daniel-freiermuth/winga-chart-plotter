@@ -14,7 +14,7 @@ import {
   MORPH_FISHING_GEAR, MORPH_NUC, MORPH_RESTRICTED, MORPH_DRAUGHT,
   type MorphGeometry,
 } from '../layers/VesselMorphLayer';
-import { VesselIconLayer, MOB_GEOMETRY } from '../layers/VesselIconLayer';
+import { VesselIconLayer } from '../layers/VesselIconLayer';
 import { extrapolatePos } from './deadReckoning';
 import { hexToRgba, lineStyleDash } from './mapStyles';
 
@@ -209,25 +209,15 @@ export function buildAisLayers(
 
   // MOB / AIS-SART — nav state 14. Replaces the arrow with a red swimmer icon. No hull
   // counterpart exists (a person overboard / SART beacon has no AIS length/beam) — it
-  // stays icon-only forever via the plain VesselIconLayer (getLength = 0 disables any
-  // morph/cross-fade attempt). getHeading = 0 keeps the swimmer north-up (no meaningful
-  // orientation for a beacon).
+  // stays icon-only forever via the plain VesselIconLayer, north-up (no meaningful
+  // orientation for a beacon) and stationary (no dead reckoning).
   const mobIconLayer = sarIndices.length > 0
     ? new VesselIconLayer({
         id: 'ais-mob-icon',
         data: sarIndices,
         getPosition:    getPos,
-        getSog:         () => 0,
-        getCog:         () => 0,
-        getHeading:     () => 0,
-        getRot:         () => 0,
-        getAgeAtUpload: () => 0,
-        getLength:      () => 0,
         getColor:       () => [255, 40, 40, 220] as [number, number, number, number],
-        uploadTimestamp,
-        selfAnimate: false,
         settingsIconSize,
-        iconGeometry: MOB_GEOMETRY,
         pickable: true,
       })
     : null;
