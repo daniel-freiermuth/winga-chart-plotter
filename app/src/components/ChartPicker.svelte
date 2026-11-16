@@ -164,9 +164,9 @@
 
   function clickWmts(chartId: string, layerId: string) {
     // No-op if this exact layer is already active (never deactivates).
-    if (chartSel.selected.has(chartId) && chartSel.getLayerSel(chartId) === layerId) return;
+    if (chartSel.selected === chartId && chartSel.getLayerSel(chartId) === layerId) return;
     baseLayers.deselectAll();
-    if (!chartSel.selected.has(chartId)) chartSel.toggle(chartId);
+    chartSel.toggle(chartId);
     // Layer selection is pane state. The tile URL is derived synchronously
     // from the catalog's resolved capabilities (already loaded — the layer
     // cards come from them), so the switch renders in the same turn — no
@@ -350,8 +350,8 @@
           {#if item.kind === 'base'}
             <button
               class="card"
-              class:selected={baseLayers.enabled.has(item.id)}
-              aria-pressed={baseLayers.enabled.has(item.id)}
+              class:selected={baseLayers.enabled === item.id}
+              aria-pressed={baseLayers.enabled === item.id}
               onclick={() => { chartSel.deselectAll(); baseLayers.toggle(item.id); close(); }}
             >
               <div class="card-preview">
@@ -367,8 +367,8 @@
               <!-- Vector / style-based -->
               <button
                 class="card"
-                class:selected={chartSel.selected.has(item.id)}
-                aria-pressed={chartSel.selected.has(item.id)}
+                class:selected={chartSel.selected === item.id}
+                aria-pressed={chartSel.selected === item.id}
                 onclick={() => { baseLayers.deselectAll(); chartSel.toggle(item.id); close(); }}
               >
                 <div class="card-preview">
@@ -380,8 +380,8 @@
               <!-- Raster tile chart (tilelayer, WMS, pbf …) -->
               <button
                 class="card"
-                class:selected={chartSel.selected.has(item.id)}
-                aria-pressed={chartSel.selected.has(item.id)}
+                class:selected={chartSel.selected === item.id}
+                aria-pressed={chartSel.selected === item.id}
                 onclick={() => { baseLayers.deselectAll(); chartSel.toggle(item.id); close(); }}
               >
                 <div class="card-preview">
@@ -395,7 +395,7 @@
           {/if}
           {#if item.kind === 'wmts'}
             {#if item.wmtsLayer.tileUrl}
-              {@const isActive = chartSel.selected.has(item.chartId) && chartSel.getLayerSel(item.chartId) === item.wmtsLayer.id}
+              {@const isActive = chartSel.selected === item.chartId && chartSel.getLayerSel(item.chartId) === item.wmtsLayer.id}
               <button
                 class="card"
                 class:selected={isActive}

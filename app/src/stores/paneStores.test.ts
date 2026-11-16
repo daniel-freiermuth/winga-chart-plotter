@@ -196,55 +196,55 @@ describe('createVisibilityStore', () => {
 
 describe('createBaseLayersStore', () => {
   it('defaults to the first known layer on fresh install', () => {
-    expect([...createBaseLayersStore().enabled]).toEqual(['osm']);
+    expect(createBaseLayersStore().enabled).toBe('osm');
   });
 
   it('toggle is exclusive and persists', () => {
     const b = createBaseLayersStore();
     b.toggle('watercolor');
-    expect([...b.enabled]).toEqual(['watercolor']);
-    expect([...createBaseLayersStore().enabled]).toEqual(['watercolor']);
+    expect(b.enabled).toBe('watercolor');
+    expect(createBaseLayersStore().enabled).toBe('watercolor');
   });
 
   it('deselectAll persists the deliberate empty state', () => {
     const b = createBaseLayersStore();
     b.deselectAll();
-    expect([...createBaseLayersStore().enabled]).toEqual([]);
+    expect(createBaseLayersStore().enabled).toBeNull();
   });
 
   it('namespaces by lsSuffix', () => {
     createBaseLayersStore().toggle('watercolor');
-    expect([...createBaseLayersStore(':1').enabled]).toEqual(['osm']);
+    expect(createBaseLayersStore(':1').enabled).toBe('osm');
   });
 });
 
 describe('createChartSelStore', () => {
   it('starts empty and toggle is exclusive', () => {
     const c = createChartSelStore();
-    expect(c.selected.size).toBe(0);
+    expect(c.selected).toBeNull();
     c.toggle('a');
     c.toggle('b');
-    expect([...c.selected]).toEqual(['b']);
-    expect([...createChartSelStore().selected]).toEqual(['b']);
+    expect(c.selected).toBe('b');
+    expect(createChartSelStore().selected).toBe('b');
   });
 
   it('clamps a legacy multi-id selection to the first id on restore', () => {
     localStorage.setItem('chart-selected', '["a","b","c"]');
-    expect([...createChartSelStore().selected]).toEqual(['a']);
+    expect(createChartSelStore().selected).toBe('a');
   });
 
   it('skips non-string entries and treats corrupt storage as empty', () => {
     localStorage.setItem('chart-selected', '[42,"b"]');
-    expect([...createChartSelStore().selected]).toEqual(['b']);
+    expect(createChartSelStore().selected).toBe('b');
     localStorage.setItem('chart-selected', '}{');
-    expect(createChartSelStore().selected.size).toBe(0);
+    expect(createChartSelStore().selected).toBeNull();
   });
 
   it('deselectAll persists the empty selection', () => {
     const c = createChartSelStore();
     c.toggle('a');
     c.deselectAll();
-    expect(createChartSelStore().selected.size).toBe(0);
+    expect(createChartSelStore().selected).toBeNull();
   });
 
   it('persists WMTS layer selection in the legacy entries format', () => {
@@ -263,8 +263,8 @@ describe('createChartSelStore', () => {
     p0.activateLayer('a', 'x');
     p1.toggle('b');
     p1.activateLayer('a', 'y');
-    expect([...createChartSelStore().selected]).toEqual(['a']);
-    expect([...createChartSelStore(':1').selected]).toEqual(['b']);
+    expect(createChartSelStore().selected).toBe('a');
+    expect(createChartSelStore(':1').selected).toBe('b');
     expect(createChartSelStore().getLayerSel('a')).toBe('x');
     expect(createChartSelStore(':1').getLayerSel('a')).toBe('y');
   });

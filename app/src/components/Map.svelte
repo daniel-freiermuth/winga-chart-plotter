@@ -2150,8 +2150,8 @@
   interface StyleChartSpec { chart: Chart; styleUrl: string; chartUrl: string | null }
   const styleChartSpec = $derived.by((): StyleChartSpec | null => {
     const sel = chartSel.selected;
-    // Find the first selected chart that provides a full MapLibre style.
-    const styleChart = Object.values(charts.available).find(c => sel.has(c.identifier) && charts.styleUrl(c) !== null);
+    // The selected chart, if it provides a full MapLibre style.
+    const styleChart = Object.values(charts.available).find(c => c.identifier === sel && charts.styleUrl(c) !== null);
     if (!styleChart) return null;
     const styleUrl = charts.styleUrl(styleChart);
     if (!styleUrl) return null;
@@ -2277,7 +2277,7 @@
 
     // Add newly selected tile-based chart layers (style-based charts are handled by setStyle).
     for (const [id, chart] of Object.entries(avail)) {
-      if (!sel.has(id) || charts.styleUrl(chart) !== null) continue;
+      if (id !== sel || charts.styleUrl(chart) !== null) continue;
       const tileUrl  = charts.tileUrl(chart, chartSel.getLayerSel(id) || undefined);
       if (!tileUrl) continue;
       const sourceId = `chart-${id}`;
@@ -2334,7 +2334,7 @@
     if (!map || !mapLoaded) return;
     const enabled = baseLayers.enabled;
     for (const layer of BASE_LAYERS) {
-      const vis = enabled.has(layer.id) ? 'visible' : 'none';
+      const vis = enabled === layer.id ? 'visible' : 'none';
       for (const lid of [layer.id, ...(layer.extraLayerIds ?? [])]) {
         if (map.getLayer(lid)) map.setLayoutProperty(lid, 'visibility', vis);
       }
