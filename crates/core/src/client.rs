@@ -16,12 +16,14 @@ use wasm_bindgen::{JsCast, prelude::*};
 use web_sys::{CloseEvent, ErrorEvent, Event, MessageEvent, WebSocket, WorkerGlobalScope};
 
 /// Connection status reported to JS via `on_status_change`.
+///
+/// The discriminants are the wire values the worker forwards and `App.svelte`
+/// compares against; keep them pinned.
 #[wasm_bindgen]
 pub enum ConnectionStatus {
-    Connecting,
-    Connected,
-    Disconnected,
-    Error,
+    Connected = 1,
+    Disconnected = 2,
+    Error = 3,
 }
 
 /// Signal K WebSocket client.
