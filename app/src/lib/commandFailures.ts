@@ -24,6 +24,8 @@ export class CommandFailures {
   #nextSeq = 0;
   /** Latest-issued seq per target with an unsettled latest command. */
   readonly #latest = new Map<string, number>();
+  /** Highest seq per target whose command succeeded, superseded or not. */
+  readonly #succeeded = new Map<string, number>();
   #failures: readonly CommandFailure[] = [];
 
   /** Current failures, oldest first. A new array after every change. */
@@ -42,7 +44,21 @@ export class CommandFailures {
     return { target: key, seq };
   }
 
+  /** A point in the command order: see `succeededSince`. */
+  mark(): number {
+    return this.#nextSeq;
+  }
+
+  /**
+   * True if a command on `target` registered after `mark` was taken has
+   * succeeded — even if a later one superseded it: it still took effect.
+   */
+  succeededSince(target: string, mark: number): boolean {
+    return (this.#succeeded.get(target) ?? 0) > mark;
+  }
+
   succeeded(ticket: CommandTicket): void {
+    if (ticket.seq > (this.#succeeded.get(ticket.target) ?? 0)) this.#succeeded.set(ticket.target, ticket.seq);
     if (!this.#settle(ticket)) return;
     this.#failures = this.#failures.filter(f => f.target !== ticket.target);
   }
