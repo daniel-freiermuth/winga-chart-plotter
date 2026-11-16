@@ -46,6 +46,9 @@
     const reverse               = wasEditingActiveRoute && route.reverse;
     const sentName              = routePlanner.name.trim();
     const sentWaypoints         = routePlanner.waypoints.map(({ lon, lat }) => ({ lon, lat }));
+    // A course command the crew issues after this point (from a map popup,
+    // e.g. after Discard) that takes effect supersedes the re-anchor.
+    const courseMark            = commandFailures.mark();
     try {
       if (editingUuid) {
         await updateRoute(settings.signalkHttpUrl, editingUuid, sentName, sentWaypoints, auth.authHeaders);
@@ -66,13 +69,38 @@
       await routes.load(settings.signalkHttpUrl);
       // Re-anchor navigation to the closest waypoint in the updated route.
       if (wasEditingActiveRoute && editingUuid) {
+        // One re-anchor request, skipped once a crew course command took
+        // effect. It first waits for the crew's pending course commands: one
+        // that succeeded is the newer intent — re-activating or moving the
+        // point index would silently override it. A failed one changed
+        // nothing, so the course in effect still needs the re-anchor
+        // (re-activation alone restarts the route at pointIndex 0). A crew
+        // command that succeeds while the request is in flight leaves the
+        // outcome unknown — Signal K commits a route activation or point
+        // index only after reading the route, so either may have won: stop
+        // and tell the crew rather than guess.
+        const reanchorStep = async (send: () => Promise<void>): Promise<void> => {
+          await commandFailures.settled('course');
+          if (commandFailures.succeededSince('course', courseMark)) return;
+          const sentMark = commandFailures.mark();
+          await send();
+          await commandFailures.settled('course');
+          if (commandFailures.succeededSince('course', sentMark)) {
+            throw new Error('a course command was given while navigation was being re-anchored to the edited route; the server may have kept either — check the active course');
+          }
+        };
         const reanchor = (async () => {
-          await activateRoute(settings.signalkHttpUrl, editingUuid, reverse, auth.authHeaders);
-          // Same href → route.update() won't refetch; the cached geometry is pre-edit.
-          route.refreshGeometry(settings.signalkHttpUrl);
+          try {
+            await reanchorStep(() => activateRoute(settings.signalkHttpUrl, editingUuid, reverse, auth.authHeaders));
+          } finally {
+            // The update is on the server whatever the re-activation's outcome,
+            // and the route may still be active. Same href → route.update()
+            // won't refetch; the cached geometry is pre-edit.
+            route.refreshGeometry(settings.signalkHttpUrl);
+          }
           const pointIndex = anchorPoint ? reanchorPointIndex(sentWaypoints, anchorPoint, reverse, gcDistanceNm) : null;
           if (pointIndex !== null) {
-            await setActiveRoutePointIndex(settings.signalkHttpUrl, pointIndex, auth.authHeaders);
+            await reanchorStep(() => setActiveRoutePointIndex(settings.signalkHttpUrl, pointIndex, auth.authHeaders));
           }
         })();
         // Discarded before the update committed: the edit is live anyway, but
