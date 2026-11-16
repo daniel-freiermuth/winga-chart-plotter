@@ -14,16 +14,16 @@ import type { ChartRecord } from './wasmRest';
  * in plain Node (no MapLibre instance).
  *
  * @param mounted    ids of the chart sources currently on the map
- * @param selected   the pane's selected chart ids
+ * @param selected   the pane's selected chart id, or null
  * @param available  the current chart catalog
  */
 export function chartSourcesToRemove(
   mounted: Iterable<string>,
-  selected: ReadonlySet<string>,
+  selected: string | null,
   available: ChartRecord,
 ): string[] {
   return [...mounted].filter(id => {
     const chart = available[id];
-    return !chart || !selected.has(id) || !!chart.style;
+    return !chart || id !== selected || !!chart.style;
   });
 }

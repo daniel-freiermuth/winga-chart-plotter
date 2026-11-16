@@ -1,5 +1,4 @@
-import { SvelteSet } from 'svelte/reactivity';
-import { resolveEnabledIds } from '../lib/baseLayerPrefs';
+import { resolveEnabledId } from '../lib/baseLayerPrefs';
 import { loadJSON, saveJSON } from './paneStorage';
 
 export interface BaseLayer {
@@ -29,10 +28,11 @@ const LS_BASE_LAYERS_KEY = 'base-layers-enabled';
 
 /** Per-pane base layer selection (exclusive — at most one active). */
 export interface BaseLayersStore {
-  readonly enabled: SvelteSet<string>;
+  /** The pane's one active base layer id, or null when none is active. */
+  readonly enabled: string | null;
   /** Activate a layer. No-op if already active (never deactivates). */
   toggle(id: string): void;
-  /** Clear all active base layers (called when a chart is selected). */
+  /** Clear the active base layer (called when a chart is selected). */
   deselectAll(): void;
 }
 
@@ -40,21 +40,20 @@ export interface BaseLayersStore {
 export function createBaseLayersStore(lsSuffix = ''): BaseLayersStore {
   const key = LS_BASE_LAYERS_KEY + lsSuffix;
 
-  const enabled = new SvelteSet<string>(resolveEnabledIds(loadJSON(key), BASE_LAYERS.map(l => l.id)));
+  let enabled = $state<string | null>(resolveEnabledId(loadJSON(key), BASE_LAYERS.map(l => l.id)));
 
   return {
-    get enabled(): SvelteSet<string> { return enabled; },
+    get enabled(): string | null { return enabled; },
 
     toggle(id: string) {
-      if (enabled.has(id)) return; // already active — clicking again is a no-op
-      enabled.clear();             // exclusive: only one base layer at a time
-      enabled.add(id);
-      saveJSON(key, [...enabled]);
+      if (enabled === id) return; // already active — clicking again is a no-op
+      enabled = id;
+      saveJSON(key, [id]);
     },
 
     deselectAll() {
-      if (enabled.size === 0) return;
-      enabled.clear();
+      if (enabled === null) return;
+      enabled = null;
       saveJSON(key, []);
     },
   };

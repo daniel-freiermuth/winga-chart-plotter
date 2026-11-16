@@ -49,8 +49,9 @@ export const chartLru = createChartLruStore();
 export function touchVisibleSelections(): void {
   const activeIds: string[] = [];
   for (const p of visiblePanesFor(settings.paneLayout)) {
-    activeIds.push(...p.baseLayers.enabled);
-    for (const cid of p.chartSel.selected) {
+    if (p.baseLayers.enabled !== null) activeIds.push(p.baseLayers.enabled);
+    const cid = p.chartSel.selected;
+    if (cid !== null) {
       const layerId = p.chartSel.getLayerSel(cid);
       activeIds.push(layerId ? `${cid}:${layerId}` : cid);
     }

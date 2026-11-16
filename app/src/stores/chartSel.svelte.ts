@@ -1,4 +1,4 @@
-import { SvelteSet, SvelteMap } from 'svelte/reactivity';
+import { SvelteMap } from 'svelte/reactivity';
 import { loadJSON, saveJSON } from './paneStorage';
 
 const LS_SELECTED_KEY  = 'chart-selected';
@@ -11,7 +11,8 @@ const LS_LAYER_SEL_KEY = 'chart-wmts-layer-sel';
  * pane-level.
  */
 export interface ChartSelStore {
-  readonly selected: SvelteSet<string>;
+  /** The pane's one selected chart id, or null when none is selected. */
+  readonly selected: string | null;
   /** Activate a chart. No-op if already active (never deactivates). */
   toggle(id: string): void;
   /** Clear chart selection (called when a base layer is selected). */
@@ -35,15 +36,12 @@ export function createChartSelStore(lsSuffix = ''): ChartSelStore {
   const selectedKey = LS_SELECTED_KEY + lsSuffix;
   const layerKey    = LS_LAYER_SEL_KEY + lsSuffix;
 
-  let restored: string[] = [];
   const savedSel = loadJSON(selectedKey);
-  if (Array.isArray(savedSel)) {
-    // Exclusivity invariant: at most ONE selected chart. Older app
-    // versions persisted multiple ids — keep only the first valid one.
-    const first = savedSel.find((v): v is string => typeof v === 'string');
-    if (first !== undefined) restored = [first];
-  }
-  const selected = new SvelteSet<string>(restored);
+  // Persisted as `[id]` / `[]`. Older app versions persisted multiple ids —
+  // keep only the first valid one.
+  let selected = $state<string | null>(
+    (Array.isArray(savedSel) ? savedSel.find((v): v is string => typeof v === 'string') : undefined) ?? null,
+  );
 
   // chartId → WMTS layer id, persisted as a Map-entries array ([[id, layer]]).
   const layerSel = new SvelteMap<string, string>();
@@ -57,18 +55,17 @@ export function createChartSelStore(lsSuffix = ''): ChartSelStore {
   }
 
   return {
-    get selected(): SvelteSet<string> { return selected; },
+    get selected(): string | null { return selected; },
 
     toggle(id: string) {
-      if (selected.has(id)) return; // already active — clicking again is a no-op
-      selected.clear();             // exclusive: only one chart at a time
-      selected.add(id);
-      saveJSON(selectedKey, [...selected]);
+      if (selected === id) return; // already active — clicking again is a no-op
+      selected = id;
+      saveJSON(selectedKey, [id]);
     },
 
     deselectAll() {
-      if (selected.size === 0) return;
-      selected.clear();
+      if (selected === null) return;
+      selected = null;
       saveJSON(selectedKey, []);
     },
 
