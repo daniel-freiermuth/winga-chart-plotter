@@ -65,4 +65,20 @@ describe('CommandFailures', () => {
     t.dismiss('course');
     expect(actions(t)).toEqual(['Delete route']);
   });
+
+  it('reports a success on the target after the mark, even a superseded one, and not a failure', () => {
+    const t = new CommandFailures();
+    const before = t.begin('course');
+    const mark = t.mark();
+    t.succeeded(before);
+    expect(t.succeededSince('course', mark)).toBe(false);
+    t.succeeded(t.begin('waypoint:X'));
+    t.failed(t.begin('course'), 'Clear course', '404');
+    expect(t.succeededSince('course', mark)).toBe(false);
+    const stop = t.begin('course');
+    t.failed(t.begin('course'), 'Navigate here', '500');
+    t.succeeded(stop);
+    expect(t.succeededSince('course', mark)).toBe(true);
+    expect(t.succeededSince('course', t.mark())).toBe(false);
+  });
 });
