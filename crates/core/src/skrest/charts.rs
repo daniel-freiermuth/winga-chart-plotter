@@ -57,9 +57,9 @@ impl<'de> Deserialize<'de> for ChartKind {
 /// Chart entry as returned by `GET /signalk/v2/api/resources/charts`.
 ///
 /// Signal K's `ChartSchema` declares `identifier`, `name` and `format`
-/// optional; [`parse_chart_record`] backfills the first two from the
-/// resource id and skips entries that do not fit this shape, so one sparse
-/// or foreign entry never rejects the whole catalogue.
+/// optional; [`parse_chart_record`] sets `identifier` to the resource id,
+/// backfills `name`, and skips entries that do not fit this shape, so one
+/// sparse or foreign entry never rejects the whole catalogue.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Chart {
@@ -89,18 +89,24 @@ pub struct Chart {
 pub type ChartRecord = HashMap<String, Chart>;
 
 /// Parse a charts response body. Entries that do not decode as [`Chart`]
-/// are skipped; entries without `identifier` take their resource id;
-/// entries without `name` take their identifier.
+/// are skipped. Every entry's `identifier` becomes its resource id: the app
+/// keys selection, WMTS state and style lookup by the catalog key, so a
+/// server-declared identifier that differs would split one chart into two
+/// ids. Entries without `name` take the server-declared identifier, else
+/// the resource id.
 pub fn parse_chart_record(text: &str) -> crate::Result<ChartRecord> {
     let mut charts: ChartRecord =
         crate::skrest::resource::parse_resource_record(text, "Charts API")?;
     for (id, chart) in &mut charts {
-        if chart.identifier.is_empty() {
-            chart.identifier.clone_from(id);
-        }
         if chart.name.is_empty() {
-            chart.name.clone_from(&chart.identifier);
+            let declared = std::mem::take(&mut chart.identifier);
+            chart.name = if declared.is_empty() {
+                id.clone()
+            } else {
+                declared
+            };
         }
+        chart.identifier.clone_from(id);
     }
     Ok(charts)
 }
@@ -431,6 +437,23 @@ mod tests {
         let charts = parse_chart_record(json).unwrap();
         assert_eq!(charts.len(), 1);
         assert_eq!(charts["good"].identifier, "good");
+    }
+
+    #[test]
+    fn chart_record_identifier_is_the_resource_id() {
+        // The app keys selection, WMTS state and style lookup by the catalog
+        // key and reads it back through `identifier`; an explicit, different
+        // identifier must not split the two.
+        let json = r#"{
+            "res-1": {"identifier": "NOAA_123", "type": "WMTS", "url": "/wmts"},
+            "res-2": {"identifier": "other", "name": "Styled",
+                      "type": "mapstyleJSON", "url": "/s.json"}
+        }"#;
+        let charts = parse_chart_record(json).unwrap();
+        assert_eq!(charts["res-1"].identifier, "res-1");
+        assert_eq!(charts["res-1"].name, "NOAA_123");
+        assert_eq!(charts["res-2"].identifier, "res-2");
+        assert_eq!(charts["res-2"].name, "Styled");
     }
 
     #[test]
