@@ -1977,9 +1977,7 @@
         const geo  = route.geometry;
         if (uuid && geo) {
           const coords = geo.geometry.coordinates as [number, number][];
-          const anchorCoord = coords[mirrorRouteIndex(route.pointIndex, coords.length, route.reverse)];
-          const anchor = anchorCoord ? { lon: anchorCoord[0], lat: anchorCoord[1] } : null;
-          routePlanner.loadRoute(uuid, route.routeName ?? '', coords.map(([lon, lat]) => ({ lon, lat })), anchor);
+          routePlanner.loadRoute(uuid, route.routeName ?? '', coords.map(([lon, lat]) => ({ lon, lat })));
         }
         return;
       }

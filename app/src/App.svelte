@@ -8,7 +8,7 @@
   import { routePlanner } from './stores/routePlanner.svelte';
   import { reanchorPointIndex } from './stores/routeLogic';
   import { waypoints } from './stores/waypoints.svelte';
-  import { saveRoute, updateRoute, raiseMob, activateRoute, setActiveRoutePointIndex } from './lib/wasmRest';
+  import { saveRoute, updateRoute, raiseMob, activateRoute, setActiveRoutePointIndex, isStatusRejection } from './lib/wasmRest';
   import { gcDistanceNm, unionViewBounds } from './lib/wasmGeo';
 
   let plannerSaving = $state(false);
@@ -42,7 +42,14 @@
     const session               = routePlanner.session;
     const editingUuid           = routePlanner.editingRouteUuid;
     const wasEditingActiveRoute = editingUuid !== null && editingUuid === route.activeUuid;
-    const anchorPoint           = wasEditingActiveRoute ? routePlanner.anchorPoint : null;
+    // Re-anchor on the point Signal K is navigating to now — the course may
+    // have advanced, or the route been activated elsewhere, since the planner
+    // opened — unless an earlier Update of this session re-activated the route
+    // (restarting it at point 0) short of its re-anchor: restore that one's point.
+    const nextPoint             = route.nextPoint;
+    const pinnedAnchor          = routePlanner.anchorPoint;
+    const anchorPoint           = !wasEditingActiveRoute ? null
+      : pinnedAnchor ?? (nextPoint ? { lon: nextPoint.longitude, lat: nextPoint.latitude } : null);
     const reverse               = wasEditingActiveRoute && route.reverse;
     const sentName              = routePlanner.name.trim();
     const sentWaypoints         = routePlanner.waypoints.map(({ lon, lat }) => ({ lon, lat }));
@@ -91,7 +98,20 @@
         };
         const reanchor = (async () => {
           try {
-            await reanchorStep(() => activateRoute(settings.signalkHttpUrl, editingUuid, reverse, auth.authHeaders));
+            await reanchorStep(async () => {
+              // Once sent, the route may restart at point 0: a retrying Update
+              // must re-anchor on this save's point, not the live course.
+              if (routePlanner.session === session) routePlanner.anchorPoint = anchorPoint;
+              try {
+                await activateRoute(settings.signalkHttpUrl, editingUuid, reverse, auth.authHeaders);
+              } catch (e) {
+                // Refused by the server: the course is as it was before this
+                // save, and so is the pin. A timeout or lost response may have
+                // restarted the route: keep this save's pin.
+                if (isStatusRejection(e) && routePlanner.session === session) routePlanner.anchorPoint = pinnedAnchor;
+                throw e;
+              }
+            });
           } finally {
             // The update is on the server whatever the re-activation's outcome,
             // and the route may still be active. Same href → route.update()
@@ -102,6 +122,7 @@
           if (pointIndex !== null) {
             await reanchorStep(() => setActiveRoutePointIndex(settings.signalkHttpUrl, pointIndex, auth.authHeaders));
           }
+          if (routePlanner.session === session) routePlanner.anchorPoint = null;
         })();
         // Discarded before the update committed: the edit is live anyway, but
         // no planner is left to show a failed re-anchor — alert app-wide.

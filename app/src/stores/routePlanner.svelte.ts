@@ -37,7 +37,12 @@ function createRoutePlannerStore() {
     get waypoints(): PlannerWaypoint[] { return waypoints; },
     get totalDistanceNm(): number      { return totalDistanceNm; },
     get editingRouteUuid(): string | null { return editingRouteUuid; },
+    /** The next point navigation was on before a save of this session sent the
+     *  re-activation of the edited active route — which may have restarted it at
+     *  point 0 — and has yet to re-anchor it there; `null` otherwise. Set by that
+     *  save (undone if the server refuses the re-activation); reset by loadRoute/exit. */
     get anchorPoint(): PlannerWaypoint | null { return anchorPoint; },
+    set anchorPoint(v: PlannerWaypoint | null) { anchorPoint = v; },
     get name(): string                 { return name; },
     set name(v: string)                { name = v; },
     /** Identifies the current planner session; changes on enter/enterAt/loadRoute/exit. */
@@ -47,15 +52,13 @@ function createRoutePlannerStore() {
     enterAt(lon: number, lat: number): void { session++; active = true; name = ''; waypoints = [{ lon, lat }]; },
     exit(): void   { reset(); },
 
-    /** Enter planner pre-loaded with an existing route's waypoints for editing.
-     *  `anchor` is the coordinates of the waypoint currently being navigated to,
-     *  used after save to restore navigation to the nearest equivalent point. */
-    loadRoute(uuid: string, routeName: string, wpts: PlannerWaypoint[], anchor: PlannerWaypoint | null = null): void {
+    /** Enter planner pre-loaded with an existing route's waypoints for editing. */
+    loadRoute(uuid: string, routeName: string, wpts: PlannerWaypoint[]): void {
       session++;
       waypoints = [...wpts];
       editingRouteUuid = uuid;
       name = routeName;
-      anchorPoint = anchor;
+      anchorPoint = null;
       active = true;
     },
 
