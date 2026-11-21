@@ -42,7 +42,7 @@ describe('route.clear', () => {
  * with `reverse: true`, pointIndex 0 is the LAST coordinate of the route
  * geometry (signalk-server `getRoutePoint`: `coordinates[length - (index + 1)]`).
  * Every consumer that indexes the route geometry (next-waypoint highlight,
- * edit anchor, "Set as next waypoint", re-anchor after edit) must convert
+ * "Set as next waypoint", re-anchor after edit) must convert
  * between that frame and the forward geometry index.
  */
 describe('mirrorRouteIndex', () => {
@@ -54,7 +54,7 @@ describe('mirrorRouteIndex', () => {
 
   it('counts from the end of the geometry when following the route in reverse', () => {
     // pointIndex 0 in reverse targets the last geometry coordinate (next-waypoint
-    // highlight, edit anchor); forward feature idx 0 is the final pointIndex
+    // highlight); forward feature idx 0 is the final pointIndex
     // ("Set as next waypoint" PUT).
     expect(mirrorRouteIndex(0, 5, true)).toBe(4);
     expect(mirrorRouteIndex(1, 5, true)).toBe(3);

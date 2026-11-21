@@ -200,6 +200,18 @@ export async function activateRoute(
 }
 
 /**
+ * Whether a rejection from one of these calls is the server's answer — a
+ * non-2xx status, so the request did not take effect. The WASM core turns
+ * those into plain `Error`s (`crates/core/src/error.rs`) and passes transport
+ * failures through unwrapped: a timeout (`TimeoutError` DOMException) or a
+ * lost connection (`TypeError`) leaves it unknown whether the server applied
+ * the request.
+ */
+export function isStatusRejection(err: unknown): boolean {
+  return err instanceof Error && err.name === 'Error';
+}
+
+/**
  * Set the active route's current destination to a specific point along it.
  *   PUT /signalk/v2/api/vessels/self/navigation/course/activeRoute/pointIndex
  */

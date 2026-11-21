@@ -9,7 +9,7 @@ import type { PlannerWaypoint } from './routePlanner.svelte';
  * With `reverse: true` the server counts from the end of the route:
  * signalk-server `getRoutePoint` resolves `coordinates[length - (index + 1)]`.
  * The mirror mapping is its own inverse, so the same call converts
- * pointIndex → geometry index (highlight, edit anchor) and geometry index →
+ * pointIndex → geometry index (highlight) and geometry index →
  * pointIndex (`PUT .../activeRoute/pointIndex`).
  */
 export function mirrorRouteIndex(index: number, length: number, reverse: boolean): number {
