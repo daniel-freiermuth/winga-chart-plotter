@@ -30,9 +30,6 @@ variables:
   # wasm-pack pin — keep in sync with .github/workflows/{ci,deploy}.yml and the
   # Justfile (wasm_pack_version).
   WASM_PACK_VERSION: "0.15.0"
-  # Node.js major (NodeSource setup_<major>.x) — keep in sync with
-  # `node-version` in .github/workflows/{ci,deploy}.yml.
-  NODE_MAJOR: "24"
 
 # ---------------------------------------------------------------------------
 # Job templates
@@ -45,14 +42,25 @@ variables:
     - rustup component add rustfmt clippy
     - rustup target add wasm32-unknown-unknown
 
+# Node.js is installed from NodeSource (setup_<major>.x). The major is read from
+# .node-version (single source of truth, shared with the actions/setup-node
+# steps in .github/workflows/{ci,deploy}.yml) rather than pinned here.
+# Node 25+ no longer bundles corepack (NodeSource's nodejs 26 package ships only
+# node/npm/npx), so pnpm is installed with npm at the exact version pinned in
+# app/package.json `packageManager` (any `+<hash>` suffix stripped).
+
 # Rust + Node.js (lint also runs svelte-check and eslint)
 .rust-node-setup:
   image: rust:latest
   before_script:
+    - NODE_MAJOR="$(sed -n '1s/^v\{0,1\}\([0-9]\{1,\}\).*$/\1/p' .node-version)"
+    - test -n "$NODE_MAJOR" || { echo "no Node major found in .node-version" >&2; exit 1; }
     - apt-get update -qq && apt-get install -y -qq ca-certificates curl gnupg
     - curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | bash -
     - apt-get install -y -qq nodejs
-    - corepack enable pnpm
+    - PNPM_SPEC="$(node -p "require('./app/package.json').packageManager.split('+')[0]")"
+    - case "$PNPM_SPEC" in pnpm@?*) ;; *) echo "app/package.json packageManager is not pnpm@<version>" >&2; exit 1;; esac
+    - npm install -g --no-audit --no-fund "$PNPM_SPEC"
     - rustup component add rustfmt clippy
     - rustup target add wasm32-unknown-unknown
 
@@ -66,10 +74,14 @@ variables:
 .rust-node-wasm-setup:
   image: rust:latest
   before_script:
+    - NODE_MAJOR="$(sed -n '1s/^v\{0,1\}\([0-9]\{1,\}\).*$/\1/p' .node-version)"
+    - test -n "$NODE_MAJOR" || { echo "no Node major found in .node-version" >&2; exit 1; }
     - apt-get update -qq && apt-get install -y -qq ca-certificates curl gnupg
     - curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | bash -
     - apt-get install -y -qq nodejs
-    - corepack enable pnpm
+    - PNPM_SPEC="$(node -p "require('./app/package.json').packageManager.split('+')[0]")"
+    - case "$PNPM_SPEC" in pnpm@?*) ;; *) echo "app/package.json packageManager is not pnpm@<version>" >&2; exit 1;; esac
+    - npm install -g --no-audit --no-fund "$PNPM_SPEC"
     - rustup component add rustfmt clippy
     - rustup target add wasm32-unknown-unknown
     - |
@@ -98,8 +110,10 @@ lint:
     - key:
         files: [Cargo.lock]
       paths: [.cargo/registry/, .cargo/git/, .cargo/bin/, target/]
+    # Keyed on .node-version too: modules installed under another Node major
+    # (native addons, engine checks) must not be restored after a bump.
     - key:
-        files: [app/pnpm-lock.yaml]
+        files: [app/pnpm-lock.yaml, .node-version]
       paths: [app/node_modules/]
   script:
     - cargo fmt --check
@@ -164,7 +178,7 @@ build:
         - .cargo/bin/      # caches the wasm-pack binary for subsequent runs
         - target/
     - key:
-        files: [app/pnpm-lock.yaml]
+        files: [app/pnpm-lock.yaml, .node-version]
       paths: [app/node_modules/]
   script:
     - (cd app && pnpm install --frozen-lockfile)
