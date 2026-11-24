@@ -18,7 +18,7 @@
  */
 import { test, expect, type Page } from '@playwright/test';
 import { MockSignalK } from '../mock-signalk/server';
-import { seedApp, blockExternalTiles, pagePoint, clickLonLat, lonLatAtPx, VIEW } from '../lib/app';
+import { seedApp, blockExternalTiles, pagePoint, clickLonLat, lonLatAtPx, COMPLETED, VIEW } from '../lib/app';
 
 const GREEN = 'rgb(74, 222, 128)';
 const DESTINATION_PATH = '/signalk/v2/api/vessels/self/navigation/course/destination';
@@ -123,14 +123,12 @@ test('a later successful "Navigate here" clears the previous failure', async ({ 
       const method = route.request().method();
       if (method === 'PUT') accepted = true;
       await route.fulfill({
-        status: 200,
+        ...COMPLETED,
         headers: {
           'access-control-allow-origin': '*',
           'access-control-allow-headers': '*',
           'access-control-allow-methods': 'PUT',
         },
-        contentType: 'application/json',
-        body: '{"state":"COMPLETED","statusCode":200}',
       });
     });
     await openWaterPopup(page);

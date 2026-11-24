@@ -13,10 +13,9 @@
  */
 import { test, expect, type Page } from '@playwright/test';
 import { MockSignalK } from '../mock-signalk/server';
-import { seedApp, blockExternalTiles, pagePoint, VIEW } from '../lib/app';
+import { seedApp, blockExternalTiles, pagePoint, routeNameInput, ROUTES_PATH, VIEW } from '../lib/app';
 
 const GREEN = 'rgb(74, 222, 128)';
-const ROUTES_PATH = '/signalk/v2/api/resources/routes';
 
 const saveButton = (page: Page) => page.locator('button[title="Save as route"]');
 
@@ -50,7 +49,7 @@ test('a route save the server never answers times out into an error and re-enabl
     const end = await pagePoint(page, VIEW, VIEW.lon + 0.005, VIEW.lat);
     await page.mouse.click(end.x, end.y);
 
-    await page.getByPlaceholder('Route name…').fill('E2E hung save');
+    await routeNameInput(page).fill('E2E hung save');
     await expect(saveButton(page)).toBeEnabled();
     await saveButton(page).click();
     await expect.poll(() => posted).toBe(true);
@@ -61,7 +60,7 @@ test('a route save the server never answers times out into an error and re-enabl
     await expect(saveButton(page)).toHaveText('Save', { timeout: 20_000 });
     await expect(saveButton(page)).toBeEnabled();
     await expect(page.getByText(/timed out/i)).toBeVisible();
-    await expect(page.getByPlaceholder('Route name…')).toHaveValue('E2E hung save');
+    await expect(routeNameInput(page)).toHaveValue('E2E hung save');
   } finally {
     await sk.stop();
   }

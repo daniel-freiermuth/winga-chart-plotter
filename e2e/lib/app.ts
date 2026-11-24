@@ -6,7 +6,7 @@
  * read from localStorage (stores/settings.svelte.ts, stores/mapView.svelte.ts),
  * so tests seed those keys before the first script runs.
  */
-import type { Page } from '@playwright/test';
+import { expect, type Page } from '@playwright/test';
 
 export interface View {
   lon: number;
@@ -46,6 +46,41 @@ export async function blockExternalTiles(page: Page): Promise<void> {
   for (const host of ['tile.openstreetmap.org', 'tiles.openseamap.org', 'tiles.stadiamaps.com']) {
     await page.route(`https://${host}/**`, (route) => route.abort());
   }
+}
+
+// ── Signal K REST mock replies and route planner locators ───────────────────
+
+export const ROUTES_PATH = '/signalk/v2/api/resources/routes';
+
+/** Signal K v2 success reply for course/resource commands. */
+export const COMPLETED = { status: 200, contentType: 'application/json', body: '{"state":"COMPLETED","statusCode":200}' };
+
+/** Generic server error reply for a command the test wants rejected. */
+export const MOCK_FAILURE = { status: 500, contentType: 'application/json', body: '{"message":"mock failure"}' };
+
+export const routeNameInput = (page: Page) => page.getByPlaceholder('Route name…');
+export const updateRouteButton = (page: Page) => page.locator('button[title="Update route"]');
+
+/**
+ * Open a route in the planner from the popup at `at`: retry the click until
+ * the popup's `buttonClass` button is enabled, click it, and wait for the
+ * planner to show `expectedName`. `.edit-active-route-btn` is the active
+ * route's waypoint popup; `.edit-route-btn` the all-routes popup on a line.
+ */
+export async function openRouteEditor(
+  page: Page,
+  at: { lon: number; lat: number },
+  expectedName: string,
+  buttonClass = '.edit-active-route-btn',
+): Promise<void> {
+  const button = page.locator(`.maplibregl-popup ${buttonClass}`);
+  await expect(async () => {
+    await page.keyboard.press('Escape');
+    await clickLonLat(page, VIEW, at.lon, at.lat);
+    await expect(button).toBeEnabled({ timeout: 2000 });
+  }).toPass({ timeout: 30_000 });
+  await button.click();
+  await expect(routeNameInput(page)).toHaveValue(expectedName);
 }
 
 // ── Web-mercator pixel math ──────────────────────────────────────────────────

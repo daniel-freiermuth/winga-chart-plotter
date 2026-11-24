@@ -29,17 +29,14 @@
  */
 import { test, expect, type Page, type Route } from '@playwright/test';
 import { MockSignalK, OWN_ID } from '../mock-signalk/server';
-import { seedApp, blockExternalTiles, clickLonLat, lonLatAtPx, pagePoint, VIEW } from '../lib/app';
+import {
+  seedApp, blockExternalTiles, clickLonLat, lonLatAtPx, pagePoint, openRouteEditor, routeNameInput, updateRouteButton,
+  COMPLETED, MOCK_FAILURE, ROUTES_PATH, VIEW,
+} from '../lib/app';
 
 const GREEN = 'rgb(74, 222, 128)';
 const ROUTE_UUID = 'e2e00000-0000-4000-8000-000000000013';
 const ROUTE_NAME = 'E2E active edit';
-const ROUTES_PATH = '/signalk/v2/api/resources/routes';
-const COMPLETED = { status: 200, contentType: 'application/json', body: '{"state":"COMPLETED","statusCode":200}' };
-const FAILED = { status: 500, contentType: 'application/json', body: '{"message":"mock failure"}' };
-
-const updateButton = (page: Page) => page.locator('button[title="Update route"]');
-const nameInput = (page: Page) => page.getByPlaceholder('Route name…');
 
 interface Course {
   /** The pending route update PUT, held unanswered until the test settles it. */
@@ -112,19 +109,8 @@ async function setup(page: Page, mock: MockSignalK): Promise<Course> {
     ]);
   });
   await expect(page.locator('button[title="Settings"]')).toHaveCSS('color', GREEN, { timeout: 20_000 });
-  await openActiveRouteEditor(page, last);
+  await openRouteEditor(page, last, ROUTE_NAME);
   return { update: () => update, activate: () => activate, pointIndexPut: () => pointIndexPut, last };
-}
-
-/** Open the active route in the planner via its popup's "Edit route". */
-async function openActiveRouteEditor(page: Page, at: { lon: number; lat: number }): Promise<void> {
-  await expect(async () => {
-    await page.keyboard.press('Escape');
-    await clickLonLat(page, VIEW, at.lon, at.lat);
-    await expect(page.locator('.maplibregl-popup .edit-active-route-btn')).toBeEnabled({ timeout: 2000 });
-  }).toPass({ timeout: 30_000 });
-  await page.locator('.maplibregl-popup .edit-active-route-btn').click();
-  await expect(nameInput(page)).toHaveValue(ROUTE_NAME);
 }
 
 /** Wait until a held request has arrived and return it. */
@@ -137,7 +123,7 @@ async function heldRequest(get: () => Route | null, what: string): Promise<Route
 
 /** Click Update, let the route update succeed, and wait until the re-activation PUT is held. */
 async function updateAndHoldActivation(page: Page, course: Course): Promise<Route> {
-  await updateButton(page).click();
+  await updateRouteButton(page).click();
   await (await heldRequest(course.update, 'route update PUT')).fulfill(COMPLETED);
   return heldRequest(course.activate, 're-activation PUT');
 }
@@ -146,12 +132,12 @@ async function updateAndHoldActivation(page: Page, course: Course): Promise<Rout
 async function discardPlanner(page: Page): Promise<void> {
   await page.getByRole('button', { name: 'Discard', exact: true }).click();
   await page.getByRole('button', { name: 'Discard', exact: true }).click();
-  await expect(nameInput(page)).toHaveCount(0);
+  await expect(routeNameInput(page)).toHaveCount(0);
 }
 
 /** Click Update, Discard (confirmed) while the route update PUT is held; returns that PUT. */
 async function updateThenDiscard(page: Page, course: Course): Promise<Route> {
-  await updateButton(page).click();
+  await updateRouteButton(page).click();
   const update = await heldRequest(course.update, 'route update PUT');
   await discardPlanner(page);
   return update;
@@ -173,9 +159,9 @@ test('a hung re-activation after editing the active route shows in the planner, 
     // The re-activation times out into the planner's error; the edited route
     // stays open and Update is usable again for a retry.
     await expect(page.getByText(/timed out/i)).toBeVisible({ timeout: 25_000 });
-    await expect(nameInput(page)).toHaveValue(ROUTE_NAME);
-    await expect(updateButton(page)).toHaveText('Update');
-    await expect(updateButton(page)).toBeEnabled();
+    await expect(routeNameInput(page)).toHaveValue(ROUTE_NAME);
+    await expect(updateRouteButton(page)).toHaveText('Update');
+    await expect(updateRouteButton(page)).toBeEnabled();
 
     // Giving up on the edit closes that session's error with it: a fresh
     // planner session starts clean.
@@ -183,7 +169,7 @@ test('a hung re-activation after editing the active route shows in the planner, 
     const start = await pagePoint(page, VIEW, VIEW.lon - 0.005, VIEW.lat + 0.003);
     await page.mouse.click(start.x, start.y, { button: 'right' });
     await page.locator('.maplibregl-popup .route-here-btn').click();
-    await expect(nameInput(page)).toHaveValue('');
+    await expect(routeNameInput(page)).toHaveValue('');
     await expect(page.getByText(/timed out/i)).toHaveCount(0);
   } finally {
     await mock.stop();
@@ -197,17 +183,17 @@ test('a late successful save does not close a newer session on the same route', 
     // Discard while the update is still unanswered (the S10 escape hatch),
     // reopen the same active route and edit it.
     const update = await updateThenDiscard(page, course);
-    await openActiveRouteEditor(page, course.last);
+    await openRouteEditor(page, course.last, ROUTE_NAME);
     await addWaypoint(page);
 
     // The old save now completes, re-activation and re-anchor included.
     await update.fulfill(COMPLETED);
     await (await heldRequest(course.activate, 're-activation PUT')).fulfill(COMPLETED);
     await expect.poll(course.pointIndexPut).toBe(true);
-    await expect(updateButton(page)).toHaveText('Update');
+    await expect(updateRouteButton(page)).toHaveText('Update');
 
     // The newer session and its unsaved edit are still there.
-    await expect(nameInput(page)).toHaveValue(ROUTE_NAME);
+    await expect(routeNameInput(page)).toHaveValue(ROUTE_NAME);
     await expect(page.getByText('4 waypoints')).toBeVisible();
   } finally {
     await mock.stop();
@@ -219,13 +205,13 @@ test('a late failed save does not write its error into a newer session on the sa
   try {
     const course = await setup(page, mock);
     const update = await updateThenDiscard(page, course);
-    await openActiveRouteEditor(page, course.last);
+    await openRouteEditor(page, course.last, ROUTE_NAME);
 
     // The discarded save's update now fails — nothing reached the server.
-    await update.fulfill(FAILED);
-    await expect(updateButton(page)).toHaveText('Update');
+    await update.fulfill(MOCK_FAILURE);
+    await expect(updateRouteButton(page)).toHaveText('Update');
 
-    await expect(nameInput(page)).toHaveValue(ROUTE_NAME);
+    await expect(routeNameInput(page)).toHaveValue(ROUTE_NAME);
     await expect(page.getByText(/Update route failed/)).toHaveCount(0);
   } finally {
     await mock.stop();
@@ -243,11 +229,11 @@ test('a discarded save that commits late shows its failed re-anchor outside the 
     // so navigation is re-activated on it — and that fails.
     await update.fulfill(COMPLETED);
     const activate = await heldRequest(course.activate, 're-activation PUT');
-    await activate.fulfill(FAILED);
+    await activate.fulfill(MOCK_FAILURE);
 
     // No planner to carry the error: the crew is told app-wide.
     await expect(page.getByRole('alert').filter({ hasText: 'Re-activate edited route failed' })).toBeVisible();
-    await expect(nameInput(page)).toHaveCount(0);
+    await expect(routeNameInput(page)).toHaveCount(0);
   } finally {
     await mock.stop();
   }
@@ -266,14 +252,14 @@ test('a discarded save that commits late holds Update in a reopened session unti
     // A newer session on the same route must not re-anchor concurrently: the
     // older chain's point index (computed on the discarded geometry) could
     // land last on the newer geometry.
-    await openActiveRouteEditor(page, course.last);
-    await expect(updateButton(page)).toHaveText('…');
-    await expect(updateButton(page)).toBeDisabled();
+    await openRouteEditor(page, course.last, ROUTE_NAME);
+    await expect(updateRouteButton(page)).toHaveText('…');
+    await expect(updateRouteButton(page)).toBeDisabled();
 
     await activate.fulfill(COMPLETED);
     await expect.poll(course.pointIndexPut).toBe(true);
-    await expect(updateButton(page)).toHaveText('Update');
-    await expect(updateButton(page)).toBeEnabled();
+    await expect(updateRouteButton(page)).toHaveText('Update');
+    await expect(updateRouteButton(page)).toBeEnabled();
   } finally {
     await mock.stop();
   }
@@ -318,11 +304,11 @@ test('a failed course command issued after Discard does not stop a late discarde
     // navigation still follows the now-edited route: it is re-anchored.
     await update.fulfill(COMPLETED);
     const activate = await heldRequest(course.activate, 're-activation PUT');
-    await openActiveRouteEditor(page, course.last);
-    await expect(updateButton(page)).toHaveText('…');
+    await openRouteEditor(page, course.last, ROUTE_NAME);
+    await expect(updateRouteButton(page)).toHaveText('…');
     await activate.fulfill(COMPLETED);
     await expect.poll(course.pointIndexPut).toBe(true);
-    await expect(updateButton(page)).toHaveText('Update');
+    await expect(updateRouteButton(page)).toHaveText('Update');
 
     // The crew's own failed command is still reported.
     await expect(clearFailed).toBeVisible();
@@ -346,9 +332,9 @@ test('a discarded save committing late does not re-activate the route after the 
     // crew's newer course command: it must not re-activate the route.
     await update.fulfill(COMPLETED);
     // Update re-enables once the discarded save's chain has settled.
-    await openActiveRouteEditor(page, course.last);
-    await expect(updateButton(page)).toHaveText('Update', { timeout: 25_000 });
-    await expect(updateButton(page)).toBeEnabled();
+    await openRouteEditor(page, course.last, ROUTE_NAME);
+    await expect(updateRouteButton(page)).toHaveText('Update', { timeout: 25_000 });
+    await expect(updateRouteButton(page)).toBeEnabled();
     expect(course.activate()).toBeNull();
     expect(course.pointIndexPut()).toBe(false);
   } finally {
@@ -390,8 +376,8 @@ test('a course command that overlaps a late discarded save\'s re-activation and 
     await stopNavigation(page, course);
     const pendingClear = await heldRequest(clear, 'clear course DELETE');
     await activate.fulfill(COMPLETED);
-    await openActiveRouteEditor(page, course.last);
-    await expect(updateButton(page)).toHaveText('…');
+    await openRouteEditor(page, course.last, ROUTE_NAME);
+    await expect(updateRouteButton(page)).toHaveText('…');
     expect(course.pointIndexPut()).toBe(false);
 
     // The stop succeeds too. Signal K commits a route activation only after
@@ -402,7 +388,7 @@ test('a course command that overlaps a late discarded save\'s re-activation and 
       if (req.method() === 'GET' && req.url().endsWith(`${ROUTES_PATH}/${ROUTE_UUID}`)) geometryFetches++;
     });
     await pendingClear.fulfill(COMPLETED);
-    await expect(updateButton(page)).toHaveText('Update');
+    await expect(updateRouteButton(page)).toHaveText('Update');
     expect(course.pointIndexPut()).toBe(false);
     await expect(page.getByRole('alert').filter({ hasText: 'Re-activate edited route failed' }))
       .toContainText('check the active course');
@@ -435,13 +421,13 @@ test('a course command issued while a late discarded save waits on an earlier on
     // Without the fix the re-activation is sent in the same microtask drain
     // that logs the first stop's failure — before the second stop is answered.
     const firstFailed = page.waitForEvent('console', m => m.text().includes('[command] Clear course failed'));
-    await first.fulfill(FAILED);
+    await first.fulfill(MOCK_FAILURE);
     await firstFailed;
 
     // The second stop takes effect: the abandoned route stays inactive.
     await second.fulfill(COMPLETED);
-    await openActiveRouteEditor(page, course.last);
-    await expect(updateButton(page)).toHaveText('Update', { timeout: 25_000 });
+    await openRouteEditor(page, course.last, ROUTE_NAME);
+    await expect(updateRouteButton(page)).toHaveText('Update', { timeout: 25_000 });
     expect(course.activate()).toBeNull();
     expect(course.pointIndexPut()).toBe(false);
   } finally {
@@ -459,10 +445,10 @@ test('once the edit is saved, Discard is not offered while navigation is re-anch
     await expect(page.locator('button[title="Discard and exit route planner"]')).toBeDisabled();
     await expect(page.getByText('Route saved — re-anchoring navigation…')).toBeVisible();
 
-    await activate.fulfill(FAILED);
+    await activate.fulfill(MOCK_FAILURE);
     await expect(page.getByText(/Activate route failed/)).toBeVisible();
-    await expect(updateButton(page)).toHaveText('Update');
-    await expect(updateButton(page)).toBeEnabled();
+    await expect(updateRouteButton(page)).toHaveText('Update');
+    await expect(updateRouteButton(page)).toBeEnabled();
     await expect(page.locator('button[title="Discard and exit route planner"]')).toBeEnabled();
   } finally {
     await mock.stop();
@@ -480,12 +466,12 @@ test('edits made while the re-activation is pending are not thrown away', async 
 
     await held.fulfill(COMPLETED);
     await expect.poll(course.pointIndexPut).toBe(true);
-    await expect(updateButton(page)).toHaveText('Update');
+    await expect(updateRouteButton(page)).toHaveText('Update');
 
     // Not sent yet — the planner stays open with it, Update saves it.
-    await expect(nameInput(page)).toHaveValue(ROUTE_NAME);
+    await expect(routeNameInput(page)).toHaveValue(ROUTE_NAME);
     await expect(page.getByText('4 waypoints')).toBeVisible();
-    await expect(updateButton(page)).toBeEnabled();
+    await expect(updateRouteButton(page)).toBeEnabled();
   } finally {
     await mock.stop();
   }
@@ -495,7 +481,7 @@ test('a Discard confirm left open while the update commits is withdrawn and does
   const mock = new MockSignalK();
   try {
     const course = await setup(page, mock);
-    await updateButton(page).click();
+    await updateRouteButton(page).click();
     const update = await heldRequest(course.update, 'route update PUT');
 
     // Discard asked, not yet confirmed, when the update reaches the server.
@@ -508,13 +494,13 @@ test('a Discard confirm left open while the update commits is withdrawn and does
 
     await (await heldRequest(course.activate, 're-activation PUT')).fulfill(COMPLETED);
     await expect.poll(course.pointIndexPut).toBe(true);
-    await expect(nameInput(page)).toHaveCount(0);
+    await expect(routeNameInput(page)).toHaveCount(0);
 
     // A new session opens with the normal Discard control, not the stale confirm.
     const start = await pagePoint(page, VIEW, VIEW.lon - 0.005, VIEW.lat + 0.003);
     await page.mouse.click(start.x, start.y, { button: 'right' });
     await page.locator('.maplibregl-popup .route-here-btn').click();
-    await expect(nameInput(page)).toHaveValue('');
+    await expect(routeNameInput(page)).toHaveValue('');
     await expect(page.locator('button[title="Discard and exit route planner"]')).toBeVisible();
     await expect(page.getByText('Discard route and all waypoints?')).toHaveCount(0);
   } finally {

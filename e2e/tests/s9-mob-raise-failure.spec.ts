@@ -16,7 +16,7 @@
  */
 import { test, expect, type Page } from '@playwright/test';
 import { MockSignalK } from '../mock-signalk/server';
-import { seedApp, blockExternalTiles } from '../lib/app';
+import { seedApp, blockExternalTiles, COMPLETED } from '../lib/app';
 
 const GREEN = 'rgb(74, 222, 128)';
 const MOB_PATH = '/signalk/v2/api/notifications/mob';
@@ -61,14 +61,12 @@ test('a successful MOB raise clears the previous failure', async ({ page }) => {
     await page.route(`**${MOB_PATH}`, async (route) => {
       if (route.request().method() === 'POST') raised = true;
       await route.fulfill({
-        status: 200,
+        ...COMPLETED,
         headers: {
           'access-control-allow-origin': '*',
           'access-control-allow-headers': '*',
           'access-control-allow-methods': 'POST',
         },
-        contentType: 'application/json',
-        body: '{"state":"COMPLETED","statusCode":200}',
       });
     });
     await mobButton(page).click();
