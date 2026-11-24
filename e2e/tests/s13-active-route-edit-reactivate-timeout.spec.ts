@@ -36,6 +36,7 @@ const ROUTE_UUID = 'e2e00000-0000-4000-8000-000000000013';
 const ROUTE_NAME = 'E2E active edit';
 const ROUTES_PATH = '/signalk/v2/api/resources/routes';
 const COMPLETED = { status: 200, contentType: 'application/json', body: '{"state":"COMPLETED","statusCode":200}' };
+const FAILED = { status: 500, contentType: 'application/json', body: '{"message":"mock failure"}' };
 
 const updateButton = (page: Page) => page.locator('button[title="Update route"]');
 const nameInput = (page: Page) => page.getByPlaceholder('Route name…');
@@ -141,6 +142,21 @@ async function updateAndHoldActivation(page: Page, course: Course): Promise<Rout
   return heldRequest(course.activate, 're-activation PUT');
 }
 
+/** Discard the planner session, confirm the Discard, and wait until the planner has closed. */
+async function discardPlanner(page: Page): Promise<void> {
+  await page.getByRole('button', { name: 'Discard', exact: true }).click();
+  await page.getByRole('button', { name: 'Discard', exact: true }).click();
+  await expect(nameInput(page)).toHaveCount(0);
+}
+
+/** Click Update, Discard (confirmed) while the route update PUT is held; returns that PUT. */
+async function updateThenDiscard(page: Page, course: Course): Promise<Route> {
+  await updateButton(page).click();
+  const update = await heldRequest(course.update, 'route update PUT');
+  await discardPlanner(page);
+  return update;
+}
+
 /** Add a planner waypoint by clicking open water south of the route and own vessel. */
 async function addWaypoint(page: Page): Promise<void> {
   const p = await pagePoint(page, VIEW, VIEW.lon + 0.005, VIEW.lat - 0.002);
@@ -163,9 +179,7 @@ test('a hung re-activation after editing the active route shows in the planner, 
 
     // Giving up on the edit closes that session's error with it: a fresh
     // planner session starts clean.
-    await page.getByRole('button', { name: 'Discard', exact: true }).click();
-    await page.getByRole('button', { name: 'Discard', exact: true }).click();
-    await expect(nameInput(page)).toHaveCount(0);
+    await discardPlanner(page);
     const start = await pagePoint(page, VIEW, VIEW.lon - 0.005, VIEW.lat + 0.003);
     await page.mouse.click(start.x, start.y, { button: 'right' });
     await page.locator('.maplibregl-popup .route-here-btn').click();
@@ -180,14 +194,9 @@ test('a late successful save does not close a newer session on the same route', 
   const mock = new MockSignalK();
   try {
     const course = await setup(page, mock);
-    await updateButton(page).click();
-    const update = await heldRequest(course.update, 'route update PUT');
-
     // Discard while the update is still unanswered (the S10 escape hatch),
     // reopen the same active route and edit it.
-    await page.getByRole('button', { name: 'Discard', exact: true }).click();
-    await page.getByRole('button', { name: 'Discard', exact: true }).click();
-    await expect(nameInput(page)).toHaveCount(0);
+    const update = await updateThenDiscard(page, course);
     await openActiveRouteEditor(page, course.last);
     await addWaypoint(page);
 
@@ -209,16 +218,11 @@ test('a late failed save does not write its error into a newer session on the sa
   const mock = new MockSignalK();
   try {
     const course = await setup(page, mock);
-    await updateButton(page).click();
-    const update = await heldRequest(course.update, 'route update PUT');
-
-    await page.getByRole('button', { name: 'Discard', exact: true }).click();
-    await page.getByRole('button', { name: 'Discard', exact: true }).click();
-    await expect(nameInput(page)).toHaveCount(0);
+    const update = await updateThenDiscard(page, course);
     await openActiveRouteEditor(page, course.last);
 
     // The discarded save's update now fails — nothing reached the server.
-    await update.fulfill({ status: 500, contentType: 'application/json', body: '{"message":"mock failure"}' });
+    await update.fulfill(FAILED);
     await expect(updateButton(page)).toHaveText('Update');
 
     await expect(nameInput(page)).toHaveValue(ROUTE_NAME);
@@ -232,19 +236,14 @@ test('a discarded save that commits late shows its failed re-anchor outside the 
   const mock = new MockSignalK();
   try {
     const course = await setup(page, mock);
-    await updateButton(page).click();
-    const update = await heldRequest(course.update, 'route update PUT');
-
     // Discard while the update is still unanswered: the planner closes.
-    await page.getByRole('button', { name: 'Discard', exact: true }).click();
-    await page.getByRole('button', { name: 'Discard', exact: true }).click();
-    await expect(nameInput(page)).toHaveCount(0);
+    const update = await updateThenDiscard(page, course);
 
     // The update reaches the server after all: the edited geometry is live,
     // so navigation is re-activated on it — and that fails.
     await update.fulfill(COMPLETED);
     const activate = await heldRequest(course.activate, 're-activation PUT');
-    await activate.fulfill({ status: 500, contentType: 'application/json', body: '{"message":"mock failure"}' });
+    await activate.fulfill(FAILED);
 
     // No planner to carry the error: the crew is told app-wide.
     await expect(page.getByRole('alert').filter({ hasText: 'Re-activate edited route failed' })).toBeVisible();
@@ -258,11 +257,7 @@ test('a discarded save that commits late holds Update in a reopened session unti
   const mock = new MockSignalK();
   try {
     const course = await setup(page, mock);
-    await updateButton(page).click();
-    const update = await heldRequest(course.update, 'route update PUT');
-    await page.getByRole('button', { name: 'Discard', exact: true }).click();
-    await page.getByRole('button', { name: 'Discard', exact: true }).click();
-    await expect(nameInput(page)).toHaveCount(0);
+    const update = await updateThenDiscard(page, course);
 
     // The discarded update lands late; its re-activation is still in flight.
     await update.fulfill(COMPLETED);
@@ -305,16 +300,6 @@ async function holdClearCourse(page: Page): Promise<(i?: number) => Route | null
     clears.push(route);
   });
   return (i = 0) => clears[i] ?? null;
-}
-
-/** Click Update, Discard (confirmed) while the route update PUT is held; returns that PUT. */
-async function updateThenDiscard(page: Page, course: Course): Promise<Route> {
-  await updateButton(page).click();
-  const update = await heldRequest(course.update, 'route update PUT');
-  await page.getByRole('button', { name: 'Discard', exact: true }).click();
-  await page.getByRole('button', { name: 'Discard', exact: true }).click();
-  await expect(nameInput(page)).toHaveCount(0);
-  return update;
 }
 
 test('a failed course command issued after Discard does not stop a late discarded save from re-anchoring', async ({ page }) => {
@@ -450,7 +435,7 @@ test('a course command issued while a late discarded save waits on an earlier on
     // Without the fix the re-activation is sent in the same microtask drain
     // that logs the first stop's failure — before the second stop is answered.
     const firstFailed = page.waitForEvent('console', m => m.text().includes('[command] Clear course failed'));
-    await first.fulfill({ status: 500, contentType: 'application/json', body: '{"message":"mock failure"}' });
+    await first.fulfill(FAILED);
     await firstFailed;
 
     // The second stop takes effect: the abandoned route stays inactive.
@@ -474,7 +459,7 @@ test('once the edit is saved, Discard is not offered while navigation is re-anch
     await expect(page.locator('button[title="Discard and exit route planner"]')).toBeDisabled();
     await expect(page.getByText('Route saved — re-anchoring navigation…')).toBeVisible();
 
-    await activate.fulfill({ status: 500, contentType: 'application/json', body: '{"message":"mock failure"}' });
+    await activate.fulfill(FAILED);
     await expect(page.getByText(/Activate route failed/)).toBeVisible();
     await expect(updateButton(page)).toHaveText('Update');
     await expect(updateButton(page)).toBeEnabled();
