@@ -1,0 +1,46 @@
+# cargo-mutants configuration — shared by `just mutants-diff` and
+# .github/workflows/mutants.yml so a local run matches the CI gate.
+# Reference: https://mutants.rs/
+
+# Plain `cargo test`, the same runner as ci.yml (nextest is not used here).
+test_tool = "cargo"
+
+# Mutated code must build to be tested. The workspace denies some rustc lints
+# (`unused_must_use`); without the cap a mutant that trips one is reported as
+# unviable instead of being tested.
+cap_lints = true
+
+# Per-mutant test timeout floor in seconds. The auto timeout scales with the
+# baseline `cargo test` time, which is ~2 s on a dev machine; shared CI
+# runners are slower and noisier, and a timeout fails the gate (exit 3).
+minimum_test_timeout = 60
+
+# Code that only compiles for wasm32-unknown-unknown. cargo-mutants lists it,
+# but the host `cargo test` build never contains it, so its mutants could only
+# ever be reported as missed. Keep in sync with the
+# `#[cfg(target_arch = "wasm32")]` items in crates/core/src/.
+exclude_globs = [
+  # lib.rs: `#[cfg(target_arch = "wasm32")] pub mod client;`
+  "crates/core/src/client.rs",
+  # skrest/mod.rs: `#[cfg(target_arch = "wasm32")] mod http;`
+  "crates/core/src/skrest/http.rs",
+]
+exclude_re = [
+  # `#[cfg(target_arch = "wasm32")] mod wasm { … }` fetch wrappers in
+  # skrest/{charts,course,history,notifications,routes,vessel_info,waypoints}.rs.
+  # Mutant names read "replace wasm::fetch_track …" / "… in wasm::coords_or_empty".
+  '(replace|in) wasm::',
+  # skdata.rs: `#[cfg(target_arch = "wasm32")] pub fn extract_ais_binary`.
+  '\bextract_ais_binary\b',
+  # Host-compiled but host-untestable: building a JsValue goes through
+  # wasm-bindgen imports (js-sys, serde-wasm-bindgen), which panic outside
+  # wasm32 ("cannot call wasm-bindgen imported functions on non-wasm
+  # targets"), so no host test can call the unmutated code. Covers the
+  # `#[wasm_bindgen]` exports that return `Result<JsValue, JsValue>` via
+  # `serde_wasm_bindgen::to_value` (geo.rs gc_line, process_track,
+  # process_route_coords) and skrest::to_js_object. The pure helpers they wrap
+  # (line_coords, process_track_core, …) stay mutated.
+  '-> Result<(wasm_bindgen::)?JsValue, (wasm_bindgen::)?JsValue> with Ok\(Default::default\(\)\)',
+  # error.rs: `js_sys::Error::new(..)`.
+  'replace <impl From<Error> for JsValue>::from ',
+]
