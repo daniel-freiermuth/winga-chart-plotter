@@ -25,6 +25,14 @@ function placement(extensionId: string): WidgetPlacement {
   return { instanceId: 'i1', extensionId, widgetId: 'w', x: 10, y: 10 };
 }
 
+/** A successful fetch Response whose JSON body is `body`. */
+function okJson(body: unknown): Response {
+  return {
+    ok: true, status: 200, statusText: 'OK',
+    json: () => Promise.resolve(body),
+  } as unknown as Response;
+}
+
 /** Queue of fetch outcomes, consumed one per call; the last one repeats. */
 function stubFetch(outcomes: (Record<string, unknown> | Error | number)[]) {
   const calls = { n: 0 };
@@ -34,10 +42,7 @@ function stubFetch(outcomes: (Record<string, unknown> | Error | number)[]) {
     if (typeof outcome === 'number') {
       return Promise.resolve({ ok: false, status: outcome, statusText: 'nope' } as Response);
     }
-    return Promise.resolve({
-      ok: true, status: 200, statusText: 'OK',
-      json: () => Promise.resolve(outcome),
-    } as unknown as Response);
+    return Promise.resolve(okJson(outcome));
   }));
   return calls;
 }
@@ -193,15 +198,9 @@ describe('extension manifest loading', () => {
     const first = new Promise((r) => { resolveFirst = r; });
     vi.stubGlobal('fetch', vi.fn((url: string) => {
       if (url.startsWith(BASE)) {
-        return first.then(() => ({
-          ok: true, status: 200, statusText: 'OK',
-          json: () => Promise.resolve({ stale: manifest() }),
-        }) as unknown as Response);
+        return first.then(() => okJson({ stale: manifest() }));
       }
-      return Promise.resolve({
-        ok: true, status: 200, statusText: 'OK',
-        json: () => Promise.resolve({ fresh: manifest() }),
-      } as unknown as Response);
+      return Promise.resolve(okJson({ fresh: manifest() }));
     }));
     const store = await freshStore();
 
@@ -215,10 +214,8 @@ describe('extension manifest loading', () => {
 
   it('discards the previous server manifests when the server changes', async () => {
     localStorage.setItem('plotterext:layout', JSON.stringify([placement('old')]));
-    vi.stubGlobal('fetch', vi.fn((url: string) => Promise.resolve({
-      ok: true, status: 200, statusText: 'OK',
-      json: () => Promise.resolve(url.startsWith(BASE) ? { old: manifest() } : {}),
-    } as unknown as Response)));
+    vi.stubGlobal('fetch', vi.fn((url: string) =>
+      Promise.resolve(okJson(url.startsWith(BASE) ? { old: manifest() } : {}))));
     const store = await freshStore();
     await store.load(BASE);
     expect(store.extensions.has('old')).toBe(true);
@@ -236,15 +233,9 @@ describe('extension manifest loading', () => {
     const held = new Promise<void>((resolve) => { release = resolve; });
     vi.stubGlobal('fetch', vi.fn((url: string) => {
       if (url.startsWith(BASE)) {
-        return Promise.resolve({
-          ok: true, status: 200, statusText: 'OK',
-          json: () => Promise.resolve({ old: manifest() }),
-        } as unknown as Response);
+        return Promise.resolve(okJson({ old: manifest() }));
       }
-      return held.then(() => ({
-        ok: true, status: 200, statusText: 'OK',
-        json: () => Promise.resolve({}),
-      }) as unknown as Response);
+      return held.then(() => okJson({}));
     }));
     const store = await freshStore();
     await store.load(BASE);
