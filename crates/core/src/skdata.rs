@@ -209,8 +209,20 @@ struct Navigation {
     speed_through_water: Option<f64>,
     /// Parsed eagerly on receipt so AIS staleness checks never re-parse the string.
     datetime_ms: Option<f64>,
+    /// The `timestamp` of the update that last carried `navigation.position`.
+    /// Standard AIS sources (NMEA 0183 VDM, NMEA 2000 PGN 129038/129039) never
+    /// send `navigation.datetime`, so this is what dates their reports.
+    position_timestamp_ms: Option<f64>,
     course: Option<CourseState>,
     closest_approach: Option<SkClosestApproach>,
+}
+
+impl Navigation {
+    /// When this vessel last reported: its `navigation.datetime` if it sends
+    /// one, else the update timestamp of its last position.
+    fn last_report_ms(&self) -> Option<f64> {
+        self.datetime_ms.or(self.position_timestamp_ms)
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -350,7 +362,13 @@ fn str_from_value(v: &Json) -> Option<String> {
     }
 }
 
-fn apply_leaf(vessel: &mut Vessel, path: &str, value: &Json, source: Option<&str>) {
+fn apply_leaf(
+    vessel: &mut Vessel,
+    path: &str,
+    value: &Json,
+    source: Option<&str>,
+    timestamp_ms: Option<f64>,
+) {
     let Some(kind) = LEAF_DISPATCH.get(path) else {
         return; // Unknown path (including any `<leaf>.accuracy` sibling) — not a bug, just unmodeled.
     };
@@ -369,6 +387,7 @@ fn apply_leaf(vessel: &mut Vessel, path: &str, value: &Json, source: Option<&str
             if let Ok(p) = Position::deserialize(value) {
                 vessel.nav.position = Some(p);
                 vessel.nav.position_source = source.map(str::to_owned);
+                vessel.nav.position_timestamp_ms = timestamp_ms;
             }
         }
         LeafKind::Cog => {
@@ -763,9 +782,10 @@ pub fn apply_message(storage: &mut Storage, json: &str) -> crate::Result<Applied
         for update in updates.into_iter().filter_map(|u| u.0) {
             let source = update.source.0.as_ref().map(|Text(s)| &**s);
             let timestamp = update.timestamp.0.map(|Text(t)| t);
+            let timestamp_ms = timestamp.as_deref().and_then(parse_iso8601_utc_ms);
             for entry in update.values.0.into_iter().flatten().filter_map(|e| e.0) {
                 if let Some(vessel) = vessel.as_deref_mut() {
-                    apply_leaf(vessel, &entry.path, &entry.value, source);
+                    apply_leaf(vessel, &entry.path, &entry.value, source, timestamp_ms);
                 }
                 if is_self {
                     self_values.push(SelfValue {
@@ -888,14 +908,14 @@ pub fn extract_vessel_state(storage: &Storage) -> VesselState {
     }
 }
 
-/// Extract non-self AIS targets that have a valid `navigation.datetime` and are not stale.
+/// Extract non-self AIS targets that have a known report time and are not stale.
 ///
 /// `now_ms`: current epoch ms (e.g. from `js_sys::Date::now()`).
-/// `stale_ms`: drop vessels whose `navigation.datetime` is older than this many ms.
+/// `stale_ms`: drop vessels whose last report is older than this many ms.
 ///
-/// Vessels without a parseable `navigation.datetime` are silently skipped — in practice
-/// this is only Class B transponders that never broadcast UTC time (very rare: 1/322 in
-/// testing). It is also the correct behaviour for vessels with no position at all.
+/// The report time is the vessel's `navigation.datetime` if it sends one, else
+/// the update `timestamp` of its last `navigation.position`. Vessels with
+/// neither (or with no position at all) are silently skipped.
 pub fn extract_ais_targets(storage: &Storage, now_ms: f64, stale_ms: f64) -> Vec<AisTarget> {
     let self_id = storage.self_id.as_deref();
     storage
@@ -903,7 +923,7 @@ pub fn extract_ais_targets(storage: &Storage, now_ms: f64, stale_ms: f64) -> Vec
         .iter()
         .filter(|(id, _)| Some(id.as_str()) != self_id)
         .filter_map(|(id, vessel)| {
-            let last_ms = vessel.nav.datetime_ms?;
+            let last_ms = vessel.nav.last_report_ms()?;
             if now_ms - last_ms > stale_ms {
                 return None;
             }
@@ -997,8 +1017,8 @@ pub fn extract_ais_binary(
     (Float64Array::from(hot.as_slice()), ids, cold)
 }
 
-/// Drop non-self vessels whose `navigation.datetime` is more than `stale_ms`
-/// milliseconds relative to `now_ms`.
+/// Drop non-self vessels whose last report (see [`extract_ais_targets`]) is
+/// more than `stale_ms` milliseconds relative to `now_ms`.
 ///
 /// This bounds memory usage — without it, vessels never seen again would
 /// accumulate indefinitely. Call periodically (e.g. at each AIS emit tick).
@@ -1007,7 +1027,7 @@ pub fn extract_ais_binary(
 /// `navigation.datetime` may lag the device clock (unsynced clock, stalled time
 /// source, replayed data) while its position keeps updating.
 ///
-/// Vessels that lack a parseable datetime are left in place — they will never appear
+/// Vessels without a known report time are left in place — they will never appear
 /// in AIS target snapshots but also don't consume significant memory.
 pub fn prune_stale_vessels(storage: &mut Storage, now_ms: f64, stale_ms: f64) {
     let self_id = storage.self_id.as_deref();
@@ -1015,9 +1035,9 @@ pub fn prune_stale_vessels(storage: &mut Storage, now_ms: f64, stale_ms: f64) {
         if Some(id.as_str()) == self_id {
             return true;
         }
-        match vessel.nav.datetime_ms {
+        match vessel.nav.last_report_ms() {
             Some(ms) => now_ms - ms <= stale_ms,
-            None => true, // no parseable datetime → keep
+            None => true, // no known report time → keep
         }
     });
 }
@@ -1538,6 +1558,39 @@ mod tests {
         );
         assert!(
             !storage.vessels.contains_key("urn:mrn:imo:mmsi:999999999"),
+            "stale vessel should be pruned"
+        );
+    }
+
+    #[test]
+    fn prune_stale_vessels_times_datetime_less_vessels_by_position_timestamp() {
+        // Standard AIS sources send no `navigation.datetime`; the position
+        // update's `timestamp` must bound how long the vessel is retained.
+        let mut storage = storage_with_self();
+        apply_message(
+            &mut storage,
+            r#"{
+            "context": "vessels.urn:mrn:imo:mmsi:222222222",
+            "updates": [{"timestamp": "1970-01-01T00:01:00.000Z", "values": [
+                {"path": "navigation.position", "value": {"longitude": 10.0, "latitude": 59.0}}
+            ]}]
+        }"#,
+        )
+        .unwrap();
+        let id = "urn:mrn:imo:mmsi:222222222";
+        let stale_ms = 10.0 * 60.0 * 1000.0;
+
+        // 10 minutes after the report: exactly at the limit → kept.
+        prune_stale_vessels(&mut storage, 11.0 * 60.0 * 1000.0, stale_ms);
+        assert!(
+            storage.vessels.contains_key(id),
+            "fresh vessel should remain"
+        );
+
+        // Just past the limit → pruned.
+        prune_stale_vessels(&mut storage, 11.0 * 60.0 * 1000.0 + 1.0, stale_ms);
+        assert!(
+            !storage.vessels.contains_key(id),
             "stale vessel should be pruned"
         );
     }

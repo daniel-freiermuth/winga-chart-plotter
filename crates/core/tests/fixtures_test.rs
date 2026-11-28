@@ -96,35 +96,31 @@ fn course_destination_delta_sets_expected_course() {
 }
 
 #[test]
-fn ais_bundled_update_without_datetime_is_dropped_but_fields_are_captured() {
+fn ais_bundled_update_without_datetime_is_timed_by_its_update_timestamp() {
     // Real shape bundling modeled navigation fields alongside ones we don't model
     // (navigation.state, sensors.ais.class) and a `"path": ""` merge entry — none of
-    // that should corrupt the modeled fields or crash. No `navigation.datetime` is
-    // present, so the vessel must not appear as an AIS target yet (we have no way to
-    // tell it isn't stale) — supplying datetime afterward should then reveal it with
-    // the values captured from the bundled update intact.
+    // that should corrupt the modeled fields or crash. Like every standard AIS source
+    // (NMEA 0183 VDM, NMEA 2000 PGN 129038/129039), it carries no
+    // `navigation.datetime`: the update's own `timestamp` dates the position report.
+    const UPDATE_MS: f64 = 1_408_129_537_063.0; // 2014-08-15T19:05:37.063Z
     let mut storage = Storage::default();
     storage.set_self(SELF_CTX);
     replay(
         &mut storage,
         include_str!("fixtures/ais_bundled_update.json"),
     );
-    assert!(extract_ais_targets(&storage, f64::INFINITY, f64::INFINITY).is_empty());
 
-    apply_message(
-        &mut storage,
-        r#"{"context": "vessels.urn:mrn:imo:mmsi:248071000", "updates": [{"values": [
-            {"path": "navigation.datetime", "value": "2014-08-15T19:05:37.063Z"}
-        ]}]}"#,
-    )
-    .unwrap();
-    let targets = extract_ais_targets(&storage, f64::INFINITY, f64::INFINITY);
+    let targets = extract_ais_targets(&storage, UPDATE_MS + 1_000.0, 60_000.0);
     assert_eq!(targets.len(), 1);
     assert_eq!(targets[0].mmsi, Some("248071000".to_string()));
     assert_eq!(targets[0].sog, Some(7.2));
     assert_eq!(targets[0].cog, Some(4.4541));
+    assert_eq!(targets[0].last_position_update_ms, UPDATE_MS);
     let pos = targets[0].position.unwrap();
     assert!((pos.longitude - 24.8868133).abs() < 1e-9);
+
+    // The same report is stale once `stale_ms` has passed since its timestamp.
+    assert!(extract_ais_targets(&storage, UPDATE_MS + 60_001.0, 60_000.0).is_empty());
 }
 
 #[test]
