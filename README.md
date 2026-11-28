@@ -51,6 +51,15 @@ Open `http://localhost:5173`.
 cargo test
 ```
 
+### Mutation-test your change
+
+Pull requests run [cargo-mutants](https://mutants.rs/) on the Rust lines they change (`.github/workflows/mutants.yml`): each change is broken on purpose, and the gate fails if `cargo test` still passes. Reproduce it locally before pushing:
+
+```sh
+just install-cargo-mutants   # cargo install cargo-mutants --locked --force --version <cargo_mutants_version>
+just mutants-diff            # mutants on lines changed since origin/main; report in mutants.out/
+```
+
 ## Design
 Do one job, do it good.
 This means that some features might be left to other layers.
