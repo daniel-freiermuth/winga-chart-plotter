@@ -14,16 +14,14 @@
  */
 import { test, expect, type Page, type Route } from '@playwright/test';
 import { MockSignalK, OWN_ID } from '../mock-signalk/server';
-import { seedApp, blockExternalTiles, clickLonLat, lonLatAtPx, VIEW } from '../lib/app';
+import {
+  seedApp, blockExternalTiles, lonLatAtPx, openRouteEditor, routeNameInput, updateRouteButton,
+  COMPLETED, MOCK_FAILURE, ROUTES_PATH, VIEW,
+} from '../lib/app';
 
 const GREEN = 'rgb(74, 222, 128)';
 const ROUTE_UUID = 'e2e00000-0000-4000-8000-000000000015';
 const ROUTE_NAME = 'E2E reanchor';
-const ROUTES_PATH = '/signalk/v2/api/resources/routes';
-const COMPLETED = { status: 200, contentType: 'application/json', body: '{"state":"COMPLETED","statusCode":200}' };
-
-const nameInput = (page: Page) => page.getByPlaceholder('Route name…');
-const updateButton = (page: Page) => page.locator('button[title="Update route"]');
 
 type LonLat = { lon: number; lat: number };
 
@@ -86,7 +84,7 @@ async function setup(page: Page, mock: MockSignalK, initialPointIndex: number | 
     pointIndexPuts.push(route.request().postDataJSON());
     if (pointIndexFailures > 0) {
       pointIndexFailures--;
-      await route.fulfill({ status: 500, contentType: 'application/json', body: '{"message":"mock failure"}' });
+      await route.fulfill(MOCK_FAILURE);
       return;
     }
     await route.fulfill(COMPLETED);
@@ -133,20 +131,9 @@ async function heldRequest(held: Route[], i: number, what: string): Promise<Rout
   return route;
 }
 
-/** Open the active route in the planner from a waypoint's popup. */
-async function openActiveRouteEditor(page: Page, at: LonLat): Promise<void> {
-  await expect(async () => {
-    await page.keyboard.press('Escape');
-    await clickLonLat(page, VIEW, at.lon, at.lat);
-    await expect(page.locator('.maplibregl-popup .edit-active-route-btn')).toBeEnabled({ timeout: 2000 });
-  }).toPass({ timeout: 30_000 });
-  await page.locator('.maplibregl-popup .edit-active-route-btn').click();
-  await expect(nameInput(page)).toHaveValue(ROUTE_NAME);
-}
-
 /** Click Update with no edits (the `i`-th save), let the update and re-activation succeed. */
 async function saveUnchanged(page: Page, h: Harness, i = 0): Promise<void> {
-  await updateButton(page).click();
+  await updateRouteButton(page).click();
   await (await heldRequest(h.updates, i, 'route update PUT')).fulfill(COMPLETED);
   await (await heldRequest(h.activates, i, 're-activation PUT')).fulfill(COMPLETED);
 }
@@ -155,14 +142,14 @@ test('a course that advanced while the active route was edited is kept on save',
   const mock = new MockSignalK();
   try {
     const h = await setup(page, mock, 1);
-    await openActiveRouteEditor(page, h.points[3]); // Next point B.
+    await openRouteEditor(page, h.points[3], ROUTE_NAME); // Next point B.
 
     // B reached while editing: the server advances to C.
     await h.setCourse(2);
     await saveUnchanged(page, h);
 
     await expect.poll(() => h.pointIndexPuts).toEqual([{ value: 2 }]);
-    await expect(nameInput(page)).toHaveCount(0);
+    await expect(routeNameInput(page)).toHaveCount(0);
   } finally {
     await mock.stop();
   }
@@ -175,20 +162,14 @@ test('a route activated elsewhere while edited from the routes list is re-anchor
 
     // Not active: tapping the route line opens the all-routes popup.
     const [a, b] = h.points;
-    await expect(async () => {
-      await page.keyboard.press('Escape');
-      await clickLonLat(page, VIEW, (a.lon + b.lon) / 2, (a.lat + b.lat) / 2);
-      await expect(page.locator('.maplibregl-popup .edit-route-btn')).toBeEnabled({ timeout: 2000 });
-    }).toPass({ timeout: 30_000 });
-    await page.locator('.maplibregl-popup .edit-route-btn').click();
-    await expect(nameInput(page)).toHaveValue(ROUTE_NAME);
+    await openRouteEditor(page, { lon: (a.lon + b.lon) / 2, lat: (a.lat + b.lat) / 2 }, ROUTE_NAME, '.edit-route-btn');
 
     // Another client activates it and the course is at C by the time of Update.
     await h.setCourse(2);
     await saveUnchanged(page, h);
 
     await expect.poll(() => h.pointIndexPuts).toEqual([{ value: 2 }]);
-    await expect(nameInput(page)).toHaveCount(0);
+    await expect(routeNameInput(page)).toHaveCount(0);
   } finally {
     await mock.stop();
   }
@@ -198,20 +179,20 @@ test('retrying Update after a failed re-anchor restores the point from before th
   const mock = new MockSignalK();
   try {
     const h = await setup(page, mock, 2);
-    await openActiveRouteEditor(page, h.points[3]); // Next point C.
+    await openRouteEditor(page, h.points[3], ROUTE_NAME); // Next point C.
 
     // The re-activation lands (Signal K restarts the route at A), the point
     // index PUT fails: the planner stays open on its error.
     h.failPointIndexPuts(1);
     await saveUnchanged(page, h);
     await expect(page.getByText(/Set route point index failed/)).toBeVisible();
-    await expect(updateButton(page)).toBeEnabled();
+    await expect(updateRouteButton(page)).toBeEnabled();
     await h.setCourse(0);
 
     // The retry re-anchors on C, not on the restarted course's A.
     await saveUnchanged(page, h, 1);
     await expect.poll(() => h.pointIndexPuts).toEqual([{ value: 2 }, { value: 2 }]);
-    await expect(nameInput(page)).toHaveCount(0);
+    await expect(routeNameInput(page)).toHaveCount(0);
   } finally {
     await mock.stop();
   }
@@ -221,21 +202,21 @@ test('retrying Update after a rejected re-activation re-anchors on the course in
   const mock = new MockSignalK();
   try {
     const h = await setup(page, mock, 1);
-    await openActiveRouteEditor(page, h.points[3]); // Next point B.
+    await openRouteEditor(page, h.points[3], ROUTE_NAME); // Next point B.
 
     // The server rejects the re-activation: the course stays at B.
-    await updateButton(page).click();
+    await updateRouteButton(page).click();
     await (await heldRequest(h.updates, 0, 'route update PUT')).fulfill(COMPLETED);
     await (await heldRequest(h.activates, 0, 're-activation PUT'))
       .fulfill({ status: 403, contentType: 'application/json', body: '{"message":"mock forbidden"}' });
     await expect(page.getByText(/Activate route failed/)).toBeVisible();
-    await expect(updateButton(page)).toBeEnabled();
+    await expect(updateRouteButton(page)).toBeEnabled();
 
     // B reached before the retry: the server advances to C.
     await h.setCourse(2);
     await saveUnchanged(page, h, 1);
     await expect.poll(() => h.pointIndexPuts).toEqual([{ value: 2 }]);
-    await expect(nameInput(page)).toHaveCount(0);
+    await expect(routeNameInput(page)).toHaveCount(0);
   } finally {
     await mock.stop();
   }
@@ -245,22 +226,22 @@ test('retrying Update after a re-activation whose response was lost restores the
   const mock = new MockSignalK();
   try {
     const h = await setup(page, mock, 1);
-    await openActiveRouteEditor(page, h.points[3]); // Next point B.
+    await openRouteEditor(page, h.points[3], ROUTE_NAME); // Next point B.
 
     // The server applies the re-activation (the course restarts at A), but
     // its response never arrives: the outcome is unknown to the app.
-    await updateButton(page).click();
+    await updateRouteButton(page).click();
     await (await heldRequest(h.updates, 0, 'route update PUT')).fulfill(COMPLETED);
     const activate = await heldRequest(h.activates, 0, 're-activation PUT');
     await h.setCourse(0);
     await activate.abort('connectionreset');
     await expect(page.getByText(/Failed to fetch/)).toBeVisible();
-    await expect(updateButton(page)).toBeEnabled();
+    await expect(updateRouteButton(page)).toBeEnabled();
 
     // The retry re-anchors on B, not on the restarted course's A.
     await saveUnchanged(page, h, 1);
     await expect.poll(() => h.pointIndexPuts).toEqual([{ value: 1 }]);
-    await expect(nameInput(page)).toHaveCount(0);
+    await expect(routeNameInput(page)).toHaveCount(0);
   } finally {
     await mock.stop();
   }
