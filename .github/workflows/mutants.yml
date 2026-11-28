@@ -1,0 +1,140 @@
+# .github/workflows/mutants.yml
+#
+# Diff-scoped mutation testing of the Rust core (crates/core) on pull requests.
+#
+# `cargo test` (ci.yml) proves the tests pass; this proves they notice when the
+# code changed by the PR is broken. cargo-mutants applies small edits (flipped
+# comparisons, dropped terms, constant returns) to the lines the PR touches and
+# fails if the test suite still passes for any of them.
+#
+# Only mutants on changed lines run (`--in-diff`): the whole tree has ~1000
+# viable mutants and takes hours. Configuration (test tool, timeout floor,
+# wasm32-only exclusions) lives in .cargo/mutants.toml so `just mutants-diff`
+# reproduces this job locally.
+#
+# Exit codes from cargo-mutants — any non-zero fails the shard:
+#   2 — missed mutants (tests passed with the code broken)
+#   3 — mutants timed out
+#   4 — tests fail on the unmutated tree
+# A shard that hits timeout-minutes is cancelled, which also fails the gate.
+#
+# A surviving mutant needs either an assertion that catches it, or — for code
+# whose behaviour genuinely does not matter — an `exclude_re` entry in
+# .cargo/mutants.toml with the reason.
+
+name: Mutants
+
+on:
+  pull_request:
+
+concurrency:
+  group: mutants-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_INCREMENTAL: '0'
+  CARGO_TERM_COLOR: always
+  # cargo-mutants pin. Keep in sync with the Justfile (cargo_mutants_version).
+  # CARGO_MUTANTS_SHA256 is the GitHub-published digest of the
+  # x86_64-unknown-linux-gnu release asset.
+  CARGO_MUTANTS_VERSION: '27.1.0'
+  CARGO_MUTANTS_SHA256: 'dfe6dc37d0342c891d2829b5a695aa57c2d0edecef7e7d0399a30cc6e206411e'
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # shard — one slice of the PR's mutants
+  # The shard count is the length of the matrix; each shard re-runs the
+  # unmutated baseline, so add shards only when diffs routinely hit the cap.
+  # ---------------------------------------------------------------------------
+  shard:
+    name: Mutants (shard ${{ matrix.shard }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+
+    steps:
+      # Full history so the PR base branch is available to diff against.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      # Shards share one cache key; only the first saves it.
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ matrix.shard == 0 }}
+
+      # Pinned release asset verified by SHA-256, as for wasm-pack in ci.yml.
+      - name: Install cargo-mutants (pinned)
+        run: |
+          asset="cargo-mutants-x86_64-unknown-linux-gnu.tar.gz"
+          curl -fsSL -o "/tmp/${asset}" "https://github.com/sourcefrog/cargo-mutants/releases/download/v${CARGO_MUTANTS_VERSION}/${asset}"
+          echo "${CARGO_MUTANTS_SHA256}  /tmp/${asset}" | sha256sum -c -
+          tar xzf "/tmp/${asset}" -C /tmp cargo-mutants
+          install -m 755 /tmp/cargo-mutants "$HOME/.cargo/bin/cargo-mutants"
+          cargo mutants --version
+
+      # HEAD is the PR merge commit, so `base...HEAD` is exactly the PR's
+      # change as it would land.
+      - name: Diff against the base branch
+        run: git diff --relative "origin/${GITHUB_BASE_REF}...HEAD" > "${RUNNER_TEMP}/pr.diff"
+
+      - name: List mutants in this shard
+        run: |
+          cargo mutants --in-diff "${RUNNER_TEMP}/pr.diff" \
+            --shard "${{ matrix.shard }}/${{ strategy.job-total }}" --list
+
+      # --in-place: the checkout is disposable, and building in it reuses the
+      # cached target/ instead of a cold copy of the tree.
+      - name: cargo mutants
+        run: |
+          cargo mutants --in-diff "${RUNNER_TEMP}/pr.diff" \
+            --shard "${{ matrix.shard }}/${{ strategy.job-total }}" --in-place
+
+      - name: Summarise surviving mutants
+        if: failure()
+        run: |
+          {
+            for outcome in missed timeout unviable; do
+              file="mutants.out/${outcome}.txt"
+              if [ -s "$file" ]; then
+                echo "### ${outcome} (shard ${{ matrix.shard }})"
+                echo '```'
+                cat "$file"
+                echo '```'
+              fi
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload mutants.out
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: mutants-out-shard-${{ matrix.shard }}
+          path: mutants.out
+          if-no-files-found: ignore
+
+  # ---------------------------------------------------------------------------
+  # mutants — single status for branch protection, independent of shard count
+  # ---------------------------------------------------------------------------
+  mutants:
+    name: Mutants
+    runs-on: ubuntu-latest
+    needs: shard
+    if: always()
+
+    steps:
+      - name: Require every shard to pass
+        run: |
+          echo "shards: ${{ needs.shard.result }}"
+          test "${{ needs.shard.result }}" = success
