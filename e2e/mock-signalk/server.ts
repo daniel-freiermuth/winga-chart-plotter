@@ -179,7 +179,8 @@ export class MockSignalK {
 
   /**
    * One AIS target report. Always carries navigation.datetime = now — skdata
-   * drops vessels without a fresh datetime from every AIS snapshot.
+   * drops vessels whose last report (datetime, else the position update's
+   * timestamp) is not fresh from every AIS snapshot.
    */
   aisReport(vesselId: string, r: AisReport): void {
     const values: { path: string; value: unknown }[] = [
